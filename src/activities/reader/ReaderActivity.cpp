@@ -9,6 +9,7 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "EpubReaderActivity.h"
+#include "Fb2ReaderActivity.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
@@ -30,6 +31,8 @@ std::unique_ptr<ReaderActivity> ReaderActivity::create(GfxRenderer& renderer, Ma
   std::unique_ptr<ReaderActivity> activity;
   if (FsHelpers::hasXtcExtension(path)) {
     activity = makeUniqueNoThrow<XtcReaderActivity>(renderer, mappedInput, std::move(path), allowFastInitialRefresh);
+  } else if (FsHelpers::hasFb2Extension(path)) {
+    activity = makeUniqueNoThrow<Fb2ReaderActivity>(renderer, mappedInput, std::move(path), allowFastInitialRefresh);
   } else if (FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path)) {
     activity = makeUniqueNoThrow<TxtReaderActivity>(renderer, mappedInput, std::move(path), allowFastInitialRefresh);
   } else {

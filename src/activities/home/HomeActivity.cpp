@@ -2,6 +2,7 @@
 
 #include <Bitmap.h>
 #include <Epub.h>
+#include <Fb2.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalDisplay.h>
@@ -82,6 +83,24 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
           }
           coverRendered = false;
           requestUpdate();
+        } else if (FsHelpers::hasFb2Extension(book.path)) {
+          // Handle FB2 file
+          Fb2 fb2(book.path, "/.crosspoint");
+          if (fb2.load(false)) {
+            // Try to generate thumbnail image for Continue Reading card
+            if (!showingLoading) {
+              showingLoading = true;
+              popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+            }
+            GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
+            bool success = fb2.generateThumbBmp(coverHeight);
+            if (!success) {
+              RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+              book.coverBmpPath = "";
+            }
+            coverRendered = false;
+            requestUpdate();
+          }
         } else if (FsHelpers::hasXtcExtension(book.path)) {
           // Handle XTC file
           Xtc xtc(book.path, "/.crosspoint");

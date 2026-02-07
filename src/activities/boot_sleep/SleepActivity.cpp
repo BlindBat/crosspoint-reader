@@ -2,6 +2,7 @@
 
 #include <Epub.h>
 #include <Epub/converters/PngToFramebufferConverter.h>
+#include <Fb2.h>
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -794,6 +795,20 @@ void SleepActivity::renderCoverSleepScreen() const {
     }
 
     coverBmpPath = lastTxt.getCoverBmpPath();
+  } else if (FsHelpers::hasFb2Extension(APP_STATE.openEpubPath)) {
+    // Handle FB2 file
+    Fb2 lastFb2(APP_STATE.openEpubPath, "/.crosspoint");
+    if (!lastFb2.load(true)) {
+      LOG_ERR("SLP", "Failed to load last FB2");
+      return (this->*renderNoCoverSleepScreen)();
+    }
+
+    if (!lastFb2.generateCoverBmp()) {
+      LOG_ERR("SLP", "Failed to generate FB2 cover bmp");
+      return (this->*renderNoCoverSleepScreen)();
+    }
+
+    coverBmpPath = lastFb2.getCoverBmpPath();
   } else if (FsHelpers::hasEpubExtension(APP_STATE.openEpubPath)) {
     // Handle EPUB file
     Epub lastEpub(APP_STATE.openEpubPath, "/.crosspoint");

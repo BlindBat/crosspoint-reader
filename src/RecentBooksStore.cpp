@@ -1,6 +1,7 @@
 #include "RecentBooksStore.h"
 
 #include <Epub.h>
+#include <Fb2.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
 #include <Logging.h>
@@ -127,6 +128,11 @@ RecentBook RecentBooksStore::getDataFromBook(std::string path) const {
     Epub epub(path, "/.crosspoint");
     epub.load(false, true);
     return RecentBook{path, epub.getTitle(), epub.getAuthor(), epub.getThumbBmpPath()};
+  } else if (FsHelpers::hasFb2Extension(lastBookFileName)) {
+    Fb2 fb2(path, "/.crosspoint");
+    if (fb2.load(false)) {
+      return RecentBook{path, fb2.getTitle(), fb2.getAuthor(), fb2.getThumbBmpPath()};
+    }
   } else if (FsHelpers::hasXtcExtension(lastBookFileName)) {
     // Handle XTC file
     Xtc xtc(path, "/.crosspoint");
