@@ -1,5 +1,6 @@
 #include "Fb2.h"
 
+#include <Epub/ImageUtils.h>
 #include <HardwareSerial.h>
 #include <SDCardManager.h>
 #include <Serialization.h>
@@ -8,7 +9,7 @@
 #include "Fb2/Fb2MetadataParser.h"
 
 namespace {
-constexpr uint8_t FB2_CACHE_VERSION = 1;
+constexpr uint8_t FB2_CACHE_VERSION = 2;
 }  // namespace
 
 Fb2::Fb2(std::string filepath, const std::string& cacheDir) : filepath(std::move(filepath)) {
@@ -63,8 +64,22 @@ bool Fb2::loadMetadataCache() {
     tocEntries.push_back(std::move(entry));
   }
 
+  // Load binary offsets
+  uint16_t binaryCount;
+  serialization::readPod(file, binaryCount);
+  binaryOffsets.clear();
+  binaryOffsets.reserve(binaryCount);
+  for (uint16_t i = 0; i < binaryCount; i++) {
+    std::string id;
+    uint32_t offset;
+    serialization::readString(file, id);
+    serialization::readPod(file, offset);
+    binaryOffsets[id] = offset;
+  }
+
   file.close();
-  Serial.printf("[%lu] [FB2] Loaded metadata cache: %d sections, %d TOC entries\n", millis(), sectionCount, tocCount);
+  Serial.printf("[%lu] [FB2] Loaded metadata cache: %d sections, %d TOC entries, %d binaries\n", millis(), sectionCount,
+                tocCount, binaryCount);
   return true;
 }
 
@@ -96,6 +111,14 @@ bool Fb2::saveMetadataCache() const {
     serialization::writePod(file, static_cast<int16_t>(entry.sectionIndex));
   }
 
+  // Save binary offsets
+  const uint16_t binaryCount = static_cast<uint16_t>(binaryOffsets.size());
+  serialization::writePod(file, binaryCount);
+  for (const auto& entry : binaryOffsets) {
+    serialization::writeString(file, entry.first);
+    serialization::writePod(file, static_cast<uint32_t>(entry.second));
+  }
+
   file.close();
   Serial.printf("[%lu] [FB2] Saved metadata cache\n", millis());
   return true;
@@ -114,6 +137,7 @@ bool Fb2::parseMetadata() {
   coverBinaryId = parser.getCoverBinaryId();
   sections = parser.getSections();
   tocEntries = parser.getTocEntries();
+  binaryOffsets = parser.getBinaryOffsets();
 
   Serial.printf("[%lu] [FB2] Parsed: title=%s, author=%s, sections=%d\n", millis(), title.c_str(), author.c_str(),
                 static_cast<int>(sections.size()));
@@ -213,23 +237,30 @@ std::string Fb2::getThumbBmpPath() const { return cachePath + "/thumb_[HEIGHT].b
 std::string Fb2::getThumbBmpPath(int height) const { return cachePath + "/thumb_" + std::to_string(height) + ".bmp"; }
 
 bool Fb2::generateThumbBmp(int height) const {
-  if (SdMan.exists(getThumbBmpPath(height).c_str())) {
-    return true;
+  // Already generated — check file exists and is a valid BMP (not an empty stub from older versions)
+  const auto thumbPath = getThumbBmpPath(height);
+  if (SdMan.exists(thumbPath.c_str())) {
+    uint16_t w, h;
+    if (ImageUtils::readBmpDimensions(thumbPath, w, h)) {
+      return true;
+    }
+    // Invalid/empty file from before stub covers — remove and regenerate
+    SdMan.remove(thumbPath.c_str());
   }
 
   if (!loaded || coverBinaryId.empty()) {
     Serial.printf("[%lu] [FB2] No cover image for thumbnail\n", millis());
-    // Write empty file to avoid future attempts
-    FsFile thumbBmp;
-    setupCacheDir();
-    SdMan.openFileForWrite("FB2", getThumbBmpPath(height), thumbBmp);
-    thumbBmp.close();
     return false;
   }
 
   setupCacheDir();
   Fb2CoverExtractor extractor(filepath, coverBinaryId, "");
-  return extractor.extractThumb(getThumbBmpPath(height), height);
+  if (extractor.extractThumb(getThumbBmpPath(height), height)) {
+    return true;
+  }
+
+  Serial.printf("[%lu] [FB2] Cover extraction failed\n", millis());
+  return false;
 }
 
 int Fb2::getSectionCount() const { return static_cast<int>(sections.size()); }

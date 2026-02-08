@@ -1,5 +1,6 @@
 #include "Fb2SectionParser.h"
 
+#include <Epub/ImageUtils.h>
 #include <Epub/hyphenation/Hyphenator.h>
 #include <GfxRenderer.h>
 #include <HardwareSerial.h>
@@ -7,6 +8,8 @@
 #include <expat.h>
 
 #include <cstring>
+
+#include "Fb2CoverExtractor.h"
 
 namespace {
 constexpr size_t MIN_SIZE_FOR_POPUP = 50 * 1024;
@@ -49,7 +52,7 @@ void Fb2SectionParser::startNewTextBlock(const BlockStyle& blockStyle) {
   currentTextBlock.reset(new ParsedText(extraParagraphSpacing, hyphenationEnabled, blockStyle));
 }
 
-void XMLCALL Fb2SectionParser::startElement(void* userData, const char* name, const char** /* atts */) {
+void XMLCALL Fb2SectionParser::startElement(void* userData, const char* name, const char** atts) {
   auto* self = static_cast<Fb2SectionParser*>(userData);
   const char* tag = stripNs(name);
 
@@ -75,14 +78,18 @@ void XMLCALL Fb2SectionParser::startElement(void* userData, const char* name, co
   if (strcmp(tag, "body") == 0) {
     self->inBody = true;
     self->depth++;
+    if (self->bodyContentDepth < 0) {
+      self->bodyContentDepth = self->depth;
+    }
     return;
   }
 
   // Track top-level sections within body
   if (strcmp(tag, "section") == 0 && self->inBody) {
-    // Only count top-level sections (direct children of body)
-    // A top-level section is one that starts when we're not inside any target section
-    if (!self->inTargetSection) {
+    // Only count sections at body's direct-child depth (matching Fb2MetadataParser).
+    // Nested sections inside non-target sections must not be counted.
+    const bool isTopLevel = (self->bodyContentDepth >= 0 && self->depth == self->bodyContentDepth);
+    if (isTopLevel && !self->inTargetSection) {
       if (self->topLevelSectionCount == self->targetSectionIndex) {
         self->inTargetSection = true;
         self->targetSectionDepth = self->depth;
@@ -158,11 +165,72 @@ void XMLCALL Fb2SectionParser::startElement(void* userData, const char* name, co
   } else if (strcmp(tag, "strikethrough") == 0) {
     // No strikethrough rendering support, treat as regular text
   } else if (strcmp(tag, "image") == 0) {
-    self->startNewTextBlock(centeredBlockStyle);
-    self->italicUntilDepth = std::min(self->italicUntilDepth, self->depth);
+    // Extract xlink:href or l:href attribute
+    std::string imageRef;
+    if (atts != nullptr) {
+      for (int i = 0; atts[i]; i += 2) {
+        const char* attrName = stripNs(atts[i]);
+        if (strcmp(attrName, "href") == 0) {
+          imageRef = atts[i + 1];
+          break;
+        }
+      }
+    }
+
+    // Try to render actual image
+    bool imageRendered = false;
+    if (!imageRef.empty() && !self->imageCacheDir.empty()) {
+      // Strip leading '#' from href (FB2 binary references)
+      if (!imageRef.empty() && imageRef[0] == '#') {
+        imageRef = imageRef.substr(1);
+      }
+
+      const std::string bmpPath = self->imageCacheDir + "/" + imageRef + ".bmp";
+
+      // Convert image to BMP if not already cached
+      if (!SdMan.exists(bmpPath.c_str())) {
+        const std::string tmpImagePath = self->imageCacheDir + "/.tmp_img";
+        bool extracted = false;
+
+        // Use direct offset-based extraction if available (avoids full XML re-parsing)
+        if (self->binaryOffsets) {
+          auto it = self->binaryOffsets->find(imageRef);
+          if (it != self->binaryOffsets->end()) {
+            extracted = Fb2CoverExtractor::extractBinaryByOffset(self->filepath, it->second, tmpImagePath);
+          }
+        }
+
+        // Fall back to full XML parsing if offset not available
+        if (!extracted) {
+          extracted = Fb2CoverExtractor::extractBinaryToFile(self->filepath, imageRef, tmpImagePath);
+        }
+
+        if (extracted) {
+          ImageUtils::convertImageToBmp(tmpImagePath, bmpPath, self->viewportWidth, self->viewportHeight);
+          SdMan.remove(tmpImagePath.c_str());
+        }
+      }
+
+      // Read BMP dimensions and add to page
+      uint16_t imgW, imgH;
+      if (SdMan.exists(bmpPath.c_str()) && ImageUtils::readBmpDimensions(bmpPath, imgW, imgH)) {
+        self->addImageToPage(bmpPath, imgW, imgH);
+        imageRendered = true;
+      }
+    }
+
+    // Fallback to placeholder
+    if (!imageRendered) {
+      self->startNewTextBlock(centeredBlockStyle);
+      self->italicUntilDepth = std::min(self->italicUntilDepth, self->depth);
+      self->depth++;
+      self->characterData(userData, "[Image]", 7);
+      self->skipUntilDepth = self->depth - 1;
+      return;
+    }
+
+    self->skipUntilDepth = self->depth;
     self->depth++;
-    self->characterData(userData, "[Image]", 7);
-    self->skipUntilDepth = self->depth - 1;
     return;
   } else if (strcmp(tag, "table") == 0) {
     self->startNewTextBlock(centeredBlockStyle);
@@ -336,6 +404,54 @@ void Fb2SectionParser::makePages() {
   if (extraParagraphSpacing) {
     currentPageNextY += lineHeight / 2;
   }
+}
+
+void Fb2SectionParser::addImageToPage(const std::string& bmpPath, uint16_t width, uint16_t height) {
+  const int lineHeight = renderer.getLineHeight(fontId) * lineCompression;
+
+  // Flush current text block
+  if (currentTextBlock && !currentTextBlock->isEmpty()) {
+    makePages();
+  }
+
+  // Reset text block for content after the image
+  auto paragraphBlockStyle = BlockStyle();
+  paragraphBlockStyle.textAlignDefined = true;
+  const auto align = (paragraphAlignment == static_cast<uint8_t>(CssTextAlign::None))
+                         ? CssTextAlign::Justify
+                         : static_cast<CssTextAlign>(paragraphAlignment);
+  paragraphBlockStyle.alignment = align;
+  currentTextBlock.reset(new ParsedText(extraParagraphSpacing, hyphenationEnabled, paragraphBlockStyle));
+
+  if (!currentPage) {
+    currentPage.reset(new Page());
+    currentPageNextY = 0;
+  }
+
+  // Clamp to viewport dimensions
+  uint16_t displayW = width;
+  uint16_t displayH = height;
+  if (displayW > viewportWidth) {
+    displayH = static_cast<uint16_t>(static_cast<float>(height) * viewportWidth / width);
+    displayW = viewportWidth;
+  }
+  if (displayH > viewportHeight) {
+    displayW = static_cast<uint16_t>(static_cast<float>(width) * viewportHeight / height);
+    displayH = viewportHeight;
+  }
+
+  // Center horizontally
+  const int16_t xPos = static_cast<int16_t>((viewportWidth - displayW) / 2);
+
+  // Check if fits on current page
+  if (currentPageNextY + displayH > viewportHeight) {
+    completePageFn(std::move(currentPage));
+    currentPage.reset(new Page());
+    currentPageNextY = 0;
+  }
+
+  currentPage->elements.push_back(std::make_shared<PageImage>(bmpPath, displayW, displayH, xPos, currentPageNextY));
+  currentPageNextY += displayH + lineHeight / 2;
 }
 
 bool Fb2SectionParser::parseAndBuildPages() {

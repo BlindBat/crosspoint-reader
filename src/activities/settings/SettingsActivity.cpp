@@ -17,11 +17,12 @@ const char* SettingsActivity::categoryNames[categoryCount] = {"Display", "Reader
 
 namespace {
 constexpr int changeTabsMs = 700;
-constexpr int displaySettingsCount = 8;
+constexpr int displaySettingsCount = 9;
 const SettingInfo displaySettings[displaySettingsCount] = {
     // Should match with SLEEP_SCREEN_MODE
     SettingInfo::Enum("Sleep Screen", &CrossPointSettings::sleepScreen,
                       {"Dark", "Light", "Custom", "Cover", "None", "Cover + Custom"}),
+    SettingInfo::Toggle("Cover Sleep Screen", &CrossPointSettings::coverSleepScreen),
     SettingInfo::Enum("Sleep Screen Cover Mode", &CrossPointSettings::sleepScreenCoverMode, {"Fit", "Crop"}),
     SettingInfo::Enum("Sleep Screen Cover Filter", &CrossPointSettings::sleepScreenCoverFilter,
                       {"None", "Contrast", "Inverted"}),
@@ -35,7 +36,7 @@ const SettingInfo displaySettings[displaySettingsCount] = {
     SettingInfo::Toggle("Sunlight Fading Fix", &CrossPointSettings::fadingFix),
 };
 
-constexpr int readerSettingsCount = 10;
+constexpr int readerSettingsCount = 11;
 const SettingInfo readerSettings[readerSettingsCount] = {
     SettingInfo::Enum("Font Family", &CrossPointSettings::fontFamily, {"Bookerly", "Noto Sans", "Open Dyslexic"}),
     SettingInfo::Enum("Font Size", &CrossPointSettings::fontSize, {"Small", "Medium", "Large", "X Large"}),
@@ -48,7 +49,8 @@ const SettingInfo readerSettings[readerSettingsCount] = {
     SettingInfo::Enum("Reading Orientation", &CrossPointSettings::orientation,
                       {"Portrait", "Landscape CW", "Inverted", "Landscape CCW"}),
     SettingInfo::Toggle("Extra Paragraph Spacing", &CrossPointSettings::extraParagraphSpacing),
-    SettingInfo::Toggle("Text Anti-Aliasing", &CrossPointSettings::textAntiAliasing)};
+    SettingInfo::Toggle("Text Anti-Aliasing", &CrossPointSettings::textAntiAliasing),
+    SettingInfo::Toggle("Inline Images", &CrossPointSettings::inlineImages)};
 
 constexpr int controlsSettingsCount = 4;
 const SettingInfo controlsSettings[controlsSettingsCount] = {

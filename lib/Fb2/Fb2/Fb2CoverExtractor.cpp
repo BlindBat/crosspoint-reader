@@ -121,17 +121,18 @@ void XMLCALL onCharData(void* userData, const char* s, int len) {
 }
 }  // namespace
 
-bool Fb2CoverExtractor::extractBinaryToJpeg(const std::string& tempJpegPath) const {
-  FsFile jpegFile;
-  if (!SdMan.openFileForWrite("FB2", tempJpegPath, jpegFile)) {
+bool Fb2CoverExtractor::extractBinaryToFile(const std::string& fb2Path, const std::string& targetBinaryId,
+                                            const std::string& outputPath) {
+  FsFile outFile;
+  if (!SdMan.openFileForWrite("FB2", outputPath, outFile)) {
     return false;
   }
 
-  ExtractState state(binaryId, &jpegFile);
+  ExtractState state(targetBinaryId, &outFile);
 
   XML_Parser xmlParser = XML_ParserCreate(nullptr);
   if (!xmlParser) {
-    jpegFile.close();
+    outFile.close();
     return false;
   }
 
@@ -140,9 +141,9 @@ bool Fb2CoverExtractor::extractBinaryToJpeg(const std::string& tempJpegPath) con
   XML_SetCharacterDataHandler(xmlParser, onCharData);
 
   FsFile fb2File;
-  if (!SdMan.openFileForRead("FB2", filepath, fb2File)) {
+  if (!SdMan.openFileForRead("FB2", fb2Path, fb2File)) {
     XML_ParserFree(xmlParser);
-    jpegFile.close();
+    outFile.close();
     return false;
   }
 
@@ -165,7 +166,7 @@ bool Fb2CoverExtractor::extractBinaryToJpeg(const std::string& tempJpegPath) con
 
     if (XML_ParseBuffer(xmlParser, static_cast<int>(len), done) == XML_STATUS_ERROR) {
       // Parse errors in binary extraction are common due to entity issues; check if we got data
-      if (state.foundTarget && jpegFile.size() > 0) {
+      if (state.foundTarget && outFile.size() > 0) {
         break;  // We got enough data
       }
       success = false;
@@ -178,14 +179,132 @@ bool Fb2CoverExtractor::extractBinaryToJpeg(const std::string& tempJpegPath) con
 
   XML_ParserFree(xmlParser);
   fb2File.close();
-  jpegFile.close();
+  outFile.close();
 
   if (!state.foundTarget || !success) {
-    SdMan.remove(tempJpegPath.c_str());
+    SdMan.remove(outputPath.c_str());
     return false;
   }
 
   return true;
+}
+
+bool Fb2CoverExtractor::extractBinaryByOffset(const std::string& fb2Path, const size_t fileOffset,
+                                              const std::string& outputPath) {
+  FsFile fb2File;
+  if (!SdMan.openFileForRead("FB2", fb2Path, fb2File)) {
+    return false;
+  }
+
+  fb2File.seek(fileOffset);
+
+  // Scan past the opening <binary ...> tag to find the base64 content
+  bool foundTagEnd = false;
+  {
+    char c;
+    while (fb2File.available() > 0) {
+      if (fb2File.read(&c, 1) != 1) break;
+      if (c == '>') {
+        foundTagEnd = true;
+        break;
+      }
+    }
+  }
+
+  if (!foundTagEnd) {
+    fb2File.close();
+    Serial.printf("[%lu] [FB2] Failed to find end of <binary> opening tag at offset %u\n", millis(),
+                  static_cast<unsigned>(fileOffset));
+    return false;
+  }
+
+  FsFile outFile;
+  if (!SdMan.openFileForWrite("FB2", outputPath, outFile)) {
+    fb2File.close();
+    return false;
+  }
+
+  // Read base64 content and decode directly until we hit '<' (start of </binary>)
+  uint8_t b64Buf[3];
+  int b64Pending = 0;
+  bool done = false;
+  char readBuf[512];
+
+  while (!done && fb2File.available() > 0) {
+    const int bytesRead = fb2File.read(readBuf, sizeof(readBuf));
+    if (bytesRead <= 0) break;
+
+    for (int i = 0; i < bytesRead && !done; i++) {
+      const char c = readBuf[i];
+
+      // '<' signals end of base64 content (start of </binary>)
+      if (c == '<') {
+        done = true;
+        break;
+      }
+
+      // Skip whitespace
+      if (c == '\n' || c == '\r' || c == ' ' || c == '\t') continue;
+
+      // Handle padding
+      if (c == '=') {
+        if (b64Pending == 2) {
+          outFile.write(b64Buf, 1);
+        } else if (b64Pending == 3) {
+          outFile.write(b64Buf, 2);
+        }
+        b64Pending = 0;
+        continue;
+      }
+
+      const int8_t val = base64DecodeChar(c);
+      if (val == B64_INVALID) continue;
+
+      switch (b64Pending) {
+        case 0:
+          b64Buf[0] = static_cast<uint8_t>(val << 2);
+          b64Pending = 1;
+          break;
+        case 1:
+          b64Buf[0] |= static_cast<uint8_t>(val >> 4);
+          b64Buf[1] = static_cast<uint8_t>((val & 0x0F) << 4);
+          b64Pending = 2;
+          break;
+        case 2:
+          b64Buf[1] |= static_cast<uint8_t>(val >> 2);
+          b64Buf[2] = static_cast<uint8_t>((val & 0x03) << 6);
+          b64Pending = 3;
+          break;
+        case 3:
+          b64Buf[2] |= static_cast<uint8_t>(val);
+          outFile.write(b64Buf, 3);
+          b64Pending = 0;
+          break;
+      }
+    }
+  }
+
+  // Flush remaining base64 data
+  if (b64Pending == 2) {
+    outFile.write(b64Buf, 1);
+  } else if (b64Pending == 3) {
+    outFile.write(b64Buf, 2);
+  }
+
+  fb2File.close();
+  const uint32_t outSize = outFile.size();
+  outFile.close();
+
+  if (outSize == 0) {
+    SdMan.remove(outputPath.c_str());
+    return false;
+  }
+
+  return true;
+}
+
+bool Fb2CoverExtractor::extractBinaryToJpeg(const std::string& tempJpegPath) const {
+  return extractBinaryToFile(filepath, binaryId, tempJpegPath);
 }
 
 bool Fb2CoverExtractor::extract() const {

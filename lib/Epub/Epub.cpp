@@ -6,6 +6,7 @@
 #include <SDCardManager.h>
 #include <ZipFile.h>
 
+#include "Epub/ImageUtils.h"
 #include "Epub/parsers/ContainerParser.h"
 #include "Epub/parsers/ContentOpfParser.h"
 #include "Epub/parsers/TocNavParser.h"
@@ -517,21 +518,30 @@ std::string Epub::getThumbBmpPath() const { return cachePath + "/thumb_[HEIGHT].
 std::string Epub::getThumbBmpPath(int height) const { return cachePath + "/thumb_" + std::to_string(height) + ".bmp"; }
 
 bool Epub::generateThumbBmp(int height) const {
-  // Already generated, return true
-  if (SdMan.exists(getThumbBmpPath(height).c_str())) {
-    return true;
+  // Already generated — check file exists and is a valid BMP (not an empty stub from older versions)
+  const auto thumbPath = getThumbBmpPath(height);
+  if (SdMan.exists(thumbPath.c_str())) {
+    uint16_t w, h;
+    if (ImageUtils::readBmpDimensions(thumbPath, w, h)) {
+      return true;
+    }
+    // Invalid/empty file from before stub covers — remove and regenerate
+    SdMan.remove(thumbPath.c_str());
   }
 
   if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
-    Serial.printf("[%lu] [EBP] Cannot generate thumb BMP, cache not loaded\n", millis());
+    Serial.printf("[%lu] [EBP] Cache not loaded, no cover available\n", millis());
     return false;
   }
 
   const auto coverImageHref = bookMetadataCache->coreMetadata.coverItemHref;
   if (coverImageHref.empty()) {
     Serial.printf("[%lu] [EBP] No known cover image for thumbnail\n", millis());
-  } else if (coverImageHref.substr(coverImageHref.length() - 4) == ".jpg" ||
-             coverImageHref.substr(coverImageHref.length() - 5) == ".jpeg") {
+    return false;
+  }
+
+  if (coverImageHref.substr(coverImageHref.length() - 4) == ".jpg" ||
+      coverImageHref.substr(coverImageHref.length() - 5) == ".jpeg") {
     Serial.printf("[%lu] [EBP] Generating thumb BMP from JPG cover image\n", millis());
     const auto coverJpgTempPath = getCachePath() + "/.cover.jpg";
 
@@ -564,18 +574,13 @@ bool Epub::generateThumbBmp(int height) const {
     if (!success) {
       Serial.printf("[%lu] [EBP] Failed to generate thumb BMP from JPG cover image\n", millis());
       SdMan.remove(getThumbBmpPath(height).c_str());
+      return false;
     }
-    Serial.printf("[%lu] [EBP] Generated thumb BMP from JPG cover image, success: %s\n", millis(),
-                  success ? "yes" : "no");
-    return success;
-  } else {
-    Serial.printf("[%lu] [EBP] Cover image is not a JPG, skipping thumbnail\n", millis());
+    Serial.printf("[%lu] [EBP] Generated thumb BMP from JPG cover image\n", millis());
+    return true;
   }
 
-  // Write an empty bmp file to avoid generation attempts in the future
-  FsFile thumbBmp;
-  SdMan.openFileForWrite("EBP", getThumbBmpPath(height), thumbBmp);
-  thumbBmp.close();
+  Serial.printf("[%lu] [EBP] Cover image is not a JPG, skipping thumbnail\n", millis());
   return false;
 }
 

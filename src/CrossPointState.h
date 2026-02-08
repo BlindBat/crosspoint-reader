@@ -8,6 +8,8 @@ class CrossPointState {
 
  public:
   std::string openEpubPath;
+  std::string openBookTitle;
+  std::string openBookAuthor;
   uint8_t lastSleepImage;
   uint8_t readerActivityLoadCount = 0;
   bool lastSleepFromReader = false;

@@ -1,10 +1,13 @@
 #include "HomeActivity.h"
 
 #include <Bitmap.h>
+#include <EpdFont.h>
 #include <Epub.h>
+#include <Epub/ImageUtils.h>
 #include <Fb2.h>
 #include <GfxRenderer.h>
 #include <SDCardManager.h>
+#include <Txt.h>
 #include <Utf8.h>
 #include <Xtc.h>
 
@@ -56,6 +59,9 @@ void HomeActivity::loadRecentBooks(int maxBooks) {
   }
 }
 
+// Font used for decorated stub cover text (defined in main.cpp)
+extern EpdFont smallFont;
+
 void HomeActivity::loadRecentCovers(int coverHeight) {
   recentsLoading = true;
   bool showingLoading = false;
@@ -63,9 +69,33 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
 
   int progress = 0;
   for (RecentBook& book : recentBooks) {
+    // If coverBmpPath is empty, recover the template path from the book format.
+    // This handles books stored before stub cover generation was available.
+    if (book.coverBmpPath.empty()) {
+      if (StringUtils::checkFileExtension(book.path, ".epub")) {
+        Epub epub(book.path, "/.crosspoint");
+        book.coverBmpPath = epub.getThumbBmpPath();
+      } else if (StringUtils::checkFileExtension(book.path, ".fb2")) {
+        Fb2 fb2(book.path, "/.crosspoint");
+        book.coverBmpPath = fb2.getThumbBmpPath();
+      } else if (StringUtils::checkFileExtension(book.path, ".xtch") ||
+                 StringUtils::checkFileExtension(book.path, ".xtc")) {
+        Xtc xtc(book.path, "/.crosspoint");
+        book.coverBmpPath = xtc.getThumbBmpPath();
+      } else if (StringUtils::checkFileExtension(book.path, ".txt")) {
+        Txt txt(book.path, "/.crosspoint");
+        book.coverBmpPath = txt.getCachePath() + "/thumb_[HEIGHT].bmp";
+      }
+      if (!book.coverBmpPath.empty()) {
+        RECENT_BOOKS.updateBook(book.path, book.title, book.author, book.coverBmpPath);
+      }
+    }
+
     if (!book.coverBmpPath.empty()) {
       std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
-      if (!SdMan.exists(coverPath.c_str())) {
+      // Check if the file exists AND is a valid BMP (not a 0-byte empty stub from older versions)
+      uint16_t bmpW, bmpH;
+      if (!SdMan.exists(coverPath.c_str()) || !ImageUtils::readBmpDimensions(coverPath, bmpW, bmpH)) {
         // If epub, try to load the metadata for title/author and cover
         if (StringUtils::checkFileExtension(book.path, ".epub")) {
           Epub epub(book.path, "/.crosspoint");
@@ -80,6 +110,13 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
           GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
           bool success = epub.generateThumbBmp(coverHeight);
           if (!success) {
+            std::string dir = coverPath.substr(0, coverPath.rfind('/'));
+            SdMan.mkdir(dir.c_str());
+            int thumbWidth = coverHeight * 0.6;
+            success = ImageUtils::generateDecoratedStubCoverBmp(coverPath, thumbWidth, coverHeight, book.title,
+                                                                book.author, smallFont.data);
+          }
+          if (!success) {
             RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
             book.coverBmpPath = "";
           }
@@ -87,20 +124,26 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
           updateRequired = true;
         } else if (StringUtils::checkFileExtension(book.path, ".fb2")) {
           Fb2 fb2(book.path, "/.crosspoint");
-          if (fb2.load(false)) {
-            if (!showingLoading) {
-              showingLoading = true;
-              popupRect = GUI.drawPopup(renderer, "Loading...");
-            }
-            GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
-            bool success = fb2.generateThumbBmp(coverHeight);
-            if (!success) {
-              RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
-              book.coverBmpPath = "";
-            }
-            coverRendered = false;
-            updateRequired = true;
+          fb2.load(false);  // Even if load fails (e.g. cache version mismatch), generateThumbBmp will create a stub
+          if (!showingLoading) {
+            showingLoading = true;
+            popupRect = GUI.drawPopup(renderer, "Loading...");
           }
+          GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
+          bool success = fb2.generateThumbBmp(coverHeight);
+          if (!success) {
+            std::string dir = coverPath.substr(0, coverPath.rfind('/'));
+            SdMan.mkdir(dir.c_str());
+            int thumbWidth = coverHeight * 0.6;
+            success = ImageUtils::generateDecoratedStubCoverBmp(coverPath, thumbWidth, coverHeight, book.title,
+                                                                book.author, smallFont.data);
+          }
+          if (!success) {
+            RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+            book.coverBmpPath = "";
+          }
+          coverRendered = false;
+          updateRequired = true;
         } else if (StringUtils::checkFileExtension(book.path, ".xtch") ||
                    StringUtils::checkFileExtension(book.path, ".xtc")) {
           // Handle XTC file
@@ -114,12 +157,29 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
             bool success = xtc.generateThumbBmp(coverHeight);
             if (!success) {
+              int thumbWidth = coverHeight * 0.6;
+              success = ImageUtils::generateDecoratedStubCoverBmp(coverPath, thumbWidth, coverHeight, book.title,
+                                                                  book.author, smallFont.data);
+            }
+            if (!success) {
               RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
               book.coverBmpPath = "";
             }
             coverRendered = false;
             updateRequired = true;
           }
+        } else if (StringUtils::checkFileExtension(book.path, ".txt")) {
+          Txt txt(book.path, "/.crosspoint");
+          txt.setupCacheDir();
+          int thumbWidth = coverHeight * 0.6;
+          bool success = ImageUtils::generateDecoratedStubCoverBmp(coverPath, thumbWidth, coverHeight, book.title,
+                                                                   book.author, smallFont.data);
+          if (!success) {
+            RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+            book.coverBmpPath = "";
+          }
+          coverRendered = false;
+          updateRequired = true;
         }
       }
     }

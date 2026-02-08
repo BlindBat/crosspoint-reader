@@ -104,6 +104,8 @@ void EpubReaderActivity::onEnter() {
 
   // Save current epub as last opened epub and add to recent books
   APP_STATE.openEpubPath = epub->getPath();
+  APP_STATE.openBookTitle = epub->getTitle();
+  APP_STATE.openBookAuthor = epub->getAuthor();
   APP_STATE.saveToFile();
   RECENT_BOOKS.addBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath());
 
@@ -245,10 +247,12 @@ void EpubReaderActivity::loop() {
   const bool skipChapter = SETTINGS.longPressChapterSkip && mappedInput.getHeldTime() > skipChapterMs;
 
   if (skipChapter) {
+    const int nextIndex = nextTriggered ? currentSpineIndex + 1 : currentSpineIndex - 1;
+    if (nextIndex < 0) return;  // Already at the beginning of the book
     // We don't want to delete the section mid-render, so grab the semaphore
     xSemaphoreTake(renderingMutex, portMAX_DELAY);
     nextPageNumber = 0;
-    currentSpineIndex = nextTriggered ? currentSpineIndex + 1 : currentSpineIndex - 1;
+    currentSpineIndex = nextIndex;
     section.reset();
     xSemaphoreGive(renderingMutex);
     updateRequired = true;
@@ -264,7 +268,7 @@ void EpubReaderActivity::loop() {
   if (prevTriggered) {
     if (section->currentPage > 0) {
       section->currentPage--;
-    } else {
+    } else if (currentSpineIndex > 0) {
       // We don't want to delete the section mid-render, so grab the semaphore
       xSemaphoreTake(renderingMutex, portMAX_DELAY);
       nextPageNumber = UINT16_MAX;
@@ -718,8 +722,8 @@ void EpubReaderActivity::renderStatusBar(const int orientedMarginRight, const in
                                    SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::ONLY_BOOK_PROGRESS_BAR;
   const bool showChapterProgressBar = SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::CHAPTER_PROGRESS_BAR;
   const bool showProgressText = SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::FULL ||
-                                SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::BOOK_PROGRESS_BAR;
-  const bool showBookPercentage = SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::CHAPTER_PROGRESS_BAR;
+                                SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::CHAPTER_PROGRESS_BAR;
+  const bool showBookPercentage = SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::BOOK_PROGRESS_BAR;
   const bool showBattery = SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::NO_PROGRESS ||
                            SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::FULL ||
                            SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::BOOK_PROGRESS_BAR ||
@@ -737,7 +741,8 @@ void EpubReaderActivity::renderStatusBar(const int orientedMarginRight, const in
   int progressTextWidth = 0;
 
   // Calculate progress in book
-  const float sectionChapterProg = static_cast<float>(section->currentPage) / section->pageCount;
+  const float sectionChapterProg =
+      (section->pageCount > 0) ? static_cast<float>(section->currentPage + 1) / section->pageCount : 0;
   const float bookProgress = epub->calculateProgress(currentSpineIndex, sectionChapterProg) * 100;
 
   if (showProgressText || showProgressPercentage || showBookPercentage) {

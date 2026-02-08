@@ -10,9 +10,9 @@
 namespace {
 // FB2 section files don't track embeddedStyle (no CSS in FB2).
 // We use a separate version from EPUB sections.
-constexpr uint8_t FB2_SECTION_FILE_VERSION = 1;
+constexpr uint8_t FB2_SECTION_FILE_VERSION = 2;
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(uint8_t) +
-                                 sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) +
+                                 sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) +
                                  sizeof(uint32_t);
 }  // namespace
 
@@ -35,7 +35,8 @@ uint32_t Fb2Section::onPageComplete(std::unique_ptr<Page> page) {
 
 void Fb2Section::writeSectionFileHeader(const int fontId, const float lineCompression, const bool extraParagraphSpacing,
                                         const uint8_t paragraphAlignment, const uint16_t viewportWidth,
-                                        const uint16_t viewportHeight, const bool hyphenationEnabled) {
+                                        const uint16_t viewportHeight, const bool hyphenationEnabled,
+                                        const bool inlineImages) {
   if (!file) {
     Serial.printf("[%lu] [FBS] File not open for writing header\n", millis());
     return;
@@ -48,13 +49,15 @@ void Fb2Section::writeSectionFileHeader(const int fontId, const float lineCompre
   serialization::writePod(file, viewportWidth);
   serialization::writePod(file, viewportHeight);
   serialization::writePod(file, hyphenationEnabled);
+  serialization::writePod(file, inlineImages);
   serialization::writePod(file, pageCount);                 // Placeholder
   serialization::writePod(file, static_cast<uint32_t>(0));  // LUT offset placeholder
 }
 
 bool Fb2Section::loadSectionFile(const int fontId, const float lineCompression, const bool extraParagraphSpacing,
                                  const uint8_t paragraphAlignment, const uint16_t viewportWidth,
-                                 const uint16_t viewportHeight, const bool hyphenationEnabled) {
+                                 const uint16_t viewportHeight, const bool hyphenationEnabled,
+                                 const bool inlineImages) {
   if (!SdMan.openFileForRead("FBS", filePath, file)) {
     return false;
   }
@@ -75,6 +78,7 @@ bool Fb2Section::loadSectionFile(const int fontId, const float lineCompression, 
     bool fileExtraParagraphSpacing;
     uint8_t fileParagraphAlignment;
     bool fileHyphenationEnabled;
+    bool fileInlineImages;
     serialization::readPod(file, fileFontId);
     serialization::readPod(file, fileLineCompression);
     serialization::readPod(file, fileExtraParagraphSpacing);
@@ -82,11 +86,12 @@ bool Fb2Section::loadSectionFile(const int fontId, const float lineCompression, 
     serialization::readPod(file, fileViewportWidth);
     serialization::readPod(file, fileViewportHeight);
     serialization::readPod(file, fileHyphenationEnabled);
+    serialization::readPod(file, fileInlineImages);
 
     if (fontId != fileFontId || lineCompression != fileLineCompression ||
         extraParagraphSpacing != fileExtraParagraphSpacing || paragraphAlignment != fileParagraphAlignment ||
         viewportWidth != fileViewportWidth || viewportHeight != fileViewportHeight ||
-        hyphenationEnabled != fileHyphenationEnabled) {
+        hyphenationEnabled != fileHyphenationEnabled || inlineImages != fileInlineImages) {
       file.close();
       Serial.printf("[%lu] [FBS] Parameters do not match\n", millis());
       clearCache();
@@ -117,29 +122,34 @@ bool Fb2Section::clearCache() const {
 bool Fb2Section::createSectionFile(const int fontId, const float lineCompression, const bool extraParagraphSpacing,
                                    const uint8_t paragraphAlignment, const uint16_t viewportWidth,
                                    const uint16_t viewportHeight, const bool hyphenationEnabled,
-                                   const std::function<void()>& popupFn) {
+                                   const bool inlineImages, const std::function<void()>& popupFn) {
   const auto& sectionInfo = fb2->getSectionInfo(sectionIndex);
 
-  // Create cache directory
+  // Create cache directories
   {
     const auto sectionsDir = fb2->getCachePath() + "/sections";
     SdMan.mkdir(sectionsDir.c_str());
+    const auto imagesDir = fb2->getCachePath() + "/images";
+    SdMan.mkdir(imagesDir.c_str());
   }
 
   if (!SdMan.openFileForWrite("FBS", filePath, file)) {
     return false;
   }
   writeSectionFileHeader(fontId, lineCompression, extraParagraphSpacing, paragraphAlignment, viewportWidth,
-                         viewportHeight, hyphenationEnabled);
+                         viewportHeight, hyphenationEnabled, inlineImages);
   std::vector<uint32_t> lut = {};
 
   // If there's only one section with fileOffset 0, the metadata parser found no real <section> tags.
   // Pass -1 to tell the parser to process all body content instead of filtering by section index.
   const int targetIndex = (fb2->getSectionCount() == 1 && sectionInfo.fileOffset == 0) ? -1 : sectionIndex;
+  const auto imageCacheDir = inlineImages ? fb2->getCachePath() + "/images" : std::string("");
+  const auto& offsets = fb2->getBinaryOffsets();
   Fb2SectionParser visitor(
       fb2->getPath(), sectionInfo.fileOffset, sectionInfo.length, targetIndex, renderer, fontId, lineCompression,
       extraParagraphSpacing, paragraphAlignment, viewportWidth, viewportHeight, hyphenationEnabled,
-      [this, &lut](std::unique_ptr<Page> page) { lut.emplace_back(this->onPageComplete(std::move(page))); }, popupFn);
+      [this, &lut](std::unique_ptr<Page> page) { lut.emplace_back(this->onPageComplete(std::move(page))); }, popupFn,
+      imageCacheDir, &offsets);
   Hyphenator::setPreferredLanguage(fb2->getLanguage());
   bool success = visitor.parseAndBuildPages();
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 class Fb2 {
@@ -25,6 +26,7 @@ class Fb2 {
   std::string coverBinaryId;
   std::vector<SectionInfo> sections;
   std::vector<TocEntry> tocEntries;
+  std::unordered_map<std::string, size_t> binaryOffsets;  // binary id -> file byte offset
   bool loaded = false;
 
   bool parseMetadata();
@@ -66,4 +68,7 @@ class Fb2 {
 
   // Cover binary ID (for cover extractor)
   const std::string& getCoverBinaryId() const { return coverBinaryId; }
+
+  // Binary element offsets for direct extraction (avoids full XML re-parsing)
+  const std::unordered_map<std::string, size_t>& getBinaryOffsets() const { return binaryOffsets; }
 };

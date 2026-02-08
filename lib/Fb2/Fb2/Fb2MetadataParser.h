@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "Fb2.h"
@@ -20,6 +21,9 @@ class Fb2MetadataParser {
   // Section scanning
   std::vector<Fb2::SectionInfo> sections;
   std::vector<Fb2::TocEntry> tocEntries;
+
+  // Binary element offsets (id -> byte offset of <binary> tag start)
+  std::unordered_map<std::string, size_t> binaryOffsets;
 
   // Parser state
   enum class Context {
@@ -69,4 +73,5 @@ class Fb2MetadataParser {
   const std::string& getCoverBinaryId() const { return coverBinaryId; }
   const std::vector<Fb2::SectionInfo>& getSections() const { return sections; }
   const std::vector<Fb2::TocEntry>& getTocEntries() const { return tocEntries; }
+  const std::unordered_map<std::string, size_t>& getBinaryOffsets() const { return binaryOffsets; }
 };

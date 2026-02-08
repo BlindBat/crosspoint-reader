@@ -76,6 +76,8 @@ void Fb2ReaderActivity::onEnter() {
   }
 
   APP_STATE.openEpubPath = fb2->getPath();
+  APP_STATE.openBookTitle = fb2->getTitle();
+  APP_STATE.openBookAuthor = fb2->getAuthor();
   APP_STATE.saveToFile();
   RECENT_BOOKS.addBook(fb2->getPath(), fb2->getTitle(), fb2->getAuthor(), fb2->getThumbBmpPath());
 
@@ -192,9 +194,11 @@ void Fb2ReaderActivity::loop() {
   const bool skipChapter = SETTINGS.longPressChapterSkip && mappedInput.getHeldTime() > skipChapterMs;
 
   if (skipChapter) {
+    const int nextIndex = nextTriggered ? currentSectionIndex + 1 : currentSectionIndex - 1;
+    if (nextIndex < 0) return;  // Already at the beginning of the book
     xSemaphoreTake(renderingMutex, portMAX_DELAY);
     nextPageNumber = 0;
-    currentSectionIndex = nextTriggered ? currentSectionIndex + 1 : currentSectionIndex - 1;
+    currentSectionIndex = nextIndex;
     section.reset();
     xSemaphoreGive(renderingMutex);
     updateRequired = true;
@@ -209,7 +213,7 @@ void Fb2ReaderActivity::loop() {
   if (prevTriggered) {
     if (section->currentPage > 0) {
       section->currentPage--;
-    } else {
+    } else if (currentSectionIndex > 0) {
       xSemaphoreTake(renderingMutex, portMAX_DELAY);
       nextPageNumber = UINT16_MAX;
       currentSectionIndex--;
@@ -427,13 +431,13 @@ void Fb2ReaderActivity::renderScreen() {
 
     if (!section->loadSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
                                   SETTINGS.extraParagraphSpacing, SETTINGS.paragraphAlignment, viewportWidth,
-                                  viewportHeight, SETTINGS.hyphenationEnabled)) {
+                                  viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.inlineImages)) {
       Serial.printf("[%lu] [FBR] Cache not found, building...\n", millis());
       const auto popupFn = [this]() { GUI.drawPopup(renderer, "Indexing..."); };
 
       if (!section->createSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
                                       SETTINGS.extraParagraphSpacing, SETTINGS.paragraphAlignment, viewportWidth,
-                                      viewportHeight, SETTINGS.hyphenationEnabled, popupFn)) {
+                                      viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.inlineImages, popupFn)) {
         Serial.printf("[%lu] [FBR] Failed to build section\n", millis());
         section.reset();
         return;
@@ -547,8 +551,8 @@ void Fb2ReaderActivity::renderStatusBar(const int orientedMarginRight, const int
                                    SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::ONLY_BOOK_PROGRESS_BAR;
   const bool showChapterProgressBar = SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::CHAPTER_PROGRESS_BAR;
   const bool showProgressText = SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::FULL ||
-                                SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::BOOK_PROGRESS_BAR;
-  const bool showBookPercentage = SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::CHAPTER_PROGRESS_BAR;
+                                SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::CHAPTER_PROGRESS_BAR;
+  const bool showBookPercentage = SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::BOOK_PROGRESS_BAR;
   const bool showBattery = SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::NO_PROGRESS ||
                            SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::FULL ||
                            SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::BOOK_PROGRESS_BAR ||
@@ -564,7 +568,8 @@ void Fb2ReaderActivity::renderStatusBar(const int orientedMarginRight, const int
   const auto textY = screenHeight - orientedMarginBottom - 4;
   int progressTextWidth = 0;
 
-  const float sectionChapterProg = static_cast<float>(section->currentPage) / section->pageCount;
+  const float sectionChapterProg =
+      (section->pageCount > 0) ? static_cast<float>(section->currentPage + 1) / section->pageCount : 0;
   const float bookProgress = fb2->calculateProgress(currentSectionIndex, sectionChapterProg) * 100;
 
   if (showProgressText || showProgressPercentage || showBookPercentage) {

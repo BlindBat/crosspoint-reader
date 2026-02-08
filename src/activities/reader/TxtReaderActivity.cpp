@@ -61,6 +61,8 @@ void TxtReaderActivity::onEnter() {
   auto filePath = txt->getPath();
   auto fileName = filePath.substr(filePath.rfind('/') + 1);
   APP_STATE.openEpubPath = filePath;
+  APP_STATE.openBookTitle = fileName;
+  APP_STATE.openBookAuthor = "";
   APP_STATE.saveToFile();
   RECENT_BOOKS.addBook(filePath, fileName, "", "");
 

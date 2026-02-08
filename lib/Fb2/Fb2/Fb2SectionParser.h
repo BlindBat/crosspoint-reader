@@ -10,6 +10,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 class GfxRenderer;
 
@@ -32,6 +33,7 @@ class Fb2SectionParser {
   int italicUntilDepth = INT_MAX;
   int topLevelSectionCount = 0;
   int targetSectionDepth = -1;  // depth at which the target section was entered
+  int bodyContentDepth = -1;    // depth at which body's direct children appear
   bool inTargetSection = false;
   bool pastTargetSection = false;
   bool inBody = false;
@@ -51,10 +53,15 @@ class Fb2SectionParser {
   uint16_t viewportHeight;
   bool hyphenationEnabled;
 
+  // Image support
+  std::string imageCacheDir;                                               // e.g. ".crosspoint/fb2_<hash>/images"
+  const std::unordered_map<std::string, size_t>* binaryOffsets = nullptr;  // binary id -> file byte offset
+
   void flushPartWordBuffer();
   void startNewTextBlock(const BlockStyle& blockStyle);
   void makePages();
   void addLineToPage(std::shared_ptr<TextBlock> line);
+  void addImageToPage(const std::string& bmpPath, uint16_t width, uint16_t height);
 
   static void XMLCALL startElement(void* userData, const char* name, const char** atts);
   static void XMLCALL characterData(void* userData, const char* s, int len);
@@ -66,7 +73,8 @@ class Fb2SectionParser {
                             bool extraParagraphSpacing, uint8_t paragraphAlignment, uint16_t viewportWidth,
                             uint16_t viewportHeight, bool hyphenationEnabled,
                             const std::function<void(std::unique_ptr<Page>)>& completePageFn,
-                            const std::function<void()>& popupFn = nullptr)
+                            const std::function<void()>& popupFn = nullptr, const std::string& imageCacheDir = "",
+                            const std::unordered_map<std::string, size_t>* binaryOffsets = nullptr)
       : filepath(filepath),
         fileOffset(fileOffset),
         sectionLength(sectionLength),
@@ -80,7 +88,9 @@ class Fb2SectionParser {
         viewportHeight(viewportHeight),
         hyphenationEnabled(hyphenationEnabled),
         completePageFn(completePageFn),
-        popupFn(popupFn) {}
+        popupFn(popupFn),
+        imageCacheDir(imageCacheDir),
+        binaryOffsets(binaryOffsets) {}
 
   bool parseAndBuildPages();
 };

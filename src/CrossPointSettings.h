@@ -171,6 +171,10 @@ class CrossPointSettings {
   uint8_t fadingFix = 0;
   // Use book's embedded CSS styles for EPUB rendering (1 = enabled, 0 = disabled)
   uint8_t embeddedStyle = 1;
+  // Render inline images in EPUB/FB2 (1 = enabled, 0 = disabled — falls back to [Image] placeholders)
+  uint8_t inlineImages = 1;
+  // Show current book's cover (or stub) on sleep screen (1 = enabled, 0 = disabled)
+  uint8_t coverSleepScreen = 0;
 
   ~CrossPointSettings() = default;
 

@@ -74,6 +74,23 @@ void Fb2MetadataParser::startElement(void* userData, const char* name, const cha
     return;
   }
 
+  // Record binary element offsets (these appear outside <body>, typically at the end)
+  if (strcmp(tag, "binary") == 0 && !self->inBody) {
+    std::string binaryId;
+    if (atts) {
+      for (int i = 0; atts[i]; i += 2) {
+        if (strcmp(atts[i], "id") == 0) {
+          binaryId = atts[i + 1];
+          break;
+        }
+      }
+    }
+    if (!binaryId.empty()) {
+      self->binaryOffsets[binaryId] = XML_GetCurrentByteIndex(static_cast<XML_Parser>(self->parser));
+    }
+    return;
+  }
+
   if (self->inBody) {
     if (strcmp(tag, "section") == 0) {
       self->sectionDepth++;
