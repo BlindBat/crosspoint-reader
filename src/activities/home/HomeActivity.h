@@ -3,10 +3,9 @@
 #include <vector>
 
 #include "./FileBrowserActivity.h"
+#include "RecentBooksStore.h"
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
-
-struct RecentBook;
 struct Rect;
 
 class HomeActivity final : public Activity {
