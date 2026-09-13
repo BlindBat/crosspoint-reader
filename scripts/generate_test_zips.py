@@ -23,8 +23,18 @@ import zipfile
 from pathlib import Path
 
 OUTPUT_DIR = Path(__file__).parent.parent / "test" / "zip_file" / "resources"
+BOOK_OUTPUT_DIR = Path(__file__).parent.parent / "test" / "book_metadata_cache" / "resources"
 
 FIXED_DATE = (2021, 1, 1, 0, 0, 0)  # deterministic mtime for every entry
+
+# A minimal EPUB-shaped archive whose entry names double as spine hrefs in the
+# BookMetadataCache suite. Uncompressed sizes are what buildBookBin sums into
+# cumulative sizes, so keep these payload lengths in sync with BookMetadataCacheTest.
+BOOK_ENTRIES = [
+    ("OEBPS/chapter1.xhtml", b"<html><body>Chapter one.</body></html>", zipfile.ZIP_DEFLATED),
+    ("OEBPS/chapter2.xhtml", b"<html><body>" + b"Chapter two. " * 8 + b"</body></html>", zipfile.ZIP_DEFLATED),
+    ("OEBPS/chapter3.xhtml", b"<html><body>Chapter three, stored.</body></html>", zipfile.ZIP_STORED),
+]
 
 # (name, payload-bytes, compression-method)
 # The deflated entry is deliberately repetitive so DEFLATE actually shrinks it,
@@ -219,9 +229,34 @@ def build_empty_zip() -> bytes:
     return buf.getvalue()
 
 
+def build_book_epub() -> bytes:
+    """Build the EPUB-shaped archive used by the BookMetadataCache suite."""
+    import io
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, payload, method in BOOK_ENTRIES:
+            info = zipfile.ZipInfo(name, date_time=FIXED_DATE)
+            info.compress_type = method
+            info.create_system = 3
+            info.external_attr = 0o644 << 16
+            zf.writestr(info, payload)
+    return buf.getvalue()
+
+
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    BOOK_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     good = build_good_zip()
+
+    book_epub = build_book_epub()
+    with open(BOOK_OUTPUT_DIR / "book.epub", "wb") as fh:
+        fh.write(book_epub)
+    if "--print" in sys.argv:
+        print(f"\nbook.epub -> {BOOK_OUTPUT_DIR}")
+        for name, payload, method in BOOK_ENTRIES:
+            kind = "STORED" if method == zipfile.ZIP_STORED else "DEFLATED"
+            print(f"  {name:24s} {len(payload):5d} bytes  {kind}")
 
     outputs = {
         "good.zip": good,
