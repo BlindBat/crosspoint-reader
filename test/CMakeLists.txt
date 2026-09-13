@@ -24,6 +24,22 @@ FetchContent_MakeAvailable(googletest)
 
 set(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
+# JPEGDEC at the same pinned commit the firmware builds against
+# (platformio.ini lib_deps), with CrossPoint's scripts/jpegdec_patches/
+# applied by the same git-apply idempotency rules as the PlatformIO
+# pre-build hook. SOURCE_SUBDIR points at src/ (no CMakeLists there), so
+# MakeAvailable only populates the sources; test/jpeg_to_bmp compiles
+# JPEGDEC.cpp directly.
+FetchContent_Declare(
+  jpegdec
+  GIT_REPOSITORY https://github.com/bitbank2/JPEGDEC.git
+  GIT_TAG 86282979224c8a32fd51e091ed5a35b0c699a52b
+  SOURCE_SUBDIR src
+  PATCH_COMMAND bash ${REPO_ROOT}/scripts/apply_jpegdec_patches.sh <SOURCE_DIR>
+                ${REPO_ROOT}/scripts/jpegdec_patches
+)
+FetchContent_MakeAvailable(jpegdec)
+
 add_library(crosspoint_test_common INTERFACE)
 target_include_directories(crosspoint_test_common INTERFACE
   ${REPO_ROOT}
@@ -81,3 +97,6 @@ add_subdirectory(book_metadata_cache)
 add_subdirectory(opds_parser)
 add_subdirectory(xtc_parser)
 add_subdirectory(epub_section)
+add_subdirectory(image_dims_probe)
+add_subdirectory(png_decode)
+add_subdirectory(jpeg_to_bmp)
