@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+
+# bin/run-tests -- build and run the host-side gtest suites under test/.
+#
+# Works on macOS and Linux. Tools are taken from PATH when available and
+# otherwise from the PlatformIO-bundled packages, so a plain PlatformIO
+# install is enough to run the suites.
+
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: bin/run-tests [options]
+
+Build the host gtest suites (CMake + Ninja, Release) into build/test and
+run them via ctest. If ctest test discovery fails (some sandboxed
+environments), suite binaries are executed directly instead.
+
+Options:
+  --asan             Build with AddressSanitizer + UBSan into build/test-asan
+                     (-DCROSSPOINT_SANITIZE=ON).
+  --filter <regex>   Only build and run suites whose directory or target name
+                     matches <regex> (e.g. --filter css, --filter 'json').
+                     Matching suites are executed directly (not via ctest).
+  --quick            Skip the empirically slowest suites (largest build cost:
+                     chapter_html_slim_parser, hyphenation_eval). Intended for
+                     pre-push checks.
+  --full             Also run PlatformIO static analysis after the tests:
+                     pio check --fail-on-defect low/medium/high.
+  --clean            Delete the build directory first (fresh configure+build).
+  -h, --help         Show this help.
+EOF
+}
+
+# --- Option parsing ---
+
+ASAN=0
+FILTER=""
+QUICK=0
+FULL=0
+CLEAN=0
+
+# Slowest suites by measured clean-build cost (ninja log, 2026-09):
+# chapter_html_slim_parser ~6.3s, hyphenation_eval ~5.2s; every other suite
+# is <=2.5s. Runtime is uniform (<1s per binary).
+QUICK_SKIP=(chapter_html_slim_parser hyphenation_eval)
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --asan) ASAN=1 ;;
+    --filter)
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "Error: --filter requires a pattern argument" >&2
+        usage >&2
+        exit 1
+      fi
+      FILTER="$2"
+      shift
+      ;;
+    --quick) QUICK=1 ;;
+    --full) FULL=1 ;;
+    --clean) CLEAN=1 ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Error: unknown option '$1'" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+# --- Locate repo root (script may be invoked from anywhere) ---
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${REPO_ROOT}"
+
+# --- Tool resolution: PATH first, then the PlatformIO-bundled packages ---
+
+PIO_CMAKE_DIR="${HOME}/.platformio/packages/tool-cmake/bin"
+PIO_NINJA_DIR="${HOME}/.platformio/packages/tool-ninja"
+
+resolve_tool() {
+  # resolve_tool <name> <fallback-path>
+  local name="$1" fallback="$2"
+  if command -v "${name}" >/dev/null 2>&1; then
+    command -v "${name}"
+  elif [[ -x "${fallback}" ]]; then
+    printf '%s\n' "${fallback}"
+  else
+    echo "Error: '${name}' not found on PATH and no PlatformIO copy at ${fallback}" >&2
+    echo "Install ${name}, or install PlatformIO (which bundles it) and run a build once." >&2
+    exit 1
+  fi
+}
+
+CMAKE_BIN="$(resolve_tool cmake "${PIO_CMAKE_DIR}/cmake")"
+CTEST_BIN="$(resolve_tool ctest "${PIO_CMAKE_DIR}/ctest")"
+NINJA_BIN="$(resolve_tool ninja "${PIO_NINJA_DIR}/ninja")"
+
+if command -v nproc >/dev/null 2>&1; then
+  JOBS="$(nproc)"
+elif command -v sysctl >/dev/null 2>&1 && sysctl -n hw.ncpu >/dev/null 2>&1; then
+  JOBS="$(sysctl -n hw.ncpu)"
+else
+  JOBS=4
+fi
+
+# --- Discover suites (one directory per suite under test/) ---
+
+SUITE_DIRS=()
+SUITE_TARGETS=()
+for suite_cmake in "${REPO_ROOT}"/test/*/CMakeLists.txt; do
+  suite_dir="$(basename "$(dirname "${suite_cmake}")")"
+  suite_target="$(sed -n 's/^add_executable(\([A-Za-z0-9_]*\).*/\1/p' "${suite_cmake}" | head -n1)"
+  [[ -n "${suite_target}" ]] || continue
+  SUITE_DIRS+=("${suite_dir}")
+  SUITE_TARGETS+=("${suite_target}")
+done
+
+if [[ ${#SUITE_DIRS[@]} -eq 0 ]]; then
+  echo "Error: no test suites found under ${REPO_ROOT}/test" >&2
+  exit 1
+fi
+
+# Apply --quick / --filter to produce the selected suite subset.
+SELECTED_DIRS=()
+SELECTED_TARGETS=()
+SKIPPED_DIRS=()
+for i in "${!SUITE_DIRS[@]}"; do
+  suite_dir="${SUITE_DIRS[$i]}"
+  suite_target="${SUITE_TARGETS[$i]}"
+  if [[ ${QUICK} -eq 1 ]]; then
+    skip=0
+    for slow in "${QUICK_SKIP[@]}"; do
+      [[ "${suite_dir}" == "${slow}" ]] && skip=1
+    done
+    if [[ ${skip} -eq 1 ]]; then
+      SKIPPED_DIRS+=("${suite_dir}")
+      continue
+    fi
+  fi
+  if [[ -n "${FILTER}" ]]; then
+    if ! [[ "${suite_dir}" =~ ${FILTER} || "${suite_target}" =~ ${FILTER} ]]; then
+      continue
+    fi
+  fi
+  SELECTED_DIRS+=("${suite_dir}")
+  SELECTED_TARGETS+=("${suite_target}")
+done
+
+if [[ ${#SELECTED_DIRS[@]} -eq 0 ]]; then
+  echo "Error: no suites match --filter '${FILTER}'" >&2
+  echo "Available suites: ${SUITE_DIRS[*]}" >&2
+  exit 1
+fi
+
+if [[ ${#SKIPPED_DIRS[@]} -gt 0 ]]; then
+  echo "--quick: skipping slow suites: ${SKIPPED_DIRS[*]}"
+fi
+
+# --- Configure ---
+
+BUILD_DIR="${REPO_ROOT}/build/test"
+CONFIGURE_EXTRA=()
+if [[ ${ASAN} -eq 1 ]]; then
+  BUILD_DIR="${REPO_ROOT}/build/test-asan"
+  CONFIGURE_EXTRA+=(-DCROSSPOINT_SANITIZE=ON)
+fi
+
+if [[ ${CLEAN} -eq 1 ]]; then
+  echo "Removing ${BUILD_DIR}"
+  rm -rf "${BUILD_DIR}"
+fi
+
+echo "Configuring (${CMAKE_BIN}) -> ${BUILD_DIR}"
+"${CMAKE_BIN}" -S "${REPO_ROOT}/test" -B "${BUILD_DIR}" -G Ninja \
+  -DCMAKE_MAKE_PROGRAM="${NINJA_BIN}" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE=PRE_TEST \
+  ${CONFIGURE_EXTRA[@]+"${CONFIGURE_EXTRA[@]}"}
+
+# --- Build (-k 0: keep going, surface every failing suite in one pass) ---
+
+RUN_ALL=1
+if [[ -n "${FILTER}" || ${QUICK} -eq 1 ]]; then
+  RUN_ALL=0
+fi
+
+if [[ ${RUN_ALL} -eq 1 ]]; then
+  "${CMAKE_BIN}" --build "${BUILD_DIR}" -- -k 0
+else
+  "${CMAKE_BIN}" --build "${BUILD_DIR}" --target "${SELECTED_TARGETS[@]}" -- -k 0
+fi
+
+# --- Run ---
+
+run_suites_directly() {
+  local failed=()
+  local i
+  for i in "${!SELECTED_DIRS[@]}"; do
+    local dir="${SELECTED_DIRS[$i]}"
+    local target="${SELECTED_TARGETS[$i]}"
+    local binary="${BUILD_DIR}/${dir}/${target}"
+    if [[ ! -x "${binary}" ]]; then
+      echo "Error: suite binary not found: ${binary}" >&2
+      failed+=("${dir}")
+      continue
+    fi
+    echo ""
+    echo "=== ${dir} (${target}) ==="
+    # Run from the suite's build dir: fixture-relative paths match ctest's
+    # WORKING_DIRECTORY.
+    if ! (cd "${BUILD_DIR}/${dir}" && "./${target}"); then
+      failed+=("${dir}")
+    fi
+  done
+  echo ""
+  if [[ ${#failed[@]} -gt 0 ]]; then
+    echo "FAILED suites (${#failed[@]}/${#SELECTED_DIRS[@]}): ${failed[*]}" >&2
+    return 1
+  fi
+  echo "All ${#SELECTED_DIRS[@]} suites passed."
+  return 0
+}
+
+if [[ ${RUN_ALL} -eq 1 ]]; then
+  CTEST_LOG="${BUILD_DIR}/ctest-run.log"
+  ctest_rc=0
+  set +e
+  "${CTEST_BIN}" --test-dir "${BUILD_DIR}" --output-on-failure -j "${JOBS}" 2>&1 | tee "${CTEST_LOG}"
+  ctest_rc=${PIPESTATUS[0]}
+  set -e
+  if [[ ${ctest_rc} -ne 0 ]]; then
+    if grep -qE 'Error running test executable|Unable to find executable|No tests were found' "${CTEST_LOG}"; then
+      echo ""
+      echo "ctest test discovery failed; falling back to running suite binaries directly."
+      run_suites_directly
+    else
+      echo "ctest reported test failures (exit ${ctest_rc})." >&2
+      exit "${ctest_rc}"
+    fi
+  fi
+else
+  run_suites_directly
+fi
+
+# --- Optional static analysis (--full) ---
+
+if [[ ${FULL} -eq 1 ]]; then
+  if command -v pio >/dev/null 2>&1; then
+    PIO_BIN="$(command -v pio)"
+  elif [[ -x "${HOME}/.local/bin/pio" ]]; then
+    PIO_BIN="${HOME}/.local/bin/pio"
+  else
+    echo "Error: 'pio' not found on PATH or at ~/.local/bin/pio (needed for --full)" >&2
+    exit 1
+  fi
+  echo ""
+  echo "=== pio check (static analysis) ==="
+  "${PIO_BIN}" check --fail-on-defect low --fail-on-defect medium --fail-on-defect high
+fi
