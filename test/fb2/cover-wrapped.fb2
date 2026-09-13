@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <book-title>Wrapped Cover</book-title>
+      <coverpage>
+        <image l:href="#target.png"/>
+      </coverpage>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <p>Body text.</p>
+    </section>
+  </body>
+  <binary id="decoy.png" content-type="image/png">REVDT1ktQklOQVJZLU1VU1QtTk9ULUJFLUVYVFJBQ1RFRA==</binary>
+  <binary id="target.png" content-type="image/png">
+      U1RVQlBORzp3cmFw
+      cGVkLWNvdmVyLXBh
+      eWxvYWQtQUJDREVG
+      R0hJSktMTU5PUFFS
+      U1RVVldYWVo=
+  </binary>
+</FictionBook>

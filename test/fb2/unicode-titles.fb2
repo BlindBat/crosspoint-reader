@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <author>
+        <first-name>Лев</first-name>
+        <last-name>Толстой</last-name>
+      </author>
+      <book-title>Война и мир</book-title>
+      <lang>ru</lang>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Глава первая</p></title>
+      <p>Первый абзац русского текста.</p>
+    </section>
+    <section>
+      <title><p>Глава вторая</p></title>
+      <p>Второй абзац русского текста.</p>
+    </section>
+  </body>
+</FictionBook>

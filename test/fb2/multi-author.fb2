@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <author>
+        <first-name>John</first-name>
+        <middle-name>Quincy</middle-name>
+        <last-name>Smith</last-name>
+      </author>
+      <author>
+        <first-name>Jane</first-name>
+        <last-name>Roe</last-name>
+      </author>
+      <book-title>Two Hands, One Pen</book-title>
+      <lang>en</lang>
+      <coverpage>
+        <image l:href="cover-nohash.png"/>
+      </coverpage>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Only Chapter</p></title>
+      <p>Collaboration paragraph.</p>
+    </section>
+  </body>
+</FictionBook>

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <book-title>Nesting Dolls</book-title>
+      <lang>en</lang>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Part One</p><p>The Beginning</p></title>
+      <p>Outer opening paragraph.</p>
+      <section>
+        <title><p>Inner Chapter</p></title>
+        <p>Nested innerword paragraph.</p>
+      </section>
+      <p>Outer closing paragraph.</p>
+    </section>
+    <section>
+      <title><p>Part Two</p></title>
+      <p>Second top level paragraph.</p>
+    </section>
+  </body>
+</FictionBook>

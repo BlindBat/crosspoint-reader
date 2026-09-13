@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <book-title>Annotated Tale</book-title>
+      <lang>en</lang>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Story</p></title>
+      <p>Main narrative referencing a note.</p>
+    </section>
+  </body>
+  <body name="notes">
+    <section id="n1">
+      <title><p>Note 1</p></title>
+      <p>First footnote text.</p>
+    </section>
+    <section id="n2">
+      <title><p>Note 2</p></title>
+      <p>Second footnote text.</p>
+    </section>
+  </body>
+</FictionBook>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <book-title>Plain Stream</book-title>
+      <lang>en</lang>
+    </title-info>
+  </description>
+  <body>
+    <p>Paragraph one without any section wrapper.</p>
+    <p>Paragraph two keeps flowing.</p>
+  </body>
+</FictionBook>

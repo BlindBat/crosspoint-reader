@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <genre>antique</genre>
+      <author>
+        <first-name>John</first-name>
+        <last-name>Doe</last-name>
+      </author>
+      <book-title>The Crosspoint Chronicle</book-title>
+      <lang>en</lang>
+      <coverpage>
+        <image l:href="#cover.jpg"/>
+      </coverpage>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Chapter One</p></title>
+      <p>Alpha begins the story with a modest paragraph.</p>
+      <p>filler000 filler001 filler002 filler003 filler004 filler005 filler006 filler007 filler008 filler009 filler010 filler011 filler012 filler013 filler014 filler015 filler016 filler017 filler018 filler019 filler020 filler021 filler022 filler023 filler024 filler025 filler026 filler027 filler028 filler029 filler030 filler031 filler032 filler033 filler034 filler035 filler036 filler037 filler038 filler039 filler040 filler041 filler042 filler043 filler044 filler045 filler046 filler047 filler048 filler049 filler050 filler051 filler052 filler053 filler054 filler055 filler056 filler057 filler058 filler059 filler060 filler061 filler062 filler063 filler064 filler065 filler066 filler067 filler068 filler069 filler070 filler071 filler072 filler073 filler074 filler075 filler076 filler077 filler078 filler079 filler080 filler081 filler082 filler083 filler084 filler085 filler086 filler087 filler088 filler089</p>
+    </section>
+    <section>
+      <title><p>Chapter Two</p></title>
+      <p>Bravo continues where alpha left off.</p>
+    </section>
+  </body>
+  <binary id="cover.jpg" content-type="image/jpeg">U1RVQkpQRUc6YmFzaWMtY292ZXItcGF5bG9hZC0wMTIzNDU2Nzg5</binary>
+</FictionBook>

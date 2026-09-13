@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <book-title>Styled Section</book-title>
+      <lang>en</lang>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Styles</p></title>
+      <epigraph><p>epigraphword</p></epigraph>
+      <p>plainword <emphasis>italicword</emphasis> <strong>boldword</strong></p>
+      <p><strong><emphasis>bolditalicword</emphasis></strong></p>
+      <subtitle>subtitleword</subtitle>
+      <empty-line/>
+      <poem>
+        <stanza>
+          <v>verseline one</v>
+          <v>verseline two</v>
+        </stanza>
+      </poem>
+      <cite><p>citeword</p></cite>
+      <unknown-tag><p>unknownword</p></unknown-tag>
+      <image l:href="#pic.png"/>
+      <table><tr><td>cellword</td></tr></table>
+      <p>closingword</p>
+    </section>
+    <section>
+      <title><p>Decoy</p></title>
+      <p>decoyword must stay out of section zero.</p>
+    </section>
+  </body>
+</FictionBook>
