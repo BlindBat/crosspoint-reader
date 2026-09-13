@@ -1,5 +1,6 @@
 add_executable(ChapterHtmlSlimParserTest
   ChapterHtmlSlimParserTest.cpp
+  ChapterHtmlSlimParserCorpusTest.cpp
   ParserLinkStubs.cpp
   ${REPO_ROOT}/lib/Epub/Epub/parsers/ChapterHtmlSlimParser.cpp
   ${REPO_ROOT}/lib/Epub/Epub/css/CssParser.cpp
@@ -27,6 +28,10 @@ target_link_libraries(ChapterHtmlSlimParserTest PRIVATE
   crosspoint_test_common
   GTest::gtest_main
   expat
+)
+
+target_compile_definitions(ChapterHtmlSlimParserTest PRIVATE
+  CORPUS_HTML_DIR="${REPO_ROOT}/test/corpus/html"
 )
 
 gtest_discover_tests(ChapterHtmlSlimParserTest)
