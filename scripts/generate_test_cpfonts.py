@@ -193,6 +193,14 @@ def main():
     # Interval 0 span (0x20..0x120) exceeds the style's 93 glyphs.
     write("interval_span_too_big.cpfont",
           patched(intervals_off + 4, struct.pack("<I", 0x120)))
+    # Glyph count under-declared (92 instead of the 93 the intervals imply).
+    # Each interval alone stays valid — first <= last, span <= glyphCount
+    # (so the unsigned "glyphCount - span" in the loader cannot wrap), no
+    # overlap, cumulative offsets — but the LAST interval's offset (92)
+    # indexes one past the declared 92-glyph table: only the offset-overrun
+    # check stands between load() and out-of-range glyph indices.
+    write("interval_offset_overrun.cpfont",
+          patched(HEADER_SIZE + 8, struct.pack("<I", 92)))
 
     write("truncated_intervals.cpfont", valid[:intervals_off + 20])
 

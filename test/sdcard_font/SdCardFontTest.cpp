@@ -147,6 +147,12 @@ TEST_F(SdCardFontLoadTest, MalformedFilesAreRejected) {
       "interval_overlap.cpfont",
       "interval_offset_mismatch.cpfont",
       "interval_span_too_big.cpfont",
+      // interval_offset_overrun under-declares glyphCount so the last
+      // interval's (otherwise consistent) offset indexes past the glyph
+      // table: pinned as a load-time rejection because ONLY the
+      // offset-overrun check can catch it — every other interval invariant
+      // (ordering, overlap, span, cumulative offsets) holds.
+      "interval_offset_overrun.cpfont",
       "truncated_intervals.cpfont",
   };
   for (const char* name : kMalformed) {
