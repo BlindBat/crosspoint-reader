@@ -244,9 +244,12 @@ TEST(BookMetadataCacheTest, TruncationAtEverySectionBoundaryIsNotGracefullyRejec
   ASSERT_EQ(kExpectedVersion, full[0]);
 
   // Section boundaries per docs/file-formats.md, derived from the real header.
-  const uint32_t lutOffset = *reinterpret_cast<const uint32_t*>(&full[1]);
-  const uint16_t spineCount = *reinterpret_cast<const uint16_t*>(&full[5]);
-  const uint16_t tocCount = *reinterpret_cast<const uint16_t*>(&full[7]);
+  uint32_t lutOffset = 0;
+  uint16_t spineCount = 0;
+  uint16_t tocCount = 0;
+  std::memcpy(&lutOffset, &full[1], sizeof(lutOffset));
+  std::memcpy(&spineCount, &full[5], sizeof(spineCount));
+  std::memcpy(&tocCount, &full[7], sizeof(tocCount));
   const uint32_t spineLutBytes = static_cast<uint32_t>(spineCount) * sizeof(uint32_t);
   const uint32_t lutBytes = spineLutBytes + static_cast<uint32_t>(tocCount) * sizeof(uint32_t);
 
