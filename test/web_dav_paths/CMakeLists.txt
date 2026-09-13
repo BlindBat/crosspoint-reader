@@ -11,7 +11,6 @@
 add_executable(WebDavPathsTest
   WebDavPathsTest.cpp
   ${REPO_ROOT}/src/network/WebDAVHandler.cpp
-  ${REPO_ROOT}/src
   ${REPO_ROOT}/lib/FsHelpers/FsHelpers.cpp
 )
 
