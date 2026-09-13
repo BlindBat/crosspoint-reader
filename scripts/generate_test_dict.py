@@ -315,8 +315,15 @@ def main() -> None:
     emit("small_garbage_chunk.dz", dictzip_bytes(small_dict, SMALL_CHUNK, chunks=garbage_chunks))
 
     # Declared chunkCount 16384 -- over the reader's MAX_CHUNK_COUNT (8192)
-    # allocation cap; the real (small) table follows.
-    emit("small_huge_count.dz", dictzip_bytes(small_dict, SMALL_CHUNK, chunk_count=16384))
+    # allocation cap -- with an internally CONSISTENT subfield: subLen covers
+    # all 16384 LE16 lengths (6 + 32768 = 32774, fits uint16). Only the cap can
+    # reject this one; a reader without the cap would reserve a 64KB chunk
+    # table for a 473-byte file. (An inconsistent count-vs-subLen mismatch is
+    # covered separately by small_lying_count.dz.)
+    emit(
+        "small_huge_count.dz",
+        dictzip_bytes(small_dict, SMALL_CHUNK, chunks=small_chunks, lens=[10] * 16384, chunk_count=16384),
+    )
 
     # Truncated inside the RA chunk table: header + subfield header + 6 RA
     # fixed bytes + first LE16 length + one stray byte.

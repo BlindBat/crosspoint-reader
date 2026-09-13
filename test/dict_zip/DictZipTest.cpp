@@ -279,9 +279,10 @@ TEST_F(DictZipTest, LyingChunkCountIsDecompress) {
 }
 
 TEST_F(DictZipTest, HugeChunkCountRejectedWithBoundedAllocation) {
-  // chunkCount 16384 > MAX_CHUNK_COUNT (8192): rejected before the chunk table
-  // is reserved. The allocation counter proves no table-sized buffer was even
-  // attempted (16384 offsets would be 64KB+).
+  // chunkCount 16384 > MAX_CHUNK_COUNT (8192), with an internally consistent
+  // subfield length, so only the cap can reject it: rejected before the chunk
+  // table is reserved. The allocation counter proves no table-sized buffer was
+  // even attempted (16384 offsets would be 64KB+).
   Info info;
   ExtractError err = ExtractError::None;
   bool ok = true;
