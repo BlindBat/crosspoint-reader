@@ -104,6 +104,22 @@ TEST_F(OtaTest, ScannerRejectsPrefixAndExtensionOfOwnName) {
   EXPECT_STREQ(extended.foundName(), "x4pro2");
 }
 
+TEST_F(OtaTest, ScannerRejectsSameLengthForeignName) {
+  // A name of exactly boardNameLen() bytes with different content must be
+  // rejected by the byte comparison, not slip through the length check —
+  // whether the difference sits in the last byte or the first.
+  ASSERT_EQ(sizeof("x4prq") - 1, board_tag::boardNameLen());
+  board_tag::Scanner lastByte;
+  feedString(lastByte, "CROSSPOINT-BOARD-V1:x4prq;");
+  EXPECT_TRUE(lastByte.mismatch());
+  EXPECT_STREQ(lastByte.foundName(), "x4prq");
+
+  board_tag::Scanner firstByte;
+  feedString(firstByte, "CROSSPOINT-BOARD-V1:y4pro;");
+  EXPECT_TRUE(firstByte.mismatch());
+  EXPECT_STREQ(firstByte.foundName(), "y4pro");
+}
+
 TEST_F(OtaTest, ScannerHandlesTagSplitAcrossEveryChunkBoundary) {
   const std::string data = "xxCROSSPOINT-BOARD-V1:papermono;yy";
   for (size_t chunk = 1; chunk <= data.size(); chunk++) {

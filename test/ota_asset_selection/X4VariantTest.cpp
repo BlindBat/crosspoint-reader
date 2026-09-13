@@ -91,6 +91,16 @@ TEST_F(X4VariantTest, X4ScannerRejectsX4proTag) {
   EXPECT_STREQ(scanner.foundName(), "x4pro");
 }
 
+TEST_F(X4VariantTest, X4ScannerRejectsSameLengthForeignName) {
+  // "m5" is a real board name exactly as long as "x4"; content, not just
+  // length, must decide. "x5" additionally differs only in the last byte.
+  for (const char* data : {"CROSSPOINT-BOARD-V1:m5;", "CROSSPOINT-BOARD-V1:x5;"}) {
+    x4build::board_tag::Scanner scanner;
+    scanner.feed(reinterpret_cast<const uint8_t*>(data), std::strlen(data));
+    EXPECT_TRUE(scanner.mismatch()) << data;
+  }
+}
+
 TEST_F(X4VariantTest, X4ScannerAcceptsOwnTag) {
   x4build::board_tag::Scanner scanner;
   const std::string data = "...CROSSPOINT-BOARD-V1:x4;...";
