@@ -177,8 +177,12 @@ std::vector<Hyphenator::BreakInfo> Hyphenator::breakOffsets(const std::string& w
     return {};
   }
 
-  // Convert to codepoints and normalize word boundaries.
-  auto cps = collectCodepoints(word);
+  // Convert to codepoints and normalize word boundaries. The static buffer keeps its
+  // capacity across calls so per-word layout does not alloc/free a vector each time.
+  // Safe: all layout paths (reader render task, TextSettingsPreview, dictionary layout on the
+  // main task) are serialized by the activity lifecycle, so this never runs concurrently.
+  static std::vector<CodepointInfo> cps;
+  collectCodepoints(word, cps);
   trimSurroundingPunctuationAndFootnote(cps);
   const auto* hyphenator = cachedHyphenator_;
 

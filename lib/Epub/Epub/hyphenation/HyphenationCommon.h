@@ -24,3 +24,5 @@ bool isExplicitHyphen(uint32_t cp);
 bool isSoftHyphen(uint32_t cp);
 void trimSurroundingPunctuationAndFootnote(std::vector<CodepointInfo>& cps);
 std::vector<CodepointInfo> collectCodepoints(const std::string& word);
+// Overload that fills a caller-owned vector so its capacity can be reused across words.
+void collectCodepoints(const std::string& word, std::vector<CodepointInfo>& cps);
