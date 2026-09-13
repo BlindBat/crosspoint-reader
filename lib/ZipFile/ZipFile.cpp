@@ -249,8 +249,9 @@ bool ZipFile::loadZipDetails() {
   // Scan backwards for the signature
   int foundOffset = -1;
   for (int i = scanRange - 22; i >= 0; i--) {
-    constexpr uint32_t signature = 0x06054b50;
-    if (*reinterpret_cast<uint32_t*>(&buffer[i]) == signature) {
+    // Byte-wise compare: buffer[i] is not 4-byte aligned, so a uint32_t load
+    // here is undefined behavior (and traps on strict-alignment targets).
+    if (buffer[i] == 0x50 && buffer[i + 1] == 0x4b && buffer[i + 2] == 0x05 && buffer[i + 3] == 0x06) {
       foundOffset = i;
       break;
     }
@@ -266,8 +267,13 @@ bool ZipFile::loadZipDetails() {
   // Relative positions within EOCD:
   // Offset 10: Total number of entries (2 bytes)
   // Offset 16: Offset of start of central directory with respect to the starting disk number (4 bytes)
-  zipDetails.totalEntries = *reinterpret_cast<uint16_t*>(&buffer[foundOffset + 10]);
-  zipDetails.centralDirOffset = *reinterpret_cast<uint32_t*>(&buffer[foundOffset + 16]);
+  // Assemble little-endian fields byte-wise: foundOffset is an arbitrary byte
+  // position, so wider loads through a cast would be misaligned (UB).
+  zipDetails.totalEntries =
+      static_cast<uint16_t>(buffer[foundOffset + 10]) | static_cast<uint16_t>(buffer[foundOffset + 11]) << 8;
+  zipDetails.centralDirOffset =
+      static_cast<uint32_t>(buffer[foundOffset + 16]) | static_cast<uint32_t>(buffer[foundOffset + 17]) << 8 |
+      static_cast<uint32_t>(buffer[foundOffset + 18]) << 16 | static_cast<uint32_t>(buffer[foundOffset + 19]) << 24;
   zipDetails.isSet = true;
 
   free(buffer);
