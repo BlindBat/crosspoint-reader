@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+# Opt-in installer for the repository git hooks in .githooks/.
+# Running this is a per-clone choice; nothing in the build requires it.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "${REPO_ROOT}"
+
+git config core.hooksPath .githooks
+
+echo "Set 'git config core.hooksPath .githooks' (this repository only)."
+echo "Enabled hooks:"
+for hook in .githooks/*; do
+  if [[ -f "${hook}" && -x "${hook}" ]]; then
+    echo "  - $(basename "${hook}")"
+  fi
+done
+echo "Bypass once with 'git commit --no-verify' / 'git push --no-verify'."
+echo "Uninstall with: git config --unset core.hooksPath"

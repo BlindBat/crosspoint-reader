@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+# Opt-in pre-push hook (enable with ./bin/install-hooks; skip once with
+# 'git push --no-verify').
+#
+# 1. Formatting: when the outgoing commits touch C/C++ sources, run the same
+#    check the CI clang-format job runs (bin/clang-format-fix -c).
+# 2. Tests: run the quick host test suites (bin/run-tests --quick).
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "${REPO_ROOT}"
+
+ZERO_SHA_RE='^0+$'
+changed_files=""
+
+# stdin: one line per ref being pushed:
+#   <local ref> SP <local sha> SP <remote ref> SP <remote sha> LF
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  if [[ "${local_sha}" =~ ${ZERO_SHA_RE} ]]; then
+    # Deleting a remote ref: nothing outgoing to check.
+    continue
+  fi
+  if [[ "${remote_sha}" =~ ${ZERO_SHA_RE} ]]; then
+    # New remote branch: compare against origin's main branch when we have
+    # one; otherwise fall back to checking every tracked file.
+    range_base="$(git merge-base "${local_sha}" origin/master 2>/dev/null || true)"
+  else
+    range_base="${remote_sha}"
+  fi
+  if [[ -n "${range_base}" ]]; then
+    changed_files+="$(git diff --name-only --diff-filter=ACMR "${range_base}" "${local_sha}" 2>/dev/null || true)"$'\n'
+  else
+    changed_files+="$(git ls-files)"$'\n'
+  fi
+done
+
+# Same extension filter and exclusions as bin/clang-format-fix.
+changed_cpp="$(printf '%s' "${changed_files}" \
+  | grep -E '\.(c|cpp|h|hpp)$' \
+  | grep -v -E '^lib/EpdFont/builtinFonts/' \
+  | grep -v -E '^lib/Epub/Epub/hyphenation/generated/' \
+  | grep -v -E '^lib/uzlib/' \
+  | grep -v -E '^lib/miniz/third_party/' \
+  | sort -u || true)"
+
+if [[ -n "${changed_cpp}" ]]; then
+  echo "pre-push: outgoing commits touch C/C++ files; running clang-format check..."
+  ./bin/clang-format-fix -c
+else
+  echo "pre-push: no outgoing C/C++ changes; skipping clang-format check."
+fi
+
+echo "pre-push: running quick host test suites (bin/run-tests --quick)..."
+./bin/run-tests --quick
+
+echo "pre-push: all checks passed."
