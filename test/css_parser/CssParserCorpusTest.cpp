@@ -60,9 +60,9 @@ TEST_P(CssCorpusTest, SurvivesArbitraryBytesAndStaysUsable) {
   EXPECT_LE(parser.ruleCount(), 1500u);
 
   // Style resolution must not crash on junk queries after a hostile load.
-  parser.resolveStyle("p", "note");
-  parser.resolveStyle("", "");
-  parser.resolveStyle("no-such-tag", std::string("cls\0with\0nuls", 13));
+  (void)parser.resolveStyle("p", "note");
+  (void)parser.resolveStyle("", "");
+  (void)parser.resolveStyle("no-such-tag", std::string("cls\0with\0nuls", 13));
 
   // The parser must still accept a well-formed stylesheet afterwards: a
   // malformed file may poison at most its own rules, never the parser.
