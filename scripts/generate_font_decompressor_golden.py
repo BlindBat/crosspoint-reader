@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""Generate golden glyph bitmaps for test/font_decompressor.
+
+Parses a builtin compressed font header (lib/EpdFont/builtinFonts/*.h),
+decompresses the DEFLATE glyph groups with Python's zlib (an implementation
+independent of the firmware's uzlib-based FontDecompressor), extracts the
+byte-aligned bitmaps of a fixed set of codepoints, packs them to the tight
+2-bit format FontDecompressor::getBitmap() returns, and emits a C++ header
+with the expected bytes.
+
+The output is deterministic: the only input is the checked-in font header,
+so re-running the script always reproduces the committed golden file
+(verify with: python3 scripts/generate_font_decompressor_golden.py | diff -
+test/font_decompressor/NotoSans12Golden.h).
+
+Byte-aligned group format (see FontDecompressor::getAlignedOffset):
+  each glyph occupies ((width + 3) / 4) * height bytes, rows padded to a
+  byte boundary (4 pixels x 2bpp per byte). Packed format (getBitmap output):
+  2bpp pixels bit-packed contiguously, dataLength bytes total.
+"""
+
+import re
+import sys
+import zlib
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+FONT_HEADER = REPO_ROOT / "lib" / "EpdFont" / "builtinFonts" / "notosans_12_regular.h"
+
+# Codepoints to snapshot: chosen to cover width%4==0 (memcpy path) and
+# width%4!=0 (bit-repack path) glyphs across several compression groups.
+GOLDEN_CODEPOINTS = [0x21, 0x23, 0x25, 0x41, 0x67, 0xE9, 0x416, 0x20AC, 0xFB01]
+
+
+def parse_arrays(text):
+    def block(name):
+        m = re.search(re.escape(name) + r"\[[0-9]*\]\s*=\s*\{(.*?)\};", text, re.S)
+        if not m:
+            raise SystemExit(f"array {name} not found in {FONT_HEADER}")
+        return m.group(1)
+
+    bitmaps = bytes(
+        int(tok, 16) for tok in re.findall(r"0x[0-9A-Fa-f]{2}", block("notosans_12_regularBitmaps"))
+    )
+
+    glyphs = []
+    for m in re.finditer(r"\{\s*(-?\d+),\s*(-?\d+),\s*(-?\d+),\s*(-?\d+),\s*(-?\d+),\s*(-?\d+),\s*(-?\d+)\s*\}",
+                         block("notosans_12_regularGlyphs")):
+        w, h, adv, left, top, dlen, doff = (int(g) for g in m.groups())
+        glyphs.append(dict(width=w, height=h, advanceX=adv, left=left, top=top,
+                           dataLength=dlen, dataOffset=doff))
+
+    intervals = []
+    for m in re.finditer(r"\{\s*(0[xX][0-9A-Fa-f]+|\d+),\s*(0[xX][0-9A-Fa-f]+|\d+),\s*(0[xX][0-9A-Fa-f]+|\d+)\s*\}",
+                         block("notosans_12_regularIntervals")):
+        first, last, offset = (int(g, 0) for g in m.groups())
+        intervals.append((first, last, offset))
+
+    groups = []
+    for m in re.finditer(r"\{\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\s*\}",
+                         block("notosans_12_regularGroups")):
+        coff, csize, usize, gcount, first = (int(g) for g in m.groups())
+        groups.append(dict(compressedOffset=coff, compressedSize=csize,
+                           uncompressedSize=usize, glyphCount=gcount, firstGlyphIndex=first))
+
+    return bitmaps, glyphs, intervals, groups
+
+
+def glyph_index(intervals, cp):
+    for first, last, offset in intervals:
+        if first <= cp <= last:
+            return offset + (cp - first)
+    raise SystemExit(f"codepoint U+{cp:04X} not covered by font")
+
+
+def group_of(groups, idx):
+    for gi, g in enumerate(groups):
+        if g["firstGlyphIndex"] <= idx < g["firstGlyphIndex"] + g["glyphCount"]:
+            return gi
+    raise SystemExit(f"glyph index {idx} not in any group")
+
+
+def aligned_size(g):
+    if g["width"] == 0 or g["height"] == 0:
+        return 0
+    return ((g["width"] + 3) // 4) * g["height"]
+
+
+def compact(aligned, width, height):
+    """Repack byte-aligned rows (4px/byte, MSB-first 2bpp) into a contiguous
+    2bpp stream — the transform compactSingleGlyph performs."""
+    row_stride = (width + 3) // 4
+    bits = []
+    for y in range(height):
+        for x in range(width):
+            byte = aligned[y * row_stride + x // 4]
+            bits.append((byte >> ((3 - (x % 4)) * 2)) & 0x3)
+    out = bytearray()
+    acc = 0
+    nbits = 0
+    for px in bits:
+        acc = (acc << 2) | px
+        nbits += 2
+        if nbits == 8:
+            out.append(acc)
+            acc = 0
+            nbits = 0
+    if nbits:
+        out.append((acc << (8 - nbits)) & 0xFF)
+    return bytes(out)
+
+
+def main():
+    text = FONT_HEADER.read_text()
+    bitmaps, glyphs, intervals, groups = parse_arrays(text)
+
+    decompressed = []
+    for g in groups:
+        stream = bitmaps[g["compressedOffset"]:g["compressedOffset"] + g["compressedSize"]]
+        raw = zlib.decompressobj(-15).decompress(stream)
+        if len(raw) != g["uncompressedSize"]:
+            raise SystemExit(
+                f"group at {g['compressedOffset']}: decompressed {len(raw)} bytes, "
+                f"header says {g['uncompressedSize']}")
+        decompressed.append(raw)
+
+    lines = []
+    lines.append("// Generated by scripts/generate_font_decompressor_golden.py — do not edit.")
+    lines.append("// Expected FontDecompressor::getBitmap() output for notosans_12_regular,")
+    lines.append("// derived with an independent decompressor (Python zlib) from the same")
+    lines.append("// compressed group data the firmware ships.")
+    lines.append("#pragma once")
+    lines.append("")
+    lines.append("// clang-format off")
+    lines.append("")
+    lines.append("#include <cstdint>")
+    lines.append("")
+    lines.append("struct GoldenGlyph {")
+    lines.append("  uint32_t codepoint;")
+    lines.append("  uint32_t glyphIndex;")
+    lines.append("  uint16_t dataLength;")
+    lines.append("  const uint8_t* packed;")
+    lines.append("};")
+    lines.append("")
+
+    entries = []
+    for cp in GOLDEN_CODEPOINTS:
+        idx = glyph_index(intervals, cp)
+        glyph = glyphs[idx]
+        gi = group_of(groups, idx)
+        grp = groups[gi]
+        offset = 0
+        for i in range(grp["firstGlyphIndex"], idx):
+            offset += aligned_size(glyphs[i])
+        aligned = decompressed[gi][offset:offset + aligned_size(glyph)]
+        packed = compact(aligned, glyph["width"], glyph["height"])
+        if len(packed) != glyph["dataLength"]:
+            raise SystemExit(
+                f"U+{cp:04X}: packed {len(packed)} bytes but glyph.dataLength={glyph['dataLength']}")
+        name = f"kGolden_{cp:04X}"
+        body = ", ".join(f"0x{b:02X}" for b in packed)
+        lines.append(f"static const uint8_t {name}[] = {{{body}}};")
+        entries.append((cp, idx, glyph["dataLength"], name))
+
+    lines.append("")
+    lines.append("static const GoldenGlyph kGoldenGlyphs[] = {")
+    for cp, idx, dlen, name in entries:
+        lines.append(f"    {{0x{cp:04X}, {idx}, {dlen}, {name}}},")
+    lines.append("};")
+    lines.append("")
+
+    sys.stdout.write("\n".join(lines))
+    sys.stdout.write("\n")
+
+
+if __name__ == "__main__":
+    main()
