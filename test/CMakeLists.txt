@@ -35,6 +35,20 @@ target_compile_options(crosspoint_test_common INTERFACE
   -pedantic
 )
 
+# Sanitizer build for the host suites (bin/run-tests --asan).
+# Applies to the test executables and the production sources they compile;
+# gtest itself (FetchContent) stays uninstrumented, which is fine for ASan.
+option(CROSSPOINT_SANITIZE "Build tests with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
+if(CROSSPOINT_SANITIZE)
+  set(CROSSPOINT_SANITIZE_FLAGS
+    -fsanitize=address,undefined
+    -fno-omit-frame-pointer
+    -fno-sanitize-recover=undefined
+  )
+  target_compile_options(crosspoint_test_common INTERFACE ${CROSSPOINT_SANITIZE_FLAGS})
+  target_link_options(crosspoint_test_common INTERFACE ${CROSSPOINT_SANITIZE_FLAGS})
+endif()
+
 enable_testing()
 include(GoogleTest)
 
