@@ -523,10 +523,9 @@ TEST_F(ProgressMapperTest, NonNumericIndicesFallBackToPercentage) {
 }
 
 TEST_F(ProgressMapperTest, HugeDocFragmentIndexFallsBackButAncestryStillResolves) {
-  // A DocFragment index beyond the spine falls back to byte-based spine
-  // selection, but the element steps still resolve within that spine.
-  // (Indices with enough digits to overflow int are a separate reported
-  // bug -- parseIndex has no overflow guard; this value stays representable.)
+  // A DocFragment index beyond the spine (but still representable in int)
+  // falls back to byte-based spine selection, while the element steps still
+  // resolve within that spine.
   const auto epub = makeThreeChapterBook();
   auto& lut = SectionStubRegistry::forSpine(0);
   lut.cachedPageCount = 3;
@@ -539,6 +538,43 @@ TEST_F(ProgressMapperTest, HugeDocFragmentIndexFallsBackButAncestryStillResolves
   ASSERT_TRUE(pos.hasVisibleTextOffset);
   EXPECT_EQ(pos.visibleTextOffset, 5u);
   EXPECT_EQ(pos.pageNumber, 0);
+}
+
+TEST_F(ProgressMapperTest, IntOverflowingIndicesFailTheParseAndFallBack) {
+  // Regression guard: every index parser (DocFragment/step sibling indices,
+  // text-node index, char offset) bails out instead of overflowing int on a
+  // hostile xpointer. 4294967297 would wrap to 1 under two's-complement
+  // truncation, so this also catches a wrapping (non-UB-trapping) build:
+  // wrapping would resolve DocFragment[..] as spine 0 instead of the
+  // percentage fallback's spine 1.
+  const auto epub = makeThreeChapterBook();
+  SectionStubRegistry::forSpine(1).cachedPageCount = 11;
+
+  const SavedProgressPosition ko{"/body/DocFragment[4294967297]/body/p[4294967297]/text()[4294967297].4294967297",
+                                 0.5f};
+  const auto pos = ProgressMapper::toCrossPoint(epub, ko, renderer);
+
+  EXPECT_FALSE(pos.hasVisibleTextOffset);
+  EXPECT_EQ(pos.spineIndex, 1);
+  EXPECT_EQ(pos.pageNumber, 5);
+}
+
+TEST_F(ProgressMapperTest, OverflowingCharOffsetResolvesToParagraphStart) {
+  // Only the terminal char offset overflows: the offset parse fails (treated
+  // as no offset) and the otherwise-valid ancestry resolves to the paragraph
+  // start instead of producing a garbage offset.
+  const auto epub = makeThreeChapterBook();
+  auto& lut = SectionStubRegistry::forSpine(0);
+  lut.cachedPageCount = 3;
+  lut.pageStartOffsets = {0, 10, 15};
+
+  const SavedProgressPosition ko{"/body/DocFragment[1]/body/p[2]/text()[1].99999999999999999999", 0.0f};
+  const auto pos = ProgressMapper::toCrossPoint(epub, ko, renderer);
+
+  EXPECT_EQ(pos.spineIndex, 0);
+  ASSERT_TRUE(pos.hasVisibleTextOffset);
+  EXPECT_EQ(pos.visibleTextOffset, 10u);
+  EXPECT_EQ(pos.pageNumber, 1);
 }
 
 TEST_F(ProgressMapperTest, VeryLongDeepXPathIsHandledWithoutCrash) {

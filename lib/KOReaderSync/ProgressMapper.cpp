@@ -4,6 +4,7 @@
 #include <Logging.h>
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstring>
 
@@ -14,6 +15,16 @@
 #include "Utf8.h"
 
 namespace {
+// Accumulate one decimal digit into val, failing on int overflow. The xpath
+// comes from a remote sync payload, so index digit strings are untrusted and
+// unbounded; overflowing signed arithmetic here would be UB.
+bool accumulateDigit(int& val, char digit) {
+  const int d = digit - '0';
+  if (val > (INT_MAX - d) / 10) return false;
+  val = val * 10 + d;
+  return true;
+}
+
 int parseIndex(const std::string& xpath, const char* prefix, bool last = false) {
   const size_t prefixLen = strlen(prefix);
   const size_t pos = last ? xpath.rfind(prefix) : xpath.find(prefix);
@@ -24,7 +35,7 @@ int parseIndex(const std::string& xpath, const char* prefix, bool last = false) 
   int val = 0;
   for (size_t i = numStart; i < numEnd; i++) {
     if (xpath[i] < '0' || xpath[i] > '9') return -1;
-    val = val * 10 + (xpath[i] - '0');
+    if (!accumulateDigit(val, xpath[i])) return -1;
   }
   return val;
 }
@@ -36,7 +47,7 @@ int parseCharOffset(const std::string& xpath) {
   int val = 0;
   for (size_t i = dotPos + 1; i < xpath.size(); i++) {
     if (xpath[i] < '0' || xpath[i] > '9') return 0;
-    val = val * 10 + (xpath[i] - '0');
+    if (!accumulateDigit(val, xpath[i])) return 0;
   }
   return val;
 }
@@ -51,7 +62,7 @@ int parseTextNodeIndex(const std::string& xpath) {
   int val = 0;
   for (size_t i = numStart; i < numEnd; i++) {
     if (xpath[i] < '0' || xpath[i] > '9') return 1;
-    val = val * 10 + (xpath[i] - '0');
+    if (!accumulateDigit(val, xpath[i])) return 1;
   }
   return val > 0 ? val : 1;
 }
@@ -183,7 +194,7 @@ int parseXPathSteps(const std::string& xpath, XPathStep steps[MAX_XPATH_DEPTH]) 
       int idx = 0;
       for (size_t i = bracket + 1; i < closeBracket; i++) {
         if (xpath[i] < '0' || xpath[i] > '9') return 0;
-        idx = idx * 10 + (xpath[i] - '0');
+        if (!accumulateDigit(idx, xpath[i])) return 0;
       }
       step.siblingIndex = idx;
     } else {
