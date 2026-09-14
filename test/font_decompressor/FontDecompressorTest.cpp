@@ -513,25 +513,16 @@ TEST(FontDecompressorMalformed, BitFlippedFixedHuffmanStreamNeverGoesOutOfBounds
   EXPECT_EQ(0, memcmp(bmp, expected, 4));
 }
 
-TEST(FontDecompressorMalformed, BitFlippedDynamicTreeStreamKnownUzlibOobRead) {
-  // PRODUCTION FINDING (pinned, not fixed here): the vendored uzlib builds
-  // with UZLIB_CONF_PARANOID_CHECKS=0 (lib/uzlib/src/uzlib_conf.h), so a
-  // corrupt dynamic-Huffman tree lets tinf_decode_symbol() compute a negative
-  // symbol index: t->trans[sum] reads out of the array (tinflate.c:302) and
-  // the negative symbol then indexes dist_bits[]/dist_base[] out of bounds
-  // (tinflate.c:445, observed as "index -3 out of bounds" under UBSan when
-  // flipping bytes 5/10/... of notosans group 0's zopfli stream). The reads
-  // land in adjacent .rodata/struct memory, so on-device this decodes to
-  // garbage rather than crashing — but it is undefined behavior reachable
-  // from any corrupt compressed group. uzlib's own guard exists and would
-  // return TINF_DATA_ERROR if the paranoid-checks flag were enabled.
-  //
-  // Under sanitizers this UB aborts the suite, so the sweep only runs in the
-  // plain build; the skip below documents why.
-#if defined(CROSSPOINT_SANITIZED)
-  GTEST_SKIP() << "uzlib OOB read on corrupt dynamic trees (PARANOID_CHECKS=0) — "
-                  "would abort under UBSan; see test comment";
-#else
+TEST(FontDecompressorMalformed, BitFlippedDynamicTreeStreamStaysInBounds) {
+  // The vendored uzlib builds with UZLIB_CONF_PARANOID_CHECKS=1 (CrossPoint
+  // default in lib/uzlib/src/uzlib_conf.h): tinf_decode_symbol() bounds-checks
+  // the decoded symbol index, so a corrupt dynamic-Huffman tree yields
+  // TINF_DATA_ERROR instead of the pre-fix out-of-bounds reads of t->trans[]
+  // and dist_bits[]/dist_base[] (observed as "index -3 out of bounds" under
+  // UBSan when flipping bytes of notosans group 0's zopfli stream). The
+  // sweep must stay ASan/UBSan-clean; each flip either fails gracefully
+  // (nullptr) or decodes garbage of the right size. The pristine stream must
+  // still decode correctly afterwards.
   const EpdFontGroup& group0 = notosans_12_regular.groups[0];
   std::vector<uint8_t> bitmapCopy(notosans_12_regular.bitmap,
                                   notosans_12_regular.bitmap + group0.compressedOffset + group0.compressedSize);
@@ -555,7 +546,6 @@ TEST(FontDecompressorMalformed, BitFlippedDynamicTreeStreamKnownUzlibOobRead) {
   const uint8_t* bmp = fdc.getBitmap(&font, glyph, a.glyphIndex);
   ASSERT_NE(bmp, nullptr);
   EXPECT_EQ(0, memcmp(bmp, a.packed, a.dataLength));
-#endif
 }
 
 TEST(FontDecompressorMalformed, GlyphOutsideAnyGroupReturnsNull) {

@@ -19,13 +19,6 @@ target_include_directories(FontDecompressorTest PRIVATE
   ${REPO_ROOT}/lib/Utf8
 )
 
-# The corrupt-dynamic-tree sweep exercises a known uzlib OOB read (see
-# BitFlippedDynamicTreeStreamKnownUzlibOobRead) that aborts under UBSan; the
-# test skips itself in sanitized builds via this define.
-if(CROSSPOINT_SANITIZE)
-  target_compile_definitions(FontDecompressorTest PRIVATE CROSSPOINT_SANITIZED=1)
-endif()
-
 target_link_libraries(FontDecompressorTest PRIVATE
   crosspoint_test_common
   GTest::gtest_main

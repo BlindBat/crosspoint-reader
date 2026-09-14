@@ -416,6 +416,13 @@ static int tinf_inflate_block_data(TINF_DATA *d, TINF_TREE *lt, TINF_TREE *dt)
             return TINF_DATA_ERROR;
         }
 
+        /* CrossPoint patch (not upstream): tinf_decode_symbol() reports
+           corrupt trees / overlong codes as TINF_DATA_ERROR (negative);
+           propagate instead of treating the value as a literal below. */
+        if (sym < 0) {
+            return sym;
+        }
+
         /* literal byte */
         if (sym < 256) {
             TINF_PUT(d, sym);
@@ -437,6 +444,12 @@ static int tinf_inflate_block_data(TINF_DATA *d, TINF_TREE *lt, TINF_TREE *dt)
         d->curlen = tinf_read_bits(d, length_bits[sym], length_base[sym]);
 
         dist = tinf_decode_symbol(d, dt);
+        /* CrossPoint patch (not upstream): propagate decode errors before
+           dist indexes dist_bits[]/dist_base[] (a negative TINF_DATA_ERROR
+           passed the `>= 30` check and read out of bounds). */
+        if (dist < 0) {
+            return dist;
+        }
         if (dist >= 30) {
             return TINF_DATA_ERROR;
         }

@@ -16,7 +16,13 @@
 /* Perform extra checks on the input stream, even if they aren't proven
    to be strictly required (== lack of them wasn't proven to lead to
    crashes). */
-#define UZLIB_CONF_PARANOID_CHECKS 0
+/* CrossPoint patch (not upstream): default 1 instead of 0. This enables
+   the vendor's own mitigation for corrupt dynamic-Huffman trees: without
+   it tinf_decode_symbol() can compute a negative symbol index and read
+   t->trans[sum] (and then dist_bits[]/dist_base[]) out of bounds. Cost:
+   two integer compares per decoded symbol in the inflate loop plus one
+   end-of-block-symbol check per dynamic tree. */
+#define UZLIB_CONF_PARANOID_CHECKS 1
 #endif
 
 #ifndef UZLIB_CONF_USE_MEMCPY
