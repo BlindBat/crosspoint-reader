@@ -116,18 +116,36 @@ TEST(Fb2MetadataParser, NestedSectionsOnlyTopLevelOnesAreTracked) {
   EXPECT_EQ(sections[1].fileOffset, nthOccurrence(raw, "<section", 2));
 }
 
-// KNOWN BUG (documents current behavior): the parser re-enters "body" mode for
-// the second <body name="notes"> element, so footnote sections are appended to
-// the regular section/TOC list and show up as reading chapters.
-TEST(Fb2MetadataParser, NotesBodySectionsBecomeRegularSections) {
+// FB2 convention: bodies after the first with a name attribute
+// (name="notes"/"comments") hold auxiliary content. Their sections must not
+// become reading chapters or TOC entries.
+TEST(Fb2MetadataParser, NotesBodySectionsAreNotReadingSections) {
   Fb2MetadataParser parser(fixturePath("notes-body.fb2"));
   ASSERT_TRUE(parser.parse());
   const auto& sections = parser.getSections();
-  ASSERT_EQ(sections.size(), 3u);
+  ASSERT_EQ(sections.size(), 1u);
   EXPECT_EQ(sections[0].title, "Story");
-  EXPECT_EQ(sections[1].title, "Note 1");
-  EXPECT_EQ(sections[2].title, "Note 2");
-  EXPECT_EQ(parser.getTocEntries().size(), 3u);
+  ASSERT_EQ(parser.getTocEntries().size(), 1u);
+  EXPECT_EQ(parser.getTocEntries()[0].title, "Story");
+}
+
+TEST(Fb2MetadataParser, UnnamedSecondBodyIsStillReadingContent) {
+  fb2test::TempDir tmp;
+  ASSERT_TRUE(tmp.valid());
+  const std::string path = tmp.path() + "/twobody.fb2";
+  const std::string doc =
+      "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+      "<FictionBook><body>"
+      "<section><title><p>One</p></title><p>a</p></section>"
+      "</body><body>"
+      "<section><title><p>Two</p></title><p>b</p></section>"
+      "</body></FictionBook>\n";
+  ASSERT_TRUE(fb2test::writeAll(path, doc));
+  Fb2MetadataParser parser(path);
+  ASSERT_TRUE(parser.parse());
+  ASSERT_EQ(parser.getSections().size(), 2u);
+  EXPECT_EQ(parser.getSections()[0].title, "One");
+  EXPECT_EQ(parser.getSections()[1].title, "Two");
 }
 
 TEST(Fb2MetadataParser, TruncatedXmlFailsParse) {

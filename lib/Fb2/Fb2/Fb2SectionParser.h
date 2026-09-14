@@ -37,6 +37,7 @@ class Fb2SectionParser {
   bool inTargetSection = false;
   bool pastTargetSection = false;
   bool inBody = false;
+  int bodyCount = 0;
   bool outOfMemory = false;
 
   char partWordBuffer[FB2_MAX_WORD_SIZE + 1] = {};

@@ -38,6 +38,7 @@ class Fb2MetadataParser {
   };
   Context context = Context::NONE;
   int bodyDepth = 0;
+  int bodyCount = 0;
   int sectionDepth = 0;
   bool inBody = false;
   bool inTitleInfo = false;

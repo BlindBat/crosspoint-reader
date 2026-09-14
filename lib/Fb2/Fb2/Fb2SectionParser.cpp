@@ -20,6 +20,15 @@ const char* stripNs(const char* name) {
   const char* colon = strchr(name, ':');
   return colon ? colon + 1 : name;
 }
+
+// True when the element carries a name attribute (e.g. <body name="notes">).
+bool hasNameAttribute(const char** atts) {
+  if (!atts) return false;
+  for (int i = 0; atts[i]; i += 2) {
+    if (strcmp(atts[i], "name") == 0) return true;
+  }
+  return false;
+}
 }  // namespace
 
 void Fb2SectionParser::flushPartWordBuffer() {
@@ -58,7 +67,7 @@ void Fb2SectionParser::startNewTextBlock(const BlockStyle& blockStyle) {
   }
 }
 
-void XMLCALL Fb2SectionParser::startElement(void* userData, const char* name, const char** /* atts */) {
+void XMLCALL Fb2SectionParser::startElement(void* userData, const char* name, const char** atts) {
   auto* self = static_cast<Fb2SectionParser*>(userData);
   const char* tag = stripNs(name);
 
@@ -80,8 +89,16 @@ void XMLCALL Fb2SectionParser::startElement(void* userData, const char* name, co
     return;
   }
 
-  // Track body element
+  // Track body element. Bodies after the first with a name attribute
+  // (name="notes"/"comments") are auxiliary per the FB2 convention and are
+  // skipped, matching Fb2MetadataParser's section numbering.
   if (strcmp(tag, "body") == 0) {
+    self->bodyCount++;
+    if (self->bodyCount > 1 && hasNameAttribute(atts)) {
+      self->skipUntilDepth = self->depth;
+      self->depth++;
+      return;
+    }
     self->inBody = true;
     self->depth++;
     return;

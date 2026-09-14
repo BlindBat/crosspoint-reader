@@ -8,7 +8,9 @@
 #include "Fb2/Fb2MetadataParser.h"
 
 namespace {
-constexpr uint8_t FB2_CACHE_VERSION = 1;
+// v2: auxiliary <body name="..."> sections are no longer counted as
+// chapters, which shifts section numbering for books with footnote bodies.
+constexpr uint8_t FB2_CACHE_VERSION = 2;
 }  // namespace
 
 Fb2::Fb2(std::string filepath, const std::string& cacheDir) : filepath(std::move(filepath)) {

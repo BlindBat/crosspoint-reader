@@ -88,7 +88,7 @@ TEST_F(Fb2BookTest, CacheVersionMismatchIsRejectedThenRebuilt) {
   // The cache file was rewritten with the current version byte.
   const std::string fresh = readAll(cacheFile);
   ASSERT_FALSE(fresh.empty());
-  EXPECT_EQ(fresh[0], 1);
+  EXPECT_EQ(fresh[0], 2);
 }
 
 // KNOWN BUG (documents current behavior): loadMetadataCache never checks that
@@ -103,7 +103,7 @@ TEST_F(Fb2BookTest, CorruptedZeroFilledCacheIsTrustedInsteadOfReparsed) {
   const std::string cacheFile = book.getCachePath() + "/book.bin";
 
   std::string bogus;
-  bogus.push_back(1);  // valid version byte
+  bogus.push_back(2);  // valid version byte
   const std::string title = "Zombie";
   const uint32_t len = static_cast<uint32_t>(title.size());
   bogus.append(reinterpret_cast<const char*>(&len), sizeof(len));

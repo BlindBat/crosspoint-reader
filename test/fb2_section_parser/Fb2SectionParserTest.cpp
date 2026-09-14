@@ -413,6 +413,21 @@ TEST(Fb2SectionParserFile, DeclaredWindows1251BodyTextDecodesToUtf8) {
   EXPECT_FALSE(containsWord(words, "Второй"));  // section 1 stays out
 }
 
+TEST(Fb2SectionParserFile, NotesBodyContentNeverBecomesAChapter) {
+  GfxRenderer renderer;
+  // Only one reading section exists; its content excludes the notes body.
+  auto story = parseSection(fixturePath("notes-body.fb2"), 0, renderer, makeSpec());
+  ASSERT_TRUE(story.ok);
+  const auto storyWords = collectWords(story.pages);
+  EXPECT_TRUE(containsWord(storyWords, "narrative"));
+  EXPECT_FALSE(containsWord(storyWords, "footnote"));
+
+  // Index 1 (the first notes section under the old numbering) selects nothing.
+  auto beyond = parseSection(fixturePath("notes-body.fb2"), 1, renderer, makeSpec());
+  ASSERT_TRUE(beyond.ok);
+  EXPECT_TRUE(collectWords(beyond.pages).empty());
+}
+
 TEST(Fb2SectionParserFile, PagesBreakAtViewportHeight) {
   GfxRenderer renderer;
   const auto spec = makeSpec();  // 64 px viewport, 16 px lines -> 4 lines/page

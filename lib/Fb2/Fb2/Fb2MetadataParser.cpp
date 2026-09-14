@@ -28,6 +28,15 @@ std::string getXlinkHref(const char** atts) {
   }
   return "";
 }
+
+// True when the element carries a name attribute (e.g. <body name="notes">).
+bool hasNameAttribute(const char** atts) {
+  if (!atts) return false;
+  for (int i = 0; atts[i]; i += 2) {
+    if (strcmp(atts[i], "name") == 0) return true;
+  }
+  return false;
+}
 }  // namespace
 
 void Fb2MetadataParser::startElement(void* userData, const char* name, const char** atts) {
@@ -69,6 +78,13 @@ void Fb2MetadataParser::startElement(void* userData, const char* name, const cha
   }
 
   if (strcmp(tag, "body") == 0 && !self->inBody) {
+    self->bodyCount++;
+    // FB2 convention: bodies after the first carry a name attribute
+    // (name="notes"/"comments") and hold auxiliary content, not reading
+    // chapters. Leaving inBody unset skips their sections entirely.
+    if (self->bodyCount > 1 && hasNameAttribute(atts)) {
+      return;
+    }
     self->inBody = true;
     self->bodyDepth = 0;
     // Record byte offset of body start
