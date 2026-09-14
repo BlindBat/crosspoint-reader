@@ -26,7 +26,7 @@ using fb2test::writeAll;
 // paragraphAlignment(1) + viewportWidth(2) + viewportHeight(2) +
 // hyphenationEnabled(1) + focusReadingEnabled(1) + pageCount(2) + lutOffset(4).
 constexpr uint32_t kHeaderSize = 23;
-constexpr uint8_t kSectionFileVersion = 3;
+constexpr uint8_t kSectionFileVersion = 4;
 
 ReaderRenderSpec makeSpec() {
   ReaderRenderSpec spec;
@@ -215,6 +215,62 @@ TEST_F(Fb2SectionCacheTest, CenteredVerseAlignmentSurvivesSerialization) {
     }
   }
   EXPECT_TRUE(found);
+}
+
+TEST_F(Fb2SectionCacheTest, ContainerBlockStylesSurviveIntoRenderedPages) {
+  const auto spec = makeSpec();
+  auto built = buildSection(spec);
+  ASSERT_NE(built, nullptr);
+
+  Fb2Section loaded(book, 0, renderer);
+  ASSERT_TRUE(loaded.loadSectionFile(spec));
+
+  struct FoundLine {
+    std::shared_ptr<TextBlock> block;
+    int16_t xPos = -1;
+  };
+  auto findLine = [&loaded](const std::string& needle) {
+    FoundLine result;
+    for (uint16_t pageIndex = 0; pageIndex < loaded.pageCount && !result.block; pageIndex++) {
+      auto page = loaded.loadPage(pageIndex);
+      if (!page) continue;
+      for (const auto& element : page->elements) {
+        if (element->getTag() != TAG_PageLine) continue;
+        const auto& block = static_cast<PageLine&>(*element).getBlock();
+        for (uint16_t w = 0; w < block->wordCount(); w++) {
+          if (needle == block->wordText(w)) {
+            result.block = block;
+            result.xPos = element->xPos;
+            break;
+          }
+        }
+        if (result.block) break;
+      }
+    }
+    return result;
+  };
+
+  // styles.fb2 wraps all container text in <p>, as real FB2 files do.
+  const auto title = findLine("Styles");
+  ASSERT_NE(title.block, nullptr);
+  EXPECT_EQ(title.block->getBlockStyle().alignment, CssTextAlign::Center);
+
+  const auto epigraph = findLine("epigraphword");
+  ASSERT_NE(epigraph.block, nullptr);
+  EXPECT_EQ(epigraph.block->getBlockStyle().alignment, CssTextAlign::Right);
+  EXPECT_EQ(epigraph.block->getBlockStyle().marginLeft, 30);
+  EXPECT_EQ(epigraph.xPos, 30);  // the line is drawn inside the indent
+
+  const auto cite = findLine("citeword");
+  ASSERT_NE(cite.block, nullptr);
+  EXPECT_EQ(cite.block->getBlockStyle().marginLeft, 20);
+  EXPECT_EQ(cite.xPos, 20);
+
+  const auto plain = findLine("plainword");
+  ASSERT_NE(plain.block, nullptr);
+  EXPECT_EQ(plain.block->getBlockStyle().alignment, CssTextAlign::Justify);
+  EXPECT_EQ(plain.block->getBlockStyle().marginLeft, 0);
+  EXPECT_EQ(plain.xPos, 0);
 }
 
 TEST_F(Fb2SectionCacheTest, LoadPageOutOfRangeReturnsNull) {

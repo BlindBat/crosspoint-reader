@@ -15,7 +15,9 @@ namespace {
 // (no CSS, no images), so the version is independent of the EPUB one.
 // v3: top-level-only section counting in Fb2SectionParser — files built by
 // older firmware can hold a nested chapter's pages under a top-level index.
-constexpr uint8_t FB2_SECTION_FILE_VERSION = 3;
+// v4: container block styles (title centering, epigraph/cite indents) now
+// reach wrapped <p> children, changing the laid-out pages.
+constexpr uint8_t FB2_SECTION_FILE_VERSION = 4;
 // version + fontId + lineCompression + extraParagraphSpacing + paragraphAlignment +
 // viewportWidth + viewportHeight + hyphenationEnabled + focusReadingEnabled +
 // pageCount + lutOffset

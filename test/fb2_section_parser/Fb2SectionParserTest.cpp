@@ -224,23 +224,75 @@ TEST_F(Fb2SectionParserHandlerTest, CiteIsIndented) {
   EXPECT_EQ(parser.currentTextBlock->getBlockStyle().marginLeft, 20);
 }
 
-// KNOWN LIMITATION (documents current behavior): the block-level styles FB2
-// gives to <title>/<epigraph>/<cite> are discarded as soon as the inner <p>
-// starts a fresh paragraph block on the still-empty container block --
-// getCombinedBlockStyle(child, Vertical) keeps the child's alignment and
-// horizontal margins. In real FB2 files these containers always wrap their
-// text in <p>, so titles render justified and epigraphs/citations lose their
-// indent. Inline bold/italic survives (tracked by depth, not block).
-TEST_F(Fb2SectionParserHandlerTest, InnerParagraphDiscardsContainerBlockStyle) {
+// Real FB2 files always wrap container text in <p>; the container's block
+// styles (alignment, indents) must survive into those inner paragraphs.
+TEST_F(Fb2SectionParserHandlerTest, InnerParagraphInheritsContainerBlockStyle) {
   start("epigraph");
   start("p");
   text("wisdom");
   end("p");
   end("epigraph");
   ASSERT_EQ(parser.currentTextBlock->size(), 1u);
+  EXPECT_EQ(parser.currentTextBlock->getBlockStyle().alignment, CssTextAlign::Right);
+  EXPECT_EQ(parser.currentTextBlock->getBlockStyle().marginLeft, 30);
+  EXPECT_EQ(parser.currentTextBlock->getWordStyleAt(0), EpdFontFamily::ITALIC);
+}
+
+TEST_F(Fb2SectionParserHandlerTest, TitleInnerParagraphStaysCenteredBold) {
+  start("title");
+  start("p");
+  text("Chapter");
+  end("p");
+  end("title");
+  ASSERT_EQ(parser.currentTextBlock->size(), 1u);
+  EXPECT_EQ(parser.currentTextBlock->getBlockStyle().alignment, CssTextAlign::Center);
+  EXPECT_EQ(parser.currentTextBlock->getWordStyleAt(0), EpdFontFamily::BOLD);
+}
+
+TEST_F(Fb2SectionParserHandlerTest, EverySiblingParagraphInCiteKeepsTheIndent) {
+  start("cite");
+  start("p");
+  text("first");
+  end("p");
+  start("p");
+  text("second");
+  end("p");
+  end("cite");
+  // The second <p> lives in a fresh block (the first was flushed to pages);
+  // it must still carry the cite indent, not just the first child.
+  ASSERT_EQ(parser.currentTextBlock->size(), 1u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], "second");
+  EXPECT_EQ(parser.currentTextBlock->getBlockStyle().marginLeft, 20);
+}
+
+TEST_F(Fb2SectionParserHandlerTest, ContainerStyleDoesNotLeakPastItsClose) {
+  start("epigraph");
+  start("p");
+  text("wisdom");
+  end("p");
+  end("epigraph");
+  start("p");
+  text("plain");
+  end("p");
+  ASSERT_EQ(parser.currentTextBlock->size(), 1u);
+  EXPECT_EQ(parser.currentTextBlock->words[0], "plain");
   EXPECT_EQ(parser.currentTextBlock->getBlockStyle().alignment, CssTextAlign::Justify);
   EXPECT_EQ(parser.currentTextBlock->getBlockStyle().marginLeft, 0);
-  EXPECT_EQ(parser.currentTextBlock->getWordStyleAt(0), EpdFontFamily::ITALIC);
+  EXPECT_EQ(parser.currentTextBlock->getWordStyleAt(0), EpdFontFamily::REGULAR);
+}
+
+TEST_F(Fb2SectionParserHandlerTest, NestedContainersAccumulateIndents) {
+  start("epigraph");  // marginLeft 30, align Right
+  start("cite");      // marginLeft 20
+  start("p");
+  text("deep");
+  end("p");
+  end("cite");
+  end("epigraph");
+  ASSERT_EQ(parser.currentTextBlock->size(), 1u);
+  EXPECT_EQ(parser.currentTextBlock->getBlockStyle().marginLeft, 50);
+  // cite defines no alignment of its own, so the epigraph's survives.
+  EXPECT_EQ(parser.currentTextBlock->getBlockStyle().alignment, CssTextAlign::Right);
 }
 
 TEST_F(Fb2SectionParserHandlerTest, UnknownElementIsIgnoredButTextFlows) {

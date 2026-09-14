@@ -67,6 +67,19 @@ void Fb2SectionParser::startNewTextBlock(const BlockStyle& blockStyle) {
   }
 }
 
+BlockStyle Fb2SectionParser::inheritedBlockStyle(const BlockStyle& child) const {
+  if (blockStyleStack.empty()) {
+    return child;
+  }
+  // Horizontal combine: ancestor indents accumulate and ancestor alignment
+  // wins unless the child defines its own (textAlignDefined).
+  return blockStyleStack.back().style.getCombinedBlockStyle(child, BlockStyle::CombineAxis::Horizontal);
+}
+
+void Fb2SectionParser::pushContainerBlockStyle(const BlockStyle& style) {
+  blockStyleStack.push_back({inheritedBlockStyle(style), depth});
+}
+
 void XMLCALL Fb2SectionParser::startElement(void* userData, const char* name, const char** atts) {
   auto* self = static_cast<Fb2SectionParser*>(userData);
   const char* tag = stripNs(name);
@@ -136,41 +149,48 @@ void XMLCALL Fb2SectionParser::startElement(void* userData, const char* name, co
   auto indentedBlockStyle = BlockStyle();
   indentedBlockStyle.marginLeft = 20;
 
-  // FB2 content tags
+  // FB2 content tags. Container elements (title/epigraph/cite/poem/stanza)
+  // push their style so the <p>/<v> children that real FB2 files always wrap
+  // their text in inherit the container's alignment and indents.
   if (strcmp(tag, "p") == 0) {
     auto paragraphBlockStyle = BlockStyle();
-    paragraphBlockStyle.textAlignDefined = true;
     const auto align = (self->spec.paragraphAlignment == static_cast<uint8_t>(CssTextAlign::None))
                            ? CssTextAlign::Justify
                            : static_cast<CssTextAlign>(self->spec.paragraphAlignment);
     paragraphBlockStyle.alignment = align;
-    self->startNewTextBlock(paragraphBlockStyle);
+    // textAlignDefined stays false: a plain paragraph uses the user's
+    // alignment, but an enclosing container's explicit alignment wins.
+    self->startNewTextBlock(self->inheritedBlockStyle(paragraphBlockStyle));
   } else if (strcmp(tag, "title") == 0) {
-    self->startNewTextBlock(centeredBlockStyle);
+    self->pushContainerBlockStyle(centeredBlockStyle);
+    self->startNewTextBlock(self->blockStyleStack.back().style);
     self->boldUntilDepth = std::min(self->boldUntilDepth, self->depth);
   } else if (strcmp(tag, "subtitle") == 0) {
-    self->startNewTextBlock(centeredBlockStyle);
+    self->startNewTextBlock(self->inheritedBlockStyle(centeredBlockStyle));
     self->italicUntilDepth = std::min(self->italicUntilDepth, self->depth);
   } else if (strcmp(tag, "epigraph") == 0) {
     auto epigraphStyle = BlockStyle();
     epigraphStyle.marginLeft = 30;
     epigraphStyle.textAlignDefined = true;
     epigraphStyle.alignment = CssTextAlign::Right;
-    self->startNewTextBlock(epigraphStyle);
+    self->pushContainerBlockStyle(epigraphStyle);
+    self->startNewTextBlock(self->blockStyleStack.back().style);
     self->italicUntilDepth = std::min(self->italicUntilDepth, self->depth);
   } else if (strcmp(tag, "poem") == 0 || strcmp(tag, "stanza") == 0) {
-    self->startNewTextBlock(centeredBlockStyle);
+    self->pushContainerBlockStyle(centeredBlockStyle);
+    self->startNewTextBlock(self->blockStyleStack.back().style);
   } else if (strcmp(tag, "v") == 0) {
     // Verse line - start new text block for each line
-    self->startNewTextBlock(centeredBlockStyle);
+    self->startNewTextBlock(self->inheritedBlockStyle(centeredBlockStyle));
   } else if (strcmp(tag, "cite") == 0) {
-    self->startNewTextBlock(indentedBlockStyle);
+    self->pushContainerBlockStyle(indentedBlockStyle);
+    self->startNewTextBlock(self->blockStyleStack.back().style);
   } else if (strcmp(tag, "empty-line") == 0) {
     // Force a blank line
     auto emptyBlockStyle = BlockStyle();
     emptyBlockStyle.marginTop =
         static_cast<int16_t>(self->renderer.getLineHeight(self->spec.fontId, self->spec.lineCompression));
-    self->startNewTextBlock(emptyBlockStyle);
+    self->startNewTextBlock(self->inheritedBlockStyle(emptyBlockStyle));
   } else if (strcmp(tag, "strong") == 0) {
     if (self->partWordBufferIndex > 0) {
       self->flushPartWordBuffer();
@@ -186,14 +206,14 @@ void XMLCALL Fb2SectionParser::startElement(void* userData, const char* name, co
   } else if (strcmp(tag, "strikethrough") == 0) {
     // No strikethrough rendering support, treat as regular text
   } else if (strcmp(tag, "image") == 0) {
-    self->startNewTextBlock(centeredBlockStyle);
+    self->startNewTextBlock(self->inheritedBlockStyle(centeredBlockStyle));
     self->italicUntilDepth = std::min(self->italicUntilDepth, self->depth);
     self->depth++;
     self->characterData(userData, "[Image]", 7);
     self->skipUntilDepth = self->depth - 1;
     return;
   } else if (strcmp(tag, "table") == 0) {
-    self->startNewTextBlock(centeredBlockStyle);
+    self->startNewTextBlock(self->inheritedBlockStyle(centeredBlockStyle));
     self->italicUntilDepth = std::min(self->italicUntilDepth, self->depth);
     self->depth++;
     self->characterData(userData, "[Table omitted]", 15);
@@ -296,6 +316,11 @@ void XMLCALL Fb2SectionParser::endElement(void* userData, const char* name) {
 
   if (self->italicUntilDepth == self->depth) {
     self->italicUntilDepth = INT_MAX;
+  }
+
+  // Pop the container block style whose element opened at this depth.
+  if (!self->blockStyleStack.empty() && self->blockStyleStack.back().depth == self->depth) {
+    self->blockStyleStack.pop_back();
   }
 
   // Track closing of sections — check if we're leaving the target top-level section

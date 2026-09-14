@@ -11,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 class GfxRenderer;
 
@@ -47,10 +48,23 @@ class Fb2SectionParser {
   std::unique_ptr<Page> currentPage = nullptr;
   int16_t currentPageNextY = 0;
 
+  // Accumulated block styles of open container elements (title/epigraph/
+  // cite/poem/stanza), mirroring the EPUB chapter parser's blockStyleStack:
+  // each entry combines its element's style with the enclosing entry along
+  // the Horizontal axis so alignment and indents reach wrapped <p> children.
+  // `depth` is the element's open depth, used to pop on its matching close.
+  struct StackedBlockStyle {
+    BlockStyle style;
+    int depth;
+  };
+  std::vector<StackedBlockStyle> blockStyleStack;
+
   void flushPartWordBuffer();
   void startNewTextBlock(const BlockStyle& blockStyle);
   void makePages();
   void addLineToPage(std::shared_ptr<TextBlock> line);
+  [[nodiscard]] BlockStyle inheritedBlockStyle(const BlockStyle& child) const;
+  void pushContainerBlockStyle(const BlockStyle& style);
 
   static void XMLCALL startElement(void* userData, const char* name, const char** atts);
   static void XMLCALL characterData(void* userData, const char* s, int len);
@@ -67,7 +81,11 @@ class Fb2SectionParser {
         spec(spec),
         completePageFn(completePageFn),
         popupFn(popupFn),
-        targetSectionIndex(targetSectionIndex) {}
+        targetSectionIndex(targetSectionIndex) {
+    // FB2 block containers nest shallowly (e.g. cite > poem > stanza);
+    // reserve once so pushes never reallocate mid-parse.
+    blockStyleStack.reserve(4);
+  }
 
   bool parseAndBuildPages();
 };
