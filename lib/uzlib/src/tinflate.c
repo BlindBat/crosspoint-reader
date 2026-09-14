@@ -513,6 +513,12 @@ static int tinf_inflate_uncompressed_block(TINF_DATA *d)
         /* check length */
         if (length != (~invlength & 0x0000ffff)) return TINF_DATA_ERROR;
 
+        /* CrossPoint patch (not upstream): uzlib_get_byte() is sticky-EOF
+           and returns 0 once the source is exhausted, so a stream cut inside
+           the LEN/NLEN header could still pass the complement check (e.g.
+           LEN 0xFFFF with NLEN read as zeroes). Reject the truncation. */
+        if (d->eof) return TINF_DATA_ERROR;
+
         /* increment length to properly return TINF_DONE below, without
            producing data at the same time */
         d->curlen = length + 1;
@@ -526,6 +532,10 @@ static int tinf_inflate_uncompressed_block(TINF_DATA *d)
     }
 
     unsigned char c = uzlib_get_byte(d);
+    /* CrossPoint patch (not upstream): a stream truncated inside a stored
+       block used to "succeed" with the missing bytes read as 0x00. Surface
+       source exhaustion as a data error instead of zero-filling. */
+    if (d->eof) return TINF_DATA_ERROR;
     TINF_PUT(d, c);
     return TINF_OK;
 }

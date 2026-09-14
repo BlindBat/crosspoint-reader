@@ -398,23 +398,52 @@ TEST(FontDecompressorMalformed, OutputSizeLieLargerThanStreamFails) {
   EXPECT_EQ(fdc.getBitmap(&sf.font, &sf.glyphs[0], 0), nullptr);
 }
 
-TEST(FontDecompressorMalformed, TruncatedStoredBlockZeroFillsWithoutError) {
-  // KNOWN LIMITATION (pinned, not fixed here): uzlib's stored-block path
-  // (tinf_inflate_uncompressed_block) never checks d->eof, so a stream
-  // truncated inside a STORED block silently yields 0x00 for the missing
-  // bytes instead of an error. Reads stay bounds-checked (no OOB — ASan
-  // verifies), the caller just gets a zero-filled tail. Builtin fonts ship
-  // Huffman blocks, where truncation IS detected — see
-  // TruncatedRealGroupStreamFails below.
+TEST(FontDecompressorMalformed, TruncatedStoredBlockFails) {
+  // A stream truncated inside a STORED block must fail. uzlib_get_byte() is
+  // sticky-EOF and returns 0x00 once the source runs out, so the vendored
+  // tinf_inflate_uncompressed_block used to "succeed" with the missing tail
+  // zero-filled; it now checks d->eof and returns TINF_DATA_ERROR
+  // (CrossPoint patch in lib/uzlib/src/tinflate.c).
   std::vector<uint8_t> full = makeStoredStream({0x11, 0x22, 0x33, 0x44});
   full.resize(full.size() - 2);  // cut mid-payload: last 2 payload bytes gone
   SyntheticFont sf(std::move(full), 4);
   FontDecompressor fdc;
   ASSERT_TRUE(fdc.init());
+  EXPECT_EQ(fdc.getBitmap(&sf.font, &sf.glyphs[0], 0), nullptr);
+}
+
+TEST(FontDecompressorMalformed, StoredBlockTruncatedAtEveryOffsetFails) {
+  // Sweep every truncation point of a stored stream: inside the block header
+  // bits, inside the LEN/NLEN fields (where zero-filled reads could forge a
+  // passing complement check), and inside the payload. All must fail; only
+  // the complete stream decodes.
+  const std::vector<uint8_t> full = makeStoredStream({0x11, 0x22, 0x33, 0x44});
+  for (size_t len = 0; len < full.size(); len++) {
+    std::vector<uint8_t> cut(full.begin(), full.begin() + len);
+    SyntheticFont sf(std::move(cut), 4);
+    FontDecompressor fdc;
+    ASSERT_TRUE(fdc.init());
+    EXPECT_EQ(fdc.getBitmap(&sf.font, &sf.glyphs[0], 0), nullptr) << "truncation at " << len;
+  }
+
+  SyntheticFont sf(full, 4);
+  FontDecompressor fdc;
+  ASSERT_TRUE(fdc.init());
   const uint8_t* bmp = fdc.getBitmap(&sf.font, &sf.glyphs[0], 0);
   ASSERT_NE(bmp, nullptr);
-  const uint8_t expected[4] = {0x11, 0x22, 0x00, 0x00};
+  const uint8_t expected[4] = {0x11, 0x22, 0x33, 0x44};
   EXPECT_EQ(0, memcmp(bmp, expected, 4));
+}
+
+TEST(FontDecompressorMalformed, StoredHeaderForgedByZeroFillFails) {
+  // LEN=0xFFFF with NLEN truncated: sticky-EOF zero reads would make
+  // ~0x0000 & 0xffff == 0xFFFF match LEN, so without the eof check the
+  // header "verifies" and the decoder starts producing zero bytes.
+  const std::vector<uint8_t> forged = {0x01, 0xFF, 0xFF};  // BFINAL/BTYPE=00, LEN lo/hi only
+  SyntheticFont sf(forged, 4);
+  FontDecompressor fdc;
+  ASSERT_TRUE(fdc.init());
+  EXPECT_EQ(fdc.getBitmap(&sf.font, &sf.glyphs[0], 0), nullptr);
 }
 
 TEST(FontDecompressorMalformed, TruncatedHuffmanStreamFails) {
