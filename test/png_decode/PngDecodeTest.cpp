@@ -21,15 +21,6 @@
 #include "HalStorage.h"
 #include "PngToBmpConverter.h"
 
-#if defined(__has_feature)
-#if __has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)
-#define IMGTEST_SANITIZED 1
-#endif
-#endif
-#if !defined(IMGTEST_SANITIZED) && defined(__SANITIZE_ADDRESS__)
-#define IMGTEST_SANITIZED 1
-#endif
-
 namespace {
 
 using imgtest::MemoryPrint;
@@ -469,44 +460,25 @@ TEST(PngDecode, ValidDecodeStaysWithinStreamingBudget) {
 }
 
 // ---------------------------------------------------------------------------
-// KNOWN PRODUCTION BUG (pinned): IHDR bitDepth is never validated against the
-// legal {1,2,4,8,16} set (or per-color-type legality). Crafted depths reach
-// convertScanlineToGray (lib/PngToBmpConverter/PngToBmpConverter.cpp) where:
-//   * depth 0, grayscale:  `ppb = 8 / ctx.bitDepth`  -> integer division by
-//     zero (UB; UBSan aborts) and, downstream, a read past the 0-byte
-//     scanline buffer (ASan heap-buffer-overflow).
-//   * depth 16, palette:   `ppb = 8 / 16 == 0` -> `x / ppb` division by zero.
-//   * depth 3, grayscale:  ppb=2 makes `src[x / ppb]` run past the
-//     (w*3+7)/8-byte scanline buffer (ASan heap-buffer-overflow read).
-//   * depth 4, RGB:        row sized w*3 but the 16-bit branch reads x*6+4
-//     (ASan heap-buffer-overflow read).
-// On the device (RISC-V, no trap on integer div-by-zero) and on the plain
-// host build this currently survives and emits garbage-pixel BMPs, which is
-// what these tests pin. Under ASan/UBSan the production defect itself trips,
-// so there they SKIP -- fixing requires a production-side depth check, which
-// is out of scope for the test program (reported upstream via bugsFound).
+// IHDR bit-depth validation (regression guard). The PNG spec (ISO/IEC 15948
+// s11.2.2) ties the legal bit depths to the color type: grayscale allows
+// {1,2,4,8,16}, palette {1,2,4,8}, and RGB / gray+alpha / RGBA {8,16}. The
+// converter must reject anything else at header parse. Before the fix,
+// crafted depths reached convertScanlineToGray where `8 / bitDepth` divided
+// by zero (depth 0 gray; depth 16 palette via ppb == 0) and the x/ppb
+// indexing read past the scanline buffer (depth 3 gray, depth 4 RGB).
 // ---------------------------------------------------------------------------
 
-class PngBitDepthValidationGap : public ::testing::TestWithParam<const char*> {};
+class PngBitDepthValidation : public ::testing::TestWithParam<const char*> {};
 
-TEST_P(PngBitDepthValidationGap, CurrentlyDecodesGarbageInsteadOfRejecting) {
-#if defined(IMGTEST_SANITIZED)
-  GTEST_SKIP() << "Known production bug: invalid IHDR bit depth reaches "
-                  "convertScanlineToGray (div-by-zero / OOB read; see suite comment)";
-#else
+TEST_P(PngBitDepthValidation, IllegalDepthForColorTypeIsRejected) {
   MemoryPrint out;
-  const bool ok = convert(res(GetParam()), out, 16, 16);
-  // Pinned CURRENT behavior: the converter does not reject the invalid depth
-  // and "successfully" emits a structurally complete BMP of garbage pixels.
-  // The correct behavior would be `false` with no pixel output; when the
-  // production fix lands this pin must be inverted.
-  EXPECT_TRUE(ok);
-  ParsedBmp bmp;
-  EXPECT_TRUE(imgtest::parseBmp(out.bytes, bmp));
-#endif
+  EXPECT_FALSE(convert(res(GetParam()), out, 16, 16));
+  // Rejection happens at header parse: no BMP bytes may be emitted.
+  EXPECT_TRUE(out.bytes.empty());
 }
 
-INSTANTIATE_TEST_SUITE_P(All, PngBitDepthValidationGap,
+INSTANTIATE_TEST_SUITE_P(All, PngBitDepthValidation,
                          ::testing::Values("bitdepth0_gray_8x8.png", "bitdepth3_gray_8x4.png",
                                            "bitdepth16_palette_4x2.png", "bitdepth4_rgb_4x2.png"),
                          [](const auto& info) {
@@ -515,5 +487,31 @@ INSTANTIATE_TEST_SUITE_P(All, PngBitDepthValidationGap,
                              if (c == '.' || c == '-') c = '_';
                            return n;
                          });
+
+TEST(PngDecode, IllegalIhdrBitDepthSweepIsRejected) {
+  // Byte surgery on a valid grayscale fixture: the IHDR bit-depth byte sits
+  // at offset 24 (8 signature + 4 length + 4 "IHDR" + 4 width + 4 height).
+  // Every depth outside {1,2,4,8,16} must be rejected without output. The
+  // converter skips the IHDR CRC, so no checksum re-fix is needed.
+  std::vector<uint8_t> base = imgtest::readFileBytes(res("gray8_ramp_16x16.png"));
+  ASSERT_GT(base.size(), 25u);
+  ASSERT_EQ(base[24], 8u);  // pristine fixture is 8-bit grayscale
+  const uint8_t badDepths[] = {0, 3, 5, 6, 7, 9, 12, 15, 17, 32, 64, 255};
+  for (const uint8_t depth : badDepths) {
+    std::vector<uint8_t> patched = base;
+    patched[24] = depth;
+    MemoryPrint out;
+    EXPECT_FALSE(convertBytes(patched, out, 16, 16, "baddepth")) << "depth " << int(depth);
+    EXPECT_TRUE(out.bytes.empty()) << "depth " << int(depth);
+  }
+}
+
+TEST(PngDecode, GrayLegalDepth16OnPaletteColorTypeIsRejected) {
+  // Depth 16 is legal for grayscale but NOT for palette images: the legality
+  // check must be per color type, not just set membership.
+  MemoryPrint out;
+  EXPECT_FALSE(convert(res("bitdepth16_palette_4x2.png"), out, 16, 16));
+  EXPECT_TRUE(out.bytes.empty());
+}
 
 }  // namespace

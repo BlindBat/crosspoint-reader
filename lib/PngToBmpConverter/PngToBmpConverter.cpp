@@ -495,6 +495,28 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
       return false;
   }
 
+  // Validate bit depth against the PNG spec (ISO/IEC 15948 s11.2.2): the legal
+  // set depends on the color type. A crafted depth outside it (0, 3, 16 for
+  // palette, ...) would reach convertScanlineToGray(), where the sub-byte
+  // paths compute `8 / bitDepth` (division by zero for 0, and for depths that
+  // don't divide 8 the x/ppb indexing runs past the scanline buffer).
+  bool bitDepthValid = false;
+  switch (colorType) {
+    case PNG_COLOR_GRAYSCALE:
+      bitDepthValid = bitDepth == 1 || bitDepth == 2 || bitDepth == 4 || bitDepth == 8 || bitDepth == 16;
+      break;
+    case PNG_COLOR_PALETTE:
+      bitDepthValid = bitDepth == 1 || bitDepth == 2 || bitDepth == 4 || bitDepth == 8;
+      break;
+    default:  // RGB, grayscale+alpha, RGBA (others were rejected above)
+      bitDepthValid = bitDepth == 8 || bitDepth == 16;
+      break;
+  }
+  if (!bitDepthValid) {
+    LOG_ERR("PNG", "Invalid bit depth %u for color type %u", bitDepth, colorType);
+    return false;
+  }
+
   // Validate raw row bytes won't cause memory issues
   if (rawRowBytes > 16384) {
     LOG_ERR("PNG", "Row too large: %u bytes", rawRowBytes);
