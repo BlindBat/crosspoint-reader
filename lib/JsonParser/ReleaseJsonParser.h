@@ -70,6 +70,7 @@ class ReleaseJsonParser {
   char currentAssetName[32];
   char currentAssetUrl[512];
   size_t currentAssetSize;
+  bool currentAssetSizeInvalid;
 
   char firmwareAssetName[32];
 };

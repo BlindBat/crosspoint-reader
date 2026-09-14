@@ -1,5 +1,7 @@
 #include "ReleaseJsonParser.h"
 
+#include <cerrno>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 
@@ -38,6 +40,7 @@ void ReleaseJsonParser::reset() {
   currentAssetName[0] = '\0';
   currentAssetUrl[0] = '\0';
   currentAssetSize = 0;
+  currentAssetSizeInvalid = false;
 }
 
 void ReleaseJsonParser::feed(const char* data, size_t len) { parser.feed(data, len); }
@@ -49,7 +52,7 @@ const char* ReleaseJsonParser::getFirmwareUrl() const { return firmwareUrl; }
 size_t ReleaseJsonParser::getFirmwareSize() const { return firmwareSize; }
 
 void ReleaseJsonParser::commitAsset() {
-  if (strcmp(currentAssetName, firmwareAssetName) == 0) {
+  if (!currentAssetSizeInvalid && strcmp(currentAssetName, firmwareAssetName) == 0) {
     memcpy(firmwareUrl, currentAssetUrl, sizeof(firmwareUrl));
     firmwareSize = currentAssetSize;
     firmwareFound = true;
@@ -57,6 +60,7 @@ void ReleaseJsonParser::commitAsset() {
   currentAssetName[0] = '\0';
   currentAssetUrl[0] = '\0';
   currentAssetSize = 0;
+  currentAssetSizeInvalid = false;
 }
 
 // -- SAX callbacks (static trampolines) -------------------------------------
@@ -120,7 +124,21 @@ void ReleaseJsonParser::sOnNumber(void* ctx, const char* value, size_t /*len*/) 
   auto* self = static_cast<ReleaseJsonParser*>(ctx);
 
   if (self->lastKey == LastKey::ASSET_SIZE && self->position == Position::IN_ASSET_OBJECT && self->assetDepth == 1) {
-    self->currentAssetSize = static_cast<size_t>(strtoul(value, nullptr, 10));
+    // A GitHub asset size is a plain decimal integer. strtoul would saturate
+    // an out-of-range value to ULONG_MAX (UINT32_MAX = ~4GB on the 32-bit
+    // device) and hand the updater a fake but plausible size, so parse into
+    // 64 bits and reject anything negative, non-integral, or wider than the
+    // device's 32-bit size_t. A rejected size invalidates the whole asset:
+    // metadata this broken must not select a firmware image.
+    errno = 0;
+    char* end = nullptr;
+    const unsigned long long parsed = strtoull(value, &end, 10);
+    if (value[0] == '-' || errno != 0 || end == value || *end != '\0' || parsed > UINT32_MAX) {
+      self->currentAssetSizeInvalid = true;
+      self->currentAssetSize = 0;
+    } else {
+      self->currentAssetSize = static_cast<size_t>(parsed);
+    }
   }
   self->lastKey = LastKey::NONE;
 }
@@ -145,6 +163,7 @@ void ReleaseJsonParser::sOnObjectStart(void* ctx) {
       self->currentAssetName[0] = '\0';
       self->currentAssetUrl[0] = '\0';
       self->currentAssetSize = 0;
+      self->currentAssetSizeInvalid = false;
       self->lastKey = LastKey::NONE;
       break;
     case Position::IN_ASSET_OBJECT:

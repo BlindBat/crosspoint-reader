@@ -567,6 +567,56 @@ TEST(ReleaseJsonParser, SizeZero) {
   EXPECT_EQ(p.getFirmwareSize(), 0u);
 }
 
+TEST(ReleaseJsonParser, SizeAtUint32MaxIsAccepted) {
+  // The largest value that fits the device's 32-bit size_t.
+  const char* json =
+      R"({"tag_name":"v1.0","assets":[{"name":"firmware.bin","browser_download_url":"https://fw","size":4294967295}]})";
+
+  ReleaseJsonParser p;
+  p.feed(json, strlen(json));
+
+  ASSERT_TRUE(p.foundFirmware());
+  EXPECT_EQ(p.getFirmwareSize(), 4294967295u);
+}
+
+TEST(ReleaseJsonParser, OutOfRangeSizeRejectsTheAsset) {
+  // One past UINT32_MAX, a negative size, and a non-integer size must all
+  // invalidate the asset -- never saturate into a plausible-looking value.
+  const char* cases[] = {
+      R"({"tag_name":"v1.0","assets":[{"name":"firmware.bin","browser_download_url":"https://fw","size":4294967296}]})",
+      R"({"tag_name":"v1.0","assets":[{"name":"firmware.bin","browser_download_url":"https://fw","size":-1}]})",
+      R"({"tag_name":"v1.0","assets":[{"name":"firmware.bin","browser_download_url":"https://fw","size":1.5}]})",
+      R"({"tag_name":"v1.0","assets":[{"name":"firmware.bin","browser_download_url":"https://fw","size":1e5}]})",
+  };
+
+  for (const char* json : cases) {
+    ReleaseJsonParser p;
+    p.feed(json, strlen(json));
+
+    EXPECT_TRUE(p.foundTag()) << json;
+    EXPECT_FALSE(p.foundFirmware()) << json;
+    EXPECT_STREQ(p.getFirmwareUrl(), "") << json;
+    EXPECT_EQ(p.getFirmwareSize(), 0u) << json;
+  }
+}
+
+TEST(ReleaseJsonParser, InvalidSizeOnOtherAssetDoesNotPoisonTheFirmwareAsset) {
+  const char* json = R"({
+    "tag_name": "v1.0",
+    "assets": [
+      {"name": "huge.dump", "browser_download_url": "https://huge", "size": 99999999999999999999999999},
+      {"name": "firmware.bin", "browser_download_url": "https://fw", "size": 1048576}
+    ]
+  })";
+
+  ReleaseJsonParser p;
+  p.feed(json, strlen(json));
+
+  ASSERT_TRUE(p.foundFirmware());
+  EXPECT_STREQ(p.getFirmwareUrl(), "https://fw");
+  EXPECT_EQ(p.getFirmwareSize(), 1048576u);
+}
+
 TEST(ReleaseJsonParser, MinimalValidJson) {
   const char* json = R"({"tag_name":"v0","assets":[{"name":"firmware.bin","browser_download_url":"u","size":1}]})";
 

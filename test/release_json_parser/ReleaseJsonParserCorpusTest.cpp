@@ -6,7 +6,6 @@
 
 #include <gtest/gtest.h>
 
-#include <climits>
 #include <cstring>
 #include <string>
 
@@ -95,14 +94,15 @@ TEST_F(ReleaseCorpusBehavior, TruncationInsideAssetKeepsTagButNeverCommitsTheAss
   EXPECT_EQ(parser.getFirmwareSize(), 0u);
 }
 
-// Documents a current limitation: an absurd asset size saturates strtoul to
-// ULONG_MAX instead of being rejected. On the 32-bit device that is
-// UINT32_MAX (~4GB), which the updater would then treat as a real size.
-TEST_F(ReleaseCorpusBehavior, HugeAssetSizeSaturatesInsteadOfFailing) {
+// An asset size too large for the device's 32-bit size_t (here 26 digits)
+// invalidates the whole asset instead of saturating to a fake ~4GB size:
+// release metadata that broken must never select a firmware image.
+TEST_F(ReleaseCorpusBehavior, HugeAssetSizeRejectsTheAsset) {
   feedFile("release_huge_asset_size.json");
-  ASSERT_TRUE(parser.foundFirmware());
-  EXPECT_STREQ(parser.getFirmwareUrl(), "https://example.invalid/fw.bin");
-  EXPECT_EQ(parser.getFirmwareSize(), ULONG_MAX);
+  EXPECT_TRUE(parser.foundTag());
+  EXPECT_FALSE(parser.foundFirmware());
+  EXPECT_STREQ(parser.getFirmwareUrl(), "");
+  EXPECT_EQ(parser.getFirmwareSize(), 0u);
 }
 
 TEST_F(ReleaseCorpusBehavior, WrongValueTypesAreIgnoredWithoutFalsePositives) {
