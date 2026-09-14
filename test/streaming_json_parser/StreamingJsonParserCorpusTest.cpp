@@ -113,10 +113,11 @@ TEST_P(StreamingJsonParserCorpusTest, SurvivesArbitraryBytesWithBoundedOutput) {
   EXPECT_EQ(log.events[5].type, EventType::OBJECT_END);
 }
 
-// Pins the CURRENT outcome for each committed corpus file. `errorExpected`
-// mirrors hasError(); the parser is deliberately lenient, so most malformed
-// files do NOT set the error latch — only nesting overflow and broken
-// true/false/null literals do.
+// Pins the outcome for each committed corpus file. `errorExpected` mirrors
+// hasError(); the parser is deliberately lenient with truncated or oversized
+// input, so the error latch is reserved for input that is structurally wrong:
+// nesting overflow, broken true/false/null literals, and unbalanced or
+// type-mismatched closers.
 struct PinnedOutcome {
   bool errorExpected;
 };
@@ -145,8 +146,8 @@ const std::map<std::string, PinnedOutcome>& pinnedOutcomes() {
       {"enc_invalid_utf8_string.json", {false}},
       {"enc_bom_utf8.json", {false}},
       {"enc_bom_utf16le.json", {false}},
-      {"mismatch_extra_closers.json", {false}},
-      {"mismatch_bracket_types.json", {false}},
+      {"mismatch_extra_closers.json", {true}},
+      {"mismatch_bracket_types.json", {true}},
       {"mismatch_bare_garbage.json", {false}},
       {"release_trunc_mid_assets.json", {false}},
       {"release_huge_asset_size.json", {false}},
@@ -252,13 +253,25 @@ TEST_F(JsonCorpusBehavior, Utf8BomBeforeDocumentIsIgnored) {
   EXPECT_FALSE(parser.hasError());
 }
 
-// Documents a current limitation: unbalanced closers never set the error
-// latch — each stray '}' / ']' still fires its end callback.
-TEST_F(JsonCorpusBehavior, ExtraClosersFireCallbacksWithoutError) {
+// {"a":1}}}]] — the first '}' legitimately closes the object; the second one
+// has nothing left to close, so it latches the error and every later closer
+// is ignored: no end callback may fire for a container that was never opened.
+TEST_F(JsonCorpusBehavior, ExtraClosersLatchErrorAndStopCallbacks) {
   feedFile("mismatch_extra_closers.json");
-  EXPECT_EQ(log.count(EventType::OBJECT_END), 3u);
-  EXPECT_EQ(log.count(EventType::ARRAY_END), 2u);
-  EXPECT_FALSE(parser.hasError());
+  EXPECT_EQ(log.count(EventType::OBJECT_END), 1u);
+  EXPECT_EQ(log.count(EventType::ARRAY_END), 0u);
+  EXPECT_TRUE(parser.hasError());
+}
+
+// {"a":[1,2}} — a '}' arriving while an array is the innermost open container
+// is a type mismatch: error latches, and neither end callback fires.
+TEST_F(JsonCorpusBehavior, TypeMismatchedCloserLatchesErrorWithoutEndCallbacks) {
+  feedFile("mismatch_bracket_types.json");
+  EXPECT_TRUE(parser.hasError());
+  EXPECT_EQ(log.count(EventType::OBJECT_END), 0u);
+  EXPECT_EQ(log.count(EventType::ARRAY_END), 0u);
+  // Events before the mismatch stand: the array's values were already emitted.
+  EXPECT_EQ(log.count(EventType::NUMBER), 2u);
 }
 
 TEST_F(JsonCorpusBehavior, NonJsonGarbageProducesNoEventsAndNoError) {

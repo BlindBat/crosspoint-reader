@@ -63,8 +63,15 @@ void StreamingJsonParser::handleScanning(char c) {
       expectingValue = false;
       break;
     case '}':
+      // A '}' with nothing open, or closing an open array, is malformed
+      // input: latch the error without firing the end callback so consumers
+      // never see a close event for a container that was not opened.
+      if (nestingDepth == 0 || nestingStack[nestingDepth - 1] != Container::OBJECT) {
+        error = true;
+        return;
+      }
       if (cb.onObjectEnd) cb.onObjectEnd(cb.ctx);
-      if (nestingDepth > 0) --nestingDepth;
+      --nestingDepth;
       expectingValue = false;
       break;
     case '[':
@@ -78,8 +85,12 @@ void StreamingJsonParser::handleScanning(char c) {
       expectingValue = false;
       break;
     case ']':
+      if (nestingDepth == 0 || nestingStack[nestingDepth - 1] != Container::ARRAY) {
+        error = true;
+        return;
+      }
       if (cb.onArrayEnd) cb.onArrayEnd(cb.ctx);
-      if (nestingDepth > 0) --nestingDepth;
+      --nestingDepth;
       expectingValue = false;
       break;
     case ':':

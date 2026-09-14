@@ -478,6 +478,61 @@ TEST(StreamingJsonParser, NestingOverflow) {
   EXPECT_TRUE(parser.hasError());
 }
 
+TEST(StreamingJsonParser, MismatchedAndExtraClosersSetErrorAndStopCallbacks) {
+  struct Case {
+    const char* json;
+    size_t objectEnds;
+    size_t arrayEnds;
+  };
+  // Each case has a structural closer defect; events before the defect stand,
+  // the offending closer never fires a callback, and hasError() latches.
+  const Case cases[] = {
+      {"[}", 0, 0},          // object closer inside an array
+      {"{]", 0, 0},          // array closer inside an object
+      {"}", 0, 0},           // closer with nothing open
+      {"]", 0, 0},           // closer with nothing open
+      {"{\"a\":1}}", 1, 0},  // extra closer after a complete document
+      {"[[1]]]", 0, 2},      // extra closer after balanced arrays
+  };
+
+  for (const Case& c : cases) {
+    TestContext ctx;
+    StreamingJsonParser parser(makeCallbacks(&ctx));
+    parser.feed(c.json, strlen(c.json));
+
+    EXPECT_TRUE(parser.hasError()) << c.json;
+    size_t objectEnds = 0;
+    size_t arrayEnds = 0;
+    for (auto& e : ctx.events) {
+      if (e.type == EventType::OBJECT_END) ++objectEnds;
+      if (e.type == EventType::ARRAY_END) ++arrayEnds;
+    }
+    EXPECT_EQ(objectEnds, c.objectEnds) << c.json;
+    EXPECT_EQ(arrayEnds, c.arrayEnds) << c.json;
+
+    // Once latched, further input is ignored entirely.
+    const size_t eventsAtError = ctx.events.size();
+    const char* more = "{\"x\":2}";
+    parser.feed(more, strlen(more));
+    EXPECT_EQ(ctx.events.size(), eventsAtError) << c.json;
+  }
+}
+
+TEST(StreamingJsonParser, ResetRecoversFromCloserMismatchError) {
+  TestContext ctx;
+  StreamingJsonParser parser(makeCallbacks(&ctx));
+  parser.feed("]", 1);
+  ASSERT_TRUE(parser.hasError());
+
+  parser.reset();
+  ctx.events.clear();
+  const char* json = "{\"a\":[1]}";
+  parser.feed(json, strlen(json));
+  EXPECT_FALSE(parser.hasError());
+  ASSERT_EQ(ctx.events.size(), 6u);
+  EXPECT_EQ(ctx.events[5].type, EventType::OBJECT_END);
+}
+
 TEST(StreamingJsonParser, NumberZero) {
   auto events = parse(R"({"z": 0})");
   ASSERT_EQ(events.size(), 4u);
