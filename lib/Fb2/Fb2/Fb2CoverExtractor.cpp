@@ -28,12 +28,19 @@ struct ExtractState {
   bool foundTarget;
   bool inBinary;
   bool done;
+  bool invalidBase64;
   // Base64 streaming state
   uint8_t b64Buf[3];
   int b64Pending;
 
   explicit ExtractState(const std::string& id, HalFile* out)
-      : targetId(id), outputFile(out), foundTarget(false), inBinary(false), done(false), b64Pending(0) {}
+      : targetId(id),
+        outputFile(out),
+        foundTarget(false),
+        inBinary(false),
+        done(false),
+        invalidBase64(false),
+        b64Pending(0) {}
 
   void decodeBase64Chunk(const char* data, int len) {
     for (int i = 0; i < len; i++) {
@@ -51,7 +58,14 @@ struct ExtractState {
       }
 
       int8_t val = base64DecodeChar(c);
-      if (val == B64_INVALID) continue;
+      if (val == B64_INVALID) {
+        // Whitespace is legal inside base64 (handled above); any other
+        // character means the binary is corrupted. Decoding on would write
+        // garbage bytes that only fail later (or worse, convert into a
+        // scrambled cover), so flag the extraction as failed.
+        invalidBase64 = true;
+        continue;
+      }
 
       switch (b64Pending) {
         case 0:
@@ -182,7 +196,10 @@ bool Fb2CoverExtractor::extractBinaryToJpeg(const std::string& tempJpegPath) con
   fb2File.close();
   jpegFile.close();
 
-  if (!state.foundTarget || !success) {
+  if (!state.foundTarget || !success || state.invalidBase64) {
+    if (state.invalidBase64) {
+      LOG_ERR("FB2", "Cover binary contains invalid base64");
+    }
     Storage.remove(tempJpegPath.c_str());
     return false;
   }

@@ -89,14 +89,22 @@ TEST_F(Fb2CoverExtractorTest, MatchesBinaryByIdNotDocumentOrder) {
   EXPECT_EQ(readAll(outPath()), "DECOY-BINARY-MUST-NOT-BE-EXTRACTED");
 }
 
-// Documents current behavior: invalid base64 characters are silently skipped,
-// so a corrupted binary "extracts" successfully with garbage bytes instead of
-// failing. Expected bytes below are the streaming decode of the fixture's
-// cleaned character sequence "R09PREREFUQQ==".
-TEST_F(Fb2CoverExtractorTest, InvalidBase64CharsAreSilentlySkipped) {
+// Whitespace inside base64 is legal (XML pretty-printing), but any other
+// invalid character means the binary is corrupted: extraction must fail
+// instead of decoding the remaining characters into a garbage cover.
+TEST_F(Fb2CoverExtractorTest, InvalidBase64CharsFailExtraction) {
   Fb2CoverExtractor extractor(fixturePath("base64-corrupt-cover.fb2"), "bad.jpg", outPath());
-  ASSERT_TRUE(extractor.extract());
-  EXPECT_EQ(readAll(outPath()), std::string("GOODDD\x15\x44\x10", 9));
+  EXPECT_FALSE(extractor.extract());
+  EXPECT_FALSE(fileExists(outPath()));
+  EXPECT_FALSE(fileExists(tmp.path() + "/.cover.jpg"));
+  EXPECT_EQ(JpegToBmpConverterStubState::instance().streamCalls, 0);
+}
+
+TEST_F(Fb2CoverExtractorTest, InvalidBase64AlsoFailsThumbExtraction) {
+  Fb2CoverExtractor extractor(fixturePath("base64-corrupt-cover.fb2"), "bad.jpg", "");
+  EXPECT_FALSE(extractor.extractThumb(outPath("thumb.bmp"), 100));
+  EXPECT_FALSE(fileExists(outPath("thumb.bmp")));
+  EXPECT_EQ(JpegToBmpConverterStubState::instance().oneBitCalls, 0);
 }
 
 TEST_F(Fb2CoverExtractorTest, DeclaredWindows1251DocumentStillExtractsCover) {
