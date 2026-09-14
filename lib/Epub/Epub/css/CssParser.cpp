@@ -428,68 +428,87 @@ CssParser::RuleInsertResult CssParser::insertOrMerge(const std::string_view sele
 
 // Property value interpreters
 
-CssTextAlign CssParser::interpretAlignment(std::string_view val) {
+bool CssParser::tryInterpretAlignment(std::string_view val, CssTextAlign& out) {
   val = trimCssWhitespace(val);
 
-  if (iequalsAscii(val, "left") || iequalsAscii(val, "start")) return CssTextAlign::Left;
-  if (iequalsAscii(val, "right") || iequalsAscii(val, "end")) return CssTextAlign::Right;
-  if (iequalsAscii(val, "center")) return CssTextAlign::Center;
-  if (iequalsAscii(val, "justify")) return CssTextAlign::Justify;
-
-  return CssTextAlign::Left;
+  if (iequalsAscii(val, "left") || iequalsAscii(val, "start")) {
+    out = CssTextAlign::Left;
+  } else if (iequalsAscii(val, "right") || iequalsAscii(val, "end")) {
+    out = CssTextAlign::Right;
+  } else if (iequalsAscii(val, "center")) {
+    out = CssTextAlign::Center;
+  } else if (iequalsAscii(val, "justify")) {
+    out = CssTextAlign::Justify;
+  } else {
+    return false;
+  }
+  return true;
 }
 
-CssFontStyle CssParser::interpretFontStyle(std::string_view val) {
+bool CssParser::tryInterpretFontStyle(std::string_view val, CssFontStyle& out) {
   val = trimCssWhitespace(val);
 
-  if (iequalsAscii(val, "italic") || iequalsAscii(val, "oblique")) return CssFontStyle::Italic;
-  return CssFontStyle::Normal;
+  if (iequalsAscii(val, "italic") || iequalsAscii(val, "oblique")) {
+    out = CssFontStyle::Italic;
+  } else if (iequalsAscii(val, "normal")) {
+    out = CssFontStyle::Normal;
+  } else {
+    return false;
+  }
+  return true;
 }
 
-CssFontWeight CssParser::interpretFontWeight(std::string_view val) {
+bool CssParser::tryInterpretFontWeight(std::string_view val, CssFontWeight& out) {
   val = trimCssWhitespace(val);
 
   // Named values
-  if (iequalsAscii(val, "bold") || iequalsAscii(val, "bolder")) return CssFontWeight::Bold;
-  if (iequalsAscii(val, "normal") || iequalsAscii(val, "lighter")) return CssFontWeight::Normal;
+  if (iequalsAscii(val, "bold") || iequalsAscii(val, "bolder")) {
+    out = CssFontWeight::Bold;
+    return true;
+  }
+  if (iequalsAscii(val, "normal") || iequalsAscii(val, "lighter")) {
+    out = CssFontWeight::Normal;
+    return true;
+  }
 
   // Numeric values: 100-900
   // CSS spec: 400 = normal, 700 = bold
   // We use: 0-400 = normal, 700+ = bold, 500-600 = normal (conservative)
   long numericWeight = 0;
   if (tryParseNumber(val, numericWeight)) {
-    return numericWeight >= 700 ? CssFontWeight::Bold : CssFontWeight::Normal;
+    out = numericWeight >= 700 ? CssFontWeight::Bold : CssFontWeight::Normal;
+    return true;
   }
-  return CssFontWeight::Normal;
+  return false;
 }
 
-CssTextDecoration CssParser::interpretDecoration(std::string_view val) {
+bool CssParser::tryInterpretDecoration(std::string_view val, CssTextDecoration& out) {
   // text-decoration can have multiple space-separated values. Compare whole tokens
   // so malformed values like "notunderline" do not accidentally enable a line.
+  // A value with no recognized token at all fails to parse.
   CssTextDecoration result = CssTextDecoration::None;
   bool explicitNone = false;
+  bool recognizedAny = false;
   forEachDelimitedToken(val, isCssWhitespace, [&](const std::string_view token) {
     if (iequalsAscii(token, "none")) {
       explicitNone = true;
+      recognizedAny = true;
     } else if (iequalsAscii(token, "underline")) {
       result = result | CssTextDecoration::Underline;
+      recognizedAny = true;
     } else if (iequalsAscii(token, "line-through")) {
       result = result | CssTextDecoration::LineThrough;
+      recognizedAny = true;
     }
   });
-  return explicitNone ? CssTextDecoration::None : result;
-}
-
-CssLength CssParser::interpretLength(std::string_view val) {
-  CssLength result;
-  tryInterpretLength(val, result);
-  return result;
+  if (!recognizedAny) return false;
+  out = explicitNone ? CssTextDecoration::None : result;
+  return true;
 }
 
 bool CssParser::tryInterpretLength(std::string_view val, CssLength& out) {
   val = trimCssWhitespace(val);
   if (val.empty()) {
-    out = CssLength{};
     return false;
   }
 
@@ -504,13 +523,14 @@ bool CssParser::tryInterpretLength(std::string_view val, CssLength& out) {
 
   float numericValue;
   if (!tryParseNumber(val.substr(0, unitStart), numericValue)) {
-    out = CssLength{};
     return false;  // No number parsed (e.g. auto, inherit, initial)
   }
 
   const std::string_view unitPart = val.substr(unitStart);
   auto unit = CssUnit::Pixels;
-  if (iequalsAscii(unitPart, "em")) {
+  if (unitPart.empty() || iequalsAscii(unitPart, "px")) {
+    unit = CssUnit::Pixels;
+  } else if (iequalsAscii(unitPart, "em")) {
     unit = CssUnit::Em;
   } else if (iequalsAscii(unitPart, "rem")) {
     unit = CssUnit::Rem;
@@ -518,6 +538,11 @@ bool CssParser::tryInterpretLength(std::string_view val, CssLength& out) {
     unit = CssUnit::Points;
   } else if (unitPart == "%") {
     unit = CssUnit::Percent;
+  } else {
+    // Unrecognized unit: e.g. "1e4999em" scans as number "1" with trailing
+    // "e4999em". Treating that as pixels would fabricate a value the author
+    // never wrote, so the length fails to parse instead.
+    return false;
   }
 
   out = CssLength{numericValue, unit};
@@ -537,65 +562,61 @@ void CssParser::parseDeclarationIntoStyle(std::string_view decl, CssStyle& style
 
   value = stripTrailingImportant(value);
 
+  // An unparseable value leaves its property UNDEFINED, exactly as if the
+  // declaration were absent. The old fallback behavior (e.g. a corrupted
+  // text-align silently becoming Left) let junk values override the cascade.
   if (iequalsAscii(name, "text-align")) {
-    style.textAlign = interpretAlignment(value);
-    style.defined.textAlign = 1;
+    if (tryInterpretAlignment(value, style.textAlign)) style.defined.textAlign = 1;
   } else if (iequalsAscii(name, "font-style")) {
-    style.fontStyle = interpretFontStyle(value);
-    style.defined.fontStyle = 1;
+    if (tryInterpretFontStyle(value, style.fontStyle)) style.defined.fontStyle = 1;
   } else if (iequalsAscii(name, "font-weight")) {
-    style.fontWeight = interpretFontWeight(value);
-    style.defined.fontWeight = 1;
+    if (tryInterpretFontWeight(value, style.fontWeight)) style.defined.fontWeight = 1;
   } else if (iequalsAscii(name, "text-decoration") || iequalsAscii(name, "text-decoration-line")) {
-    style.textDecoration = interpretDecoration(value);
-    style.defined.textDecoration = 1;
+    if (tryInterpretDecoration(value, style.textDecoration)) style.defined.textDecoration = 1;
   } else if (iequalsAscii(name, "text-indent")) {
-    style.textIndent = interpretLength(value);
-    style.defined.textIndent = 1;
+    if (tryInterpretLength(value, style.textIndent)) style.defined.textIndent = 1;
   } else if (iequalsAscii(name, "margin-top")) {
-    style.marginTop = interpretLength(value);
-    style.defined.marginTop = 1;
+    if (tryInterpretLength(value, style.marginTop)) style.defined.marginTop = 1;
   } else if (iequalsAscii(name, "margin-bottom")) {
-    style.marginBottom = interpretLength(value);
-    style.defined.marginBottom = 1;
+    if (tryInterpretLength(value, style.marginBottom)) style.defined.marginBottom = 1;
   } else if (iequalsAscii(name, "margin-left")) {
-    style.marginLeft = interpretLength(value);
-    style.defined.marginLeft = 1;
+    if (tryInterpretLength(value, style.marginLeft)) style.defined.marginLeft = 1;
   } else if (iequalsAscii(name, "margin-right")) {
-    style.marginRight = interpretLength(value);
-    style.defined.marginRight = 1;
+    if (tryInterpretLength(value, style.marginRight)) style.defined.marginRight = 1;
   } else if (iequalsAscii(name, "margin")) {
-    std::string_view margins[4];
-    const size_t count = collectEdgeValueTokens(value, margins);
+    std::string_view tokens[4];
+    const size_t count = collectEdgeValueTokens(value, tokens);
     if (count > 0) {
-      style.marginTop = interpretLength(margins[0]);
-      style.marginRight = count >= 2 ? interpretLength(margins[1]) : style.marginTop;
-      style.marginBottom = count >= 3 ? interpretLength(margins[2]) : style.marginTop;
-      style.marginLeft = count >= 4 ? interpretLength(margins[3]) : style.marginRight;
-      style.defined.marginTop = style.defined.marginRight = style.defined.marginBottom = style.defined.marginLeft = 1;
+      // CSS 1/2/3/4-value fallback: top, right, bottom, left. Each edge is
+      // defined only when the token it falls back to parses, so a partially
+      // unparseable shorthand like "margin: 0 auto" still defines top/bottom.
+      const std::string_view rightToken = count >= 2 ? tokens[1] : tokens[0];
+      const std::string_view bottomToken = count >= 3 ? tokens[2] : tokens[0];
+      const std::string_view leftToken = count >= 4 ? tokens[3] : rightToken;
+      if (tryInterpretLength(tokens[0], style.marginTop)) style.defined.marginTop = 1;
+      if (tryInterpretLength(rightToken, style.marginRight)) style.defined.marginRight = 1;
+      if (tryInterpretLength(bottomToken, style.marginBottom)) style.defined.marginBottom = 1;
+      if (tryInterpretLength(leftToken, style.marginLeft)) style.defined.marginLeft = 1;
     }
   } else if (iequalsAscii(name, "padding-top")) {
-    style.paddingTop = interpretLength(value);
-    style.defined.paddingTop = 1;
+    if (tryInterpretLength(value, style.paddingTop)) style.defined.paddingTop = 1;
   } else if (iequalsAscii(name, "padding-bottom")) {
-    style.paddingBottom = interpretLength(value);
-    style.defined.paddingBottom = 1;
+    if (tryInterpretLength(value, style.paddingBottom)) style.defined.paddingBottom = 1;
   } else if (iequalsAscii(name, "padding-left")) {
-    style.paddingLeft = interpretLength(value);
-    style.defined.paddingLeft = 1;
+    if (tryInterpretLength(value, style.paddingLeft)) style.defined.paddingLeft = 1;
   } else if (iequalsAscii(name, "padding-right")) {
-    style.paddingRight = interpretLength(value);
-    style.defined.paddingRight = 1;
+    if (tryInterpretLength(value, style.paddingRight)) style.defined.paddingRight = 1;
   } else if (iequalsAscii(name, "padding")) {
-    std::string_view paddings[4];
-    const size_t count = collectEdgeValueTokens(value, paddings);
+    std::string_view tokens[4];
+    const size_t count = collectEdgeValueTokens(value, tokens);
     if (count > 0) {
-      style.paddingTop = interpretLength(paddings[0]);
-      style.paddingRight = count >= 2 ? interpretLength(paddings[1]) : style.paddingTop;
-      style.paddingBottom = count >= 3 ? interpretLength(paddings[2]) : style.paddingTop;
-      style.paddingLeft = count >= 4 ? interpretLength(paddings[3]) : style.paddingRight;
-      style.defined.paddingTop = style.defined.paddingRight = style.defined.paddingBottom = style.defined.paddingLeft =
-          1;
+      const std::string_view rightToken = count >= 2 ? tokens[1] : tokens[0];
+      const std::string_view bottomToken = count >= 3 ? tokens[2] : tokens[0];
+      const std::string_view leftToken = count >= 4 ? tokens[3] : rightToken;
+      if (tryInterpretLength(tokens[0], style.paddingTop)) style.defined.paddingTop = 1;
+      if (tryInterpretLength(rightToken, style.paddingRight)) style.defined.paddingRight = 1;
+      if (tryInterpretLength(bottomToken, style.paddingBottom)) style.defined.paddingBottom = 1;
+      if (tryInterpretLength(leftToken, style.paddingLeft)) style.defined.paddingLeft = 1;
     }
   } else if (iequalsAscii(name, "height")) {
     CssLength len;

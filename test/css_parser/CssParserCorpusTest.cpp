@@ -95,7 +95,7 @@ const std::map<std::string, PinnedOutcome>& pinnedOutcomes() {
       {"huge_selector_4k.css", {R::Partial, 0}},
       {"huge_decl_value_8k.css", {R::Partial, 1}},
       {"huge_numeric_value.css", {R::Complete, 1}},
-      {"enc_nul_in_value.css", {R::Complete, 1}},
+      {"enc_nul_in_value.css", {R::Complete, 0}},
       {"enc_nul_in_selector.css", {R::Complete, 1}},
       {"enc_invalid_utf8.css", {R::Complete, 1}},
       {"enc_bom_utf8.css", {R::Complete, 1}},
@@ -153,29 +153,29 @@ TEST_F(CssCorpusBehavior, DeclarationOverflowDropsOnlyTheOversizedDeclaration) {
   EXPECT_EQ(parser.resolveStyle("p", "").textAlign, CssTextAlign::Center);
 }
 
-// Documents a current limitation: absurd magnitudes are not rejected.
-// margin-top: 999...9em (30 digits) becomes a defined 1e30em margin that
-// flows into layout arithmetic unclamped. text-indent: 1e4999em is
-// misparsed — the unit scanner stops at 'e', so the value is read as number
-// "1" with unrecognized unit "e4999em" and stored as a defined 1px indent.
-TEST_F(CssCorpusBehavior, AbsurdNumericLengthsSaturateOrMisparse) {
+// margin-top: 999...9em (30 digits) is a huge but well-formed length and
+// still parses (saturating in float to 1e30em). text-indent: 1e4999em is
+// malformed for this parser — the unit scanner stops at 'e', leaving number
+// "1" with unrecognized unit "e4999em" — so the declaration is dropped
+// instead of being misread as a defined 1px indent.
+TEST_F(CssCorpusBehavior, HugeWellFormedLengthParsesButMalformedUnitIsDropped) {
   loadCorpusFile("huge_numeric_value.css");
   const CssStyle style = parser.resolveStyle("p", "");
   ASSERT_TRUE(style.hasMarginTop());
   EXPECT_FLOAT_EQ(style.marginTop.value, 1e30f);
   EXPECT_EQ(style.marginTop.unit, CssUnit::Em);
-  ASSERT_TRUE(style.hasTextIndent());
-  EXPECT_FLOAT_EQ(style.textIndent.value, 1.0f);
-  EXPECT_EQ(style.textIndent.unit, CssUnit::Pixels);
+  EXPECT_FALSE(style.hasTextIndent());
 }
 
-// Documents a current limitation: an unrecognized (here NUL-corrupted)
-// text-align value is not dropped — it silently becomes the Left fallback.
-TEST_F(CssCorpusBehavior, NulCorruptedAlignmentValueFallsBackToLeft) {
+// An unrecognized (here NUL-corrupted) text-align value leaves the property
+// undefined, exactly as if the declaration were absent — it must not turn
+// into a Left fallback that overrides the cascade. With no other supported
+// declaration in the block, the whole rule is dropped.
+TEST_F(CssCorpusBehavior, NulCorruptedAlignmentValueLeavesPropertyUndefined) {
   loadCorpusFile("enc_nul_in_value.css");
   const CssStyle style = parser.resolveStyle("p", "");
-  ASSERT_TRUE(style.hasTextAlign());
-  EXPECT_EQ(style.textAlign, CssTextAlign::Left);
+  EXPECT_FALSE(style.hasTextAlign());
+  EXPECT_FALSE(style.defined.anySet());
 }
 
 TEST_F(CssCorpusBehavior, InvalidUtf8SelectorBytesAreOpaqueAndResolvable) {

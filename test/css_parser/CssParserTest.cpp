@@ -159,6 +159,82 @@ TEST_F(CssParserTest, OversizedDeclarationMarksParsePartialAndKeepsFollowingDecl
   EXPECT_EQ(style.fontStyle, CssFontStyle::Italic);
 }
 
+TEST_F(CssParserTest, UnparseableValuesLeavePropertiesUndefined) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser,
+                    ".junk { text-align: banana; font-style: cursive; font-weight: heavy;"
+                    " text-decoration: blink; text-indent: auto; margin-top: inherit;"
+                    " padding-left: 2vw; font-weight: bold }\n"),
+            CssParser::ParseResult::Complete);
+
+  // Every unparseable declaration behaves as if absent; only the final valid
+  // font-weight defines anything.
+  const CssStyle style = parser.resolveStyle("p", "junk");
+  EXPECT_FALSE(style.hasTextAlign());
+  EXPECT_FALSE(style.hasFontStyle());
+  EXPECT_FALSE(style.hasTextDecoration());
+  EXPECT_FALSE(style.hasTextIndent());
+  EXPECT_FALSE(style.hasMarginTop());
+  EXPECT_FALSE(style.hasPaddingLeft());
+  EXPECT_EQ(style.fontWeight, CssFontWeight::Bold);
+}
+
+TEST_F(CssParserTest, UnparseableValueDoesNotClobberAnEarlierValidOne) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser, "p { text-align: center; text-align: banana; text-indent: 2em; text-indent: bogus }\n"),
+            CssParser::ParseResult::Complete);
+
+  const CssStyle style = parser.resolveStyle("p", "");
+  ASSERT_TRUE(style.hasTextAlign());
+  EXPECT_EQ(style.textAlign, CssTextAlign::Center);
+  ASSERT_TRUE(style.hasTextIndent());
+  EXPECT_FLOAT_EQ(style.textIndent.value, 2.0f);
+  EXPECT_EQ(style.textIndent.unit, CssUnit::Em);
+}
+
+TEST_F(CssParserTest, EdgeShorthandDefinesOnlyTheEdgesWhoseTokensParse) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser,
+                    ".centered { margin: 0 auto }\n"
+                    ".pad { padding: 1em bogus 2em }\n"
+                    ".allbad { margin: auto }\n"),
+            CssParser::ParseResult::Complete);
+
+  // "margin: 0 auto": top/bottom parse (0), left/right fall back to the
+  // unparseable "auto" and stay undefined.
+  const CssStyle centered = parser.resolveStyle("div", "centered");
+  ASSERT_TRUE(centered.hasMarginTop());
+  EXPECT_FLOAT_EQ(centered.marginTop.value, 0.0f);
+  ASSERT_TRUE(centered.hasMarginBottom());
+  EXPECT_FALSE(centered.hasMarginLeft());
+  EXPECT_FALSE(centered.hasMarginRight());
+
+  // 3-value form: top=1em, right=left=bogus (undefined), bottom=2em.
+  const CssStyle pad = parser.resolveStyle("div", "pad");
+  ASSERT_TRUE(pad.hasPaddingTop());
+  EXPECT_FLOAT_EQ(pad.paddingTop.value, 1.0f);
+  ASSERT_TRUE(pad.hasPaddingBottom());
+  EXPECT_FLOAT_EQ(pad.paddingBottom.value, 2.0f);
+  EXPECT_FALSE(pad.hasPaddingRight());
+  EXPECT_FALSE(pad.hasPaddingLeft());
+
+  // No token parses: nothing is defined, so the rule itself is dropped.
+  EXPECT_FALSE(parser.resolveStyle("div", "allbad").defined.anySet());
+}
+
+TEST_F(CssParserTest, ExplicitPxUnitAndBareNumbersStillParse) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser, "p { text-indent: 12px; margin-top: 3 }\n"), CssParser::ParseResult::Complete);
+
+  const CssStyle style = parser.resolveStyle("p", "");
+  ASSERT_TRUE(style.hasTextIndent());
+  EXPECT_FLOAT_EQ(style.textIndent.value, 12.0f);
+  EXPECT_EQ(style.textIndent.unit, CssUnit::Pixels);
+  ASSERT_TRUE(style.hasMarginTop());
+  EXPECT_FLOAT_EQ(style.marginTop.value, 3.0f);
+  EXPECT_EQ(style.marginTop.unit, CssUnit::Pixels);
+}
+
 TEST_F(CssParserTest, PartialBomPrefixIsTreatedAsOrdinarySelectorBytes) {
   // Only the exact three-byte EF BB BF sequence is a BOM. A two-byte prefix
   // is content: it stays glued to the selector, which then cannot match.

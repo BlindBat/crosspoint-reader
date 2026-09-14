@@ -186,12 +186,14 @@ class CssParser {
   static CssStyle parseDeclarations(std::string_view declBlock);
   static void parseDeclarationIntoStyle(std::string_view decl, CssStyle& style);
 
-  // Individual property value parsers
-  static CssTextAlign interpretAlignment(std::string_view val);
-  static CssFontStyle interpretFontStyle(std::string_view val);
-  static CssFontWeight interpretFontWeight(std::string_view val);
-  static CssTextDecoration interpretDecoration(std::string_view val);
-  static CssLength interpretLength(std::string_view val);
-  /** Returns true only when a numeric length was parsed (e.g. 2em, 50%). False for auto/inherit/initial. */
+  // Individual property value parsers. Each writes `out` and returns true
+  // only when the value parses; on failure `out` is left untouched so the
+  // caller can leave the property undefined (an unparseable declaration
+  // behaves as if it were absent).
+  static bool tryInterpretAlignment(std::string_view val, CssTextAlign& out);
+  static bool tryInterpretFontStyle(std::string_view val, CssFontStyle& out);
+  static bool tryInterpretFontWeight(std::string_view val, CssFontWeight& out);
+  static bool tryInterpretDecoration(std::string_view val, CssTextDecoration& out);
+  /** True only for a numeric length with a supported unit (e.g. 2em, 50%). False for auto/inherit/initial. */
   static bool tryInterpretLength(std::string_view val, CssLength& out);
 };
