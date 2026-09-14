@@ -189,14 +189,15 @@ TEST_F(CssCorpusBehavior, NulByteInSelectorPreventsNormalLookup) {
   EXPECT_FALSE(parser.resolveStyle("p", "a").hasFontWeight());
 }
 
-// Documents a current limitation: a UTF-8 BOM is glued onto the first
-// selector, so the first rule of a BOM-prefixed stylesheet never matches its
-// element. Real-world stylesheets saved with a BOM silently lose their first
-// rule.
-TEST_F(CssCorpusBehavior, Utf8BomSwallowsTheFirstSelector) {
+// A UTF-8 BOM before the stylesheet is consumed by the tokenizer, so the
+// first rule of a BOM-prefixed stylesheet matches its element normally
+// instead of being stored under the unmatchable selector "\xEF\xBB\xBFp".
+TEST_F(CssCorpusBehavior, Utf8BomIsSkippedBeforeTheFirstSelector) {
   loadCorpusFile("enc_bom_utf8.css");
-  EXPECT_EQ(parser.ruleCount(), 1u);  // stored under "\xEF\xBB\xBFp"
-  EXPECT_FALSE(parser.resolveStyle("p", "").hasTextAlign());
+  EXPECT_EQ(parser.ruleCount(), 1u);
+  const CssStyle style = parser.resolveStyle("p", "");
+  ASSERT_TRUE(style.hasTextAlign());
+  EXPECT_EQ(style.textAlign, CssTextAlign::Center);
 }
 
 }  // namespace

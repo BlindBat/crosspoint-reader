@@ -804,6 +804,43 @@ CssParser::ParseResult CssParser::loadFromStream(HalFile& source) {
     }
   };
 
+  const auto processByte = [&](const char c) {
+    if (inComment) {
+      if (prevStar && c == '/') {
+        inComment = false;
+        prevStar = false;
+        return;
+      }
+      prevStar = c == '*';
+      return;
+    }
+
+    if (maybeSlash) {
+      maybeSlash = false;
+      if (c == '*') {
+        inComment = true;
+        prevStar = false;
+        return;
+      }
+      handleChar('/');
+      // fall through to process current char
+    }
+
+    if (c == '/') {
+      maybeSlash = true;
+      return;
+    }
+
+    handleChar(c);
+  };
+
+  // A UTF-8 BOM left in the stream would be glued onto the first selector,
+  // making the first rule of a BOM-prefixed stylesheet unmatchable. Consume
+  // it before tokenizing; a partial match is replayed as ordinary content.
+  constexpr char UTF8_BOM[] = {'\xEF', '\xBB', '\xBF'};
+  size_t bomMatched = 0;
+  bool bomChecked = false;
+
   char buffer[READ_BUFFER_SIZE];
   while (source.available()) {
     int bytesRead = source.read(buffer, sizeof(buffer));
@@ -814,35 +851,22 @@ CssParser::ParseResult CssParser::loadFromStream(HalFile& source) {
     for (int i = 0; i < bytesRead; ++i) {
       const char c = buffer[i];
 
-      if (inComment) {
-        if (prevStar && c == '/') {
-          inComment = false;
-          prevStar = false;
+      if (!bomChecked) {
+        if (c == UTF8_BOM[bomMatched]) {
+          if (++bomMatched == sizeof(UTF8_BOM)) bomChecked = true;  // full BOM consumed
           continue;
         }
-        prevStar = c == '*';
-        continue;
+        bomChecked = true;
+        for (size_t b = 0; b < bomMatched; ++b) processByte(UTF8_BOM[b]);
       }
 
-      if (maybeSlash) {
-        if (c == '*') {
-          inComment = true;
-          maybeSlash = false;
-          prevStar = false;
-          continue;
-        }
-        handleChar('/');
-        maybeSlash = false;
-        // fall through to process current char
-      }
-
-      if (c == '/') {
-        maybeSlash = true;
-        continue;
-      }
-
-      handleChar(c);
+      processByte(c);
     }
+  }
+
+  if (!bomChecked) {
+    // Input ended inside a would-be BOM: those bytes were ordinary content.
+    for (size_t b = 0; b < bomMatched; ++b) processByte(UTF8_BOM[b]);
   }
 
   if (maybeSlash) {

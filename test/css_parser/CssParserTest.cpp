@@ -159,6 +159,28 @@ TEST_F(CssParserTest, OversizedDeclarationMarksParsePartialAndKeepsFollowingDecl
   EXPECT_EQ(style.fontStyle, CssFontStyle::Italic);
 }
 
+TEST_F(CssParserTest, PartialBomPrefixIsTreatedAsOrdinarySelectorBytes) {
+  // Only the exact three-byte EF BB BF sequence is a BOM. A two-byte prefix
+  // is content: it stays glued to the selector, which then cannot match.
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser, "\xEF\xBBx { font-weight: bold }\n"), CssParser::ParseResult::Complete);
+  EXPECT_EQ(parser.ruleCount(), 1u);
+  EXPECT_FALSE(parser.resolveStyle("x", "").hasFontWeight());
+}
+
+TEST_F(CssParserTest, BomOnlyAppliesToTheVeryStartOfTheStream) {
+  // EF BB BF later in the stream is ordinary (invalid UTF-8) content, not a
+  // BOM: it corrupts only the selector it lands in.
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser,
+                    "\xEF\xBB\xBFp { text-align: center }\n"
+                    "\xEF\xBB\xBFq { font-weight: bold }\n"),
+            CssParser::ParseResult::Complete);
+  EXPECT_EQ(parser.ruleCount(), 2u);
+  EXPECT_EQ(parser.resolveStyle("p", "").textAlign, CssTextAlign::Center);
+  EXPECT_FALSE(parser.resolveStyle("q", "").hasFontWeight());
+}
+
 TEST_F(CssParserTest, IncompleteInputMarksParsePartial) {
   for (const char* css : {".a { font-weight: bold;", "@media screen {", "/* unfinished", ".unfinished"}) {
     CssParser parser(cachePath());
