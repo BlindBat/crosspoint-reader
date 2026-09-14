@@ -228,15 +228,12 @@ TEST(BookMetadataCacheTest, LoadRejectsWhenFileMissing) {
 
 /* ---------- Corruption: truncation ---------- */
 
-// Documents a CURRENT limitation (see bugsFound): once the version byte
-// matches, load() performs no further validation -- it never checks that reads
-// succeeded and has no return-false path after the version gate. As a result a
-// book.bin truncated at ANY later boundary is not rejected: load() either
-// returns true (accepting a corrupt cache) or, when a length-prefixed string's
-// size field is read past EOF, attempts an unbounded allocation. It never
-// reports the truncation. This test pins that behavior at every section
-// boundary; the heap guard makes the oversized attempts fail like the device.
-TEST(BookMetadataCacheTest, TruncationAtEverySectionBoundaryIsNotGracefullyRejected) {
+// Regression guard: load() validates every read past the version byte -- header
+// pods, metadata strings, LUT extent, the full spine block, and the last TOC
+// entry (the file's tail). A book.bin truncated at ANY section boundary is
+// rejected with a clean `false`, which sends the caller down the reparse path
+// instead of serving a corrupt cache. Allocation stays bounded throughout.
+TEST(BookMetadataCacheTest, TruncationAtEverySectionBoundaryIsRejected) {
   const std::string dir = makeTempDir();
   buildValidCache(dir);
   const auto full = readFile(bookBinPath(dir));
@@ -274,11 +271,25 @@ TEST(BookMetadataCacheTest, TruncationAtEverySectionBoundaryIsNotGracefullyRejec
     size_t maxAlloc = 0;
     const LoadOutcome outcome = loadGuarded(tdir, 64u << 20, &maxAlloc);
 
-    // The bug: truncation is never reported as a clean rejection.
-    EXPECT_NE(LoadOutcome::ReturnedFalse, outcome)
-        << "load() detected truncation and returned false -- if BookMetadataCache "
-           "gained validation, tighten this expectation";
+    EXPECT_EQ(LoadOutcome::ReturnedFalse, outcome) << "load() must reject the truncated cache";
+    EXPECT_LT(maxAlloc, 64u * 1024u) << "rejection must not allocate unboundedly";
   }
+}
+
+// A byte appended past the last TOC entry must not reject the cache: the
+// tail check reads the last TOC entry through its LUT slot, and trailing
+// slack (e.g. from a pre-truncation copy) leaves that entry intact.
+TEST(BookMetadataCacheTest, TrailingGarbageAfterLastTocEntryStillLoads) {
+  const std::string dir = makeTempDir();
+  buildValidCache(dir);
+  auto bytes = readFile(bookBinPath(dir));
+  ASSERT_FALSE(bytes.empty());
+  bytes.push_back(0xAB);
+  writeFile(bookBinPath(dir), bytes);
+
+  BookMetadataCache cache(dir);
+  EXPECT_TRUE(cache.load());
+  EXPECT_EQ(3, cache.getSpineCount());
 }
 
 /* ---------- Corruption: oversized length-prefixed string ---------- */
@@ -308,5 +319,5 @@ TEST(BookMetadataCacheTest, HugeStringLengthIsRejectedWithoutUnboundedAllocation
   // The lied-about length must never reach an allocator: the largest single
   // allocation stays far below the device's ~380KB heap.
   EXPECT_LT(maxAlloc, 64u * 1024u) << "load() allocated for an unvalidated declared length";
-  EXPECT_NE(LoadOutcome::Threw, outcome) << "the bounded read must fail cleanly, not via allocation failure";
+  EXPECT_EQ(LoadOutcome::ReturnedFalse, outcome) << "load() must reject the corrupt string length";
 }

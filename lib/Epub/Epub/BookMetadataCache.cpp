@@ -42,23 +42,33 @@ uint32_t writeTocEntryTo(F& file, const BookMetadataCache::TocEntry& entry) {
   return pos;
 }
 
+// Checked readers: return false on a short/corrupt read so load() can reject a
+// truncated book.bin. Build-time callers read tmp files written moments earlier
+// and may ignore the result.
+template <typename F>
+bool readSpineEntryInto(F& file, BookMetadataCache::SpineEntry& entry) {
+  return serialization::readString(file, entry.href) && serialization::readPod(file, entry.cumulativeSize) &&
+         serialization::readPod(file, entry.tocIndex);
+}
+
 template <typename F>
 BookMetadataCache::SpineEntry readSpineEntryFrom(F& file) {
   BookMetadataCache::SpineEntry entry;
-  serialization::readString(file, entry.href);
-  serialization::readPod(file, entry.cumulativeSize);
-  serialization::readPod(file, entry.tocIndex);
+  readSpineEntryInto(file, entry);
   return entry;
+}
+
+template <typename F>
+bool readTocEntryInto(F& file, BookMetadataCache::TocEntry& entry) {
+  return serialization::readString(file, entry.title) && serialization::readString(file, entry.href) &&
+         serialization::readString(file, entry.anchor) && serialization::readPod(file, entry.level) &&
+         serialization::readPod(file, entry.spineIndex);
 }
 
 template <typename F>
 BookMetadataCache::TocEntry readTocEntryFrom(F& file) {
   BookMetadataCache::TocEntry entry;
-  serialization::readString(file, entry.title);
-  serialization::readString(file, entry.href);
-  serialization::readString(file, entry.anchor);
-  serialization::readPod(file, entry.level);
-  serialization::readPod(file, entry.spineIndex);
+  readTocEntryInto(file, entry);
   return entry;
 }
 }  // namespace
@@ -462,35 +472,75 @@ bool BookMetadataCache::load() {
     return false;
   }
 
-  uint8_t version;
-  serialization::readPod(bookFile, version);
-  if (version != BOOK_CACHE_VERSION) {
+  // book.bin comes off the SD card, so every read below is validated: a torn
+  // write or corruption fails the load and the caller reparses the EPUB,
+  // instead of the reader trusting garbage counts/offsets.
+  const auto failLoad = [this](const char* reason) {
+    LOG_ERR("BMC", "Rejecting book.bin: %s", reason);
+    cumulativeSizes.clear();
+    // Explicit close() required: member variable persists beyond function scope
+    bookFile.close();
+    return false;
+  };
+
+  uint8_t version = 0;
+  if (!serialization::readPod(bookFile, version) || version != BOOK_CACHE_VERSION) {
     LOG_DBG("BMC", "Cache version mismatch: expected %d, got %d", BOOK_CACHE_VERSION, version);
     // Explicit close() required: member variable persists beyond function scope
     bookFile.close();
     return false;
   }
 
-  serialization::readPod(bookFile, lutOffset);
-  serialization::readPod(bookFile, spineCount);
-  serialization::readPod(bookFile, tocCount);
+  if (!serialization::readPod(bookFile, lutOffset) || !serialization::readPod(bookFile, spineCount) ||
+      !serialization::readPod(bookFile, tocCount)) {
+    return failLoad("truncated header");
+  }
 
-  serialization::readString(bookFile, coreMetadata.title);
-  serialization::readString(bookFile, coreMetadata.author);
-  serialization::readString(bookFile, coreMetadata.language);
-  serialization::readString(bookFile, coreMetadata.coverItemHref);
-  serialization::readString(bookFile, coreMetadata.textReferenceHref);
+  if (!serialization::readString(bookFile, coreMetadata.title) ||
+      !serialization::readString(bookFile, coreMetadata.author) ||
+      !serialization::readString(bookFile, coreMetadata.language) ||
+      !serialization::readString(bookFile, coreMetadata.coverItemHref) ||
+      !serialization::readString(bookFile, coreMetadata.textReferenceHref)) {
+    return failLoad("truncated or corrupt metadata");
+  }
+
+  // The metadata block ends exactly where the header says the LUTs begin, and
+  // both LUTs must physically fit in the file.
+  const size_t fileSize = bookFile.size();
+  const uint32_t lutSize = (static_cast<uint32_t>(spineCount) + tocCount) * sizeof(uint32_t);
+  if (static_cast<size_t>(lutOffset) != bookFile.position() || static_cast<size_t>(lutOffset) + lutSize > fileSize) {
+    return failLoad("LUT offset/extent out of bounds");
+  }
 
   // Cache cumulative spine sizes in RAM. The progress bar (every render) and percent
   // jumps otherwise pay 2 seeks + a heap-allocating SpineEntry read per access. Spine
   // entries are stored contiguously in index order immediately after the LUTs, so read
-  // them in a single sequential pass.
+  // them in a single sequential pass -- which also verifies the whole spine block.
   cumulativeSizes.clear();
   cumulativeSizes.reserve(spineCount);
-  const uint32_t lutSize = (static_cast<uint32_t>(spineCount) + tocCount) * sizeof(uint32_t);
-  bookFile.seek(lutOffset + lutSize);
+  if (!bookFile.seek(lutOffset + lutSize)) {
+    return failLoad("seek to spine entries failed");
+  }
   for (uint16_t i = 0; i < spineCount; i++) {
-    cumulativeSizes.push_back(readSpineEntry(bookFile).cumulativeSize);
+    SpineEntry entry;
+    if (!readSpineEntryInto(bookFile, entry)) {
+      return failLoad("truncated spine entry");
+    }
+    cumulativeSizes.push_back(entry.cumulativeSize);
+  }
+
+  // The TOC block sits last; reading the final entry through its LUT slot proves
+  // the file was not truncated anywhere in the TOC region (O(1), no full walk).
+  if (tocCount > 0) {
+    uint32_t lastTocPos = 0;
+    if (!bookFile.seek(lutOffset + lutSize - sizeof(uint32_t)) || !serialization::readPod(bookFile, lastTocPos) ||
+        lastTocPos < lutOffset + lutSize || static_cast<size_t>(lastTocPos) >= fileSize) {
+      return failLoad("TOC LUT entry out of bounds");
+    }
+    TocEntry lastToc;
+    if (!bookFile.seek(lastTocPos) || !readTocEntryInto(bookFile, lastToc)) {
+      return failLoad("truncated TOC entry");
+    }
   }
 
   loaded = true;
