@@ -16,7 +16,10 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(arduinojson)
 
 # The real StrId/Language enums and translation tables are generated from the
-# checked-in YAML translations, exactly as the firmware build does.
+# checked-in YAML translations, exactly as the firmware build does. I18n.h and
+# I18n.cpp are compiled from copies next to them, with lib/I18n kept off the
+# include path: their quoted "I18nKeys.h"/"I18nStrings.h" includes search their
+# own directory first, where a firmware build leaves its own generated tables.
 set(I18N_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/i18n_gen)
 if(NOT EXISTS ${I18N_GEN_DIR}/I18nStrings.cpp)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -32,6 +35,8 @@ if(NOT EXISTS ${I18N_GEN_DIR}/I18nStrings.cpp)
     message(FATAL_ERROR "gen_i18n.py failed (rc=${I18N_GEN_RC})")
   endif()
 endif()
+configure_file(${REPO_ROOT}/lib/I18n/I18n.h ${I18N_GEN_DIR}/I18n.h COPYONLY)
+configure_file(${REPO_ROOT}/lib/I18n/I18n.cpp ${I18N_GEN_DIR}/I18n.cpp COPYONLY)
 
 add_executable(PersistableStoresTest
   PersistableStoresTest.cpp
@@ -39,7 +44,7 @@ add_executable(PersistableStoresTest
   ${I18N_GEN_DIR}/I18nStrings.cpp
   ${REPO_ROOT}/lib/Serialization/PersistableStore.cpp
   ${REPO_ROOT}/lib/Serialization/ObfuscationUtils.cpp
-  ${REPO_ROOT}/lib/I18n/I18n.cpp
+  ${I18N_GEN_DIR}/I18n.cpp
   ${REPO_ROOT}/lib/KOReaderSync/KOReaderCredentialStore.cpp
   ${REPO_ROOT}/src/CrossPointSettings.cpp
   ${REPO_ROOT}/src/CrossPointState.cpp
@@ -56,7 +61,6 @@ target_include_directories(PersistableStoresTest PRIVATE
   ${I18N_GEN_DIR}
   ${REPO_ROOT}/src
   ${REPO_ROOT}/lib/Serialization
-  ${REPO_ROOT}/lib/I18n
   ${REPO_ROOT}/lib/EpdFont
   ${REPO_ROOT}/lib/KOReaderSync
   ${REPO_ROOT}/lib/Epub
