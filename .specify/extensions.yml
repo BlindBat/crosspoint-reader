@@ -7,11 +7,11 @@
 # - implement is OPTIONAL (prompted): code commits need one-logical-change
 #   granularity and a human-chosen semantic type; the hook suggests, the
 #   human triggers.
+# - converge is an artifact phase: its only write is appending to tasks.md.
 # - analyze/taskstoissues have no hooks: they produce no local artifacts.
-# - The plan phase deliberately does NOT commit agent context files (e.g.
-#   CLAUDE.md): the root CLAUDE.md is an upstream-tracked pointer and .claude/
-#   is gitignored; plan edits to them stay local and are surfaced by the
-#   script's unstaged-changes note instead.
+# - Agent context files (e.g. CLAUDE.md) are never committed: the root
+#   CLAUDE.md is an upstream-tracked pointer and .claude/ is gitignored.
+#   Spec Kit's opt-in agent-context extension, which edits them, is not installed.
 # - The command never pushes and refuses to run on master/develop.
 #
 # The active skill lives at .claude/skills/speckit-git-commit/ (gitignored,
@@ -57,6 +57,14 @@ hooks:
       optional: false
       description: "Commit tasks.md"
       prompt: "Autocommit the tasks phase artifacts: run /speckit-git-commit with phase 'tasks'."
+
+  after_converge:
+    - extension: git-commit
+      command: speckit.git.commit
+      enabled: true
+      optional: false
+      description: "Commit the convergence tasks appended to tasks.md"
+      prompt: "Autocommit the converge phase artifacts: run /speckit-git-commit with phase 'converge'."
 
   after_checklist:
     - extension: git-commit

@@ -10,7 +10,7 @@
 #
 # Usage:
 #   speckit-commit.sh <phase> [-m "subject"] [--dry-run] [file...]
-#     phase: specify | clarify | plan | tasks | checklist | constitution | implement
+#     phase: specify | clarify | plan | tasks | converge | checklist | constitution | implement
 #   For implement, -m "type: subject" is REQUIRED (type in feat|fix|test|docs|
 #   refactor|perf|chore|style|build|ci) and [file...] lists the implementation files to stage
 #   (tasks.md is staged automatically); C/C++ changes are clang-formatted first.
@@ -41,8 +41,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$PHASE" in
-  specify|clarify|plan|tasks|checklist|constitution|implement) ;;
-  *) die "unknown or missing phase '$PHASE' (expected specify|clarify|plan|tasks|checklist|constitution|implement)" ;;
+  specify|clarify|plan|tasks|converge|checklist|constitution|implement) ;;
+  *) die "unknown or missing phase '$PHASE' (expected specify|clarify|plan|tasks|converge|checklist|constitution|implement)" ;;
 esac
 
 # --- Branch guard: Principle VII — master/develop stay clean upstream mirrors.
@@ -67,11 +67,12 @@ if [[ -n "$MSG" ]]; then
 fi
 
 # Resolve the feature dir exactly as the rest of the toolchain does
-# (get_feature_paths: SPECIFY_FEATURE_DIRECTORY env -> .specify/feature.json ->
-# branch-prefix fallback). Spec dir and branch name are independent in spec-kit.
+# (get_feature_paths: SPECIFY_FEATURE_DIRECTORY env -> .specify/feature.json).
+# Spec dir and branch name are independent in spec-kit. --no-persist keeps this
+# read-only: it must not rewrite a pinned .specify/feature.json.
 FEATURE_DIR=""
 if [[ "$PHASE" != "constitution" ]]; then
-  PATHS_OUT="$(get_feature_paths)" || die "cannot resolve the feature specs/ directory (set SPECIFY_FEATURE_DIRECTORY, run /speckit-specify to write .specify/feature.json, or use an NNN-prefixed branch)"
+  PATHS_OUT="$(get_feature_paths --no-persist)" || die "cannot resolve the feature specs/ directory (set SPECIFY_FEATURE_DIRECTORY or run /speckit-specify to write .specify/feature.json)"
   eval "$PATHS_OUT"
   [[ -d "$FEATURE_DIR" ]] || die "resolved feature dir does not exist: $FEATURE_DIR"
 fi
@@ -104,6 +105,10 @@ case "$PHASE" in
   tasks)
     add_if_exists "$REL_FEATURE/tasks.md"
     DEFAULT_MSG="docs(tasks): add task breakdown for $FEATURE_LABEL"
+    ;;
+  converge)
+    add_if_exists "$REL_FEATURE/tasks.md"
+    DEFAULT_MSG="docs(tasks): append convergence tasks for $FEATURE_LABEL"
     ;;
   checklist)
     add_if_exists "$REL_FEATURE/checklists"

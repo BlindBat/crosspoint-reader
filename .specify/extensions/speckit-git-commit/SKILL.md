@@ -1,7 +1,7 @@
 ---
 name: "speckit-git-commit"
 description: "Autocommit spec-kit workflow artifacts per the project constitution (semantic messages, allow-list staging, never on master/develop, no AI attribution)."
-argument-hint: "<phase> — specify | clarify | plan | tasks | checklist | constitution | implement"
+argument-hint: "<phase> — specify | clarify | plan | tasks | converge | checklist | constitution | implement"
 compatibility: "Requires .specify/scripts/bash/speckit-commit.sh"
 metadata:
   author: "BlindBat/crosspoint-reader fork"
@@ -17,7 +17,7 @@ $ARGUMENTS
 ```
 
 Determine the workflow phase from the arguments (one of: `specify`, `clarify`,
-`plan`, `tasks`, `checklist`, `constitution`, `implement`). If the invoking hook
+`plan`, `tasks`, `converge`, `checklist`, `constitution`, `implement`). If the invoking hook
 prompt names the phase, use that. If no phase can be determined, ask.
 
 ## What this command does
@@ -28,7 +28,7 @@ mechanics live in a deterministic script — do not hand-roll `git add`/`commit`
 
 ## Execution
 
-### Artifact phases (`specify`, `clarify`, `plan`, `tasks`, `checklist`, `constitution`)
+### Artifact phases (`specify`, `clarify`, `plan`, `tasks`, `converge`, `checklist`, `constitution`)
 
 Run from the repo root:
 
@@ -38,7 +38,7 @@ Run from the repo root:
 
 That's it. The script resolves the feature's `specs/` directory the same way
 the rest of the toolchain does (`SPECIFY_FEATURE_DIRECTORY` env var →
-`.specify/feature.json` → branch-prefix fallback), stages only that phase's
+`.specify/feature.json`), stages only that phase's
 allow-listed artifacts, uses a semantic `docs(...)` message, and is a safe
 no-op when the phase produced no changes. Report the script's output (one
 line) to the user.
