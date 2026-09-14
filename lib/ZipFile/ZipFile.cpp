@@ -17,6 +17,17 @@ namespace {
 constexpr uint16_t ZIP_METHOD_STORED = 0;
 constexpr uint16_t ZIP_METHOD_DEFLATED = 8;
 
+// Upper bound for a readFileToMemory allocation. The central directory's
+// uncompressed-size field is untrusted (a corrupt/malicious archive can declare
+// ~4GB), and the device has ~380KB of heap total, so a declared size anywhere
+// near that can never be satisfied -- reject it before malloc instead of
+// letting a lying header drive an enormous allocation (or wrap
+// uncompressedSize + 1 to 0 when the caller asks for a trailing NUL, which
+// would malloc(0) and then write one byte 4GB past it). Whole-entry in-RAM
+// reads are only used for small documents (e.g. the EPUB guide cover page);
+// anything big goes through readFileToStream, which allocates per-chunk.
+constexpr uint32_t MAX_IN_MEMORY_UNCOMPRESSED_SIZE = 256 * 1024;
+
 // RAII zip: opens the zip if not already open, closes on destruction only if
 // it performed the open.  Removes the wasOpen/close boilerplate from every method.
 class ScopedOpenClose final {
@@ -38,6 +49,25 @@ class ScopedOpenClose final {
   bool needsClose = false;
   bool ok = true;  // true when zip was already open (no open() call needed)
 };
+
+// Central-directory size fields are untrusted; cross-check them against the
+// physical archive before reading. The compressed payload must fit in the file
+// at its data offset, and a STORED entry undergoes no transformation, so its
+// two size fields must agree.
+bool entrySizesConsistent(const char* filename, const ZipFile::FileStatSlim& fileStat, const long dataOffset,
+                          const size_t archiveSize) {
+  if (static_cast<uint64_t>(dataOffset) + fileStat.compressedSize > archiveSize) {
+    LOG_ERR("ZIP", "Entry %s: compressed size %u overruns the archive", filename,
+            static_cast<unsigned>(fileStat.compressedSize));
+    return false;
+  }
+  if (fileStat.method == ZIP_METHOD_STORED && fileStat.uncompressedSize != fileStat.compressedSize) {
+    LOG_ERR("ZIP", "Entry %s: stored entry size fields disagree (%u vs %u)", filename,
+            static_cast<unsigned>(fileStat.uncompressedSize), static_cast<unsigned>(fileStat.compressedSize));
+    return false;
+  }
+  return true;
+}
 
 size_t zipFillCallback(void* vctx, const uint8_t** data) {
   auto* ctx = static_cast<ZipInflateCtx*>(vctx);
@@ -385,6 +415,13 @@ uint8_t* ZipFile::readFileToMemory(const char* filename, size_t* size, const boo
   const long fileOffset = getDataOffset(fileStat);
   if (fileOffset < 0) return nullptr;
 
+  if (!entrySizesConsistent(filename, fileStat, fileOffset, file.size())) return nullptr;
+  if (fileStat.uncompressedSize > MAX_IN_MEMORY_UNCOMPRESSED_SIZE) {
+    LOG_ERR("ZIP", "Entry %s: declared uncompressed size %u exceeds in-memory cap %u", filename,
+            static_cast<unsigned>(fileStat.uncompressedSize), static_cast<unsigned>(MAX_IN_MEMORY_UNCOMPRESSED_SIZE));
+    return nullptr;
+  }
+
   file.seek(fileOffset);
 
   const auto deflatedDataSize = fileStat.compressedSize;
@@ -461,6 +498,11 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
 
   const long fileOffset = getDataOffset(fileStat);
   if (fileOffset < 0) return false;
+
+  // No size cap here: streaming allocates per-chunk, so even a multi-MB entry
+  // is fine -- but the declared compressed payload must still be physically
+  // present in the archive.
+  if (!entrySizesConsistent(filename, fileStat, fileOffset, file.size())) return false;
 
   file.seek(fileOffset);
   const auto deflatedDataSize = fileStat.compressedSize;

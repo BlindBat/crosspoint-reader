@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -252,34 +254,110 @@ TEST(ZipFileTest, LocalHeaderMismatchRejectsOnlyTheCorruptedEntry) {
   free(data);
 }
 
-// Documents a CURRENT limitation (see bugsFound): readFileToMemory trusts the
-// central directory's uncompressed-size field and mallocs it before reading a
-// single byte. A corrupt/malicious archive declaring a ~4GB size makes the
-// firmware attempt a ~4GB allocation on a 380KB device. The guard records the
-// attempted size and simulates the device's allocation failure (failAbove) so
-// the host does not actually reserve gigabytes.
-TEST(ZipFileTest, LyingUncompressedSizeTriggersOversizedAllocation) {
+// Regression guard: readFileToMemory validates the central directory's
+// uncompressed-size field against a device-sane cap before allocating, so a
+// corrupt/malicious archive declaring a ~4GB entry is rejected with a clean
+// nullptr instead of a ~4GB malloc on a 380KB device.
+TEST(ZipFileTest, LyingUncompressedSizeIsRejectedBeforeAllocation) {
   OwnedZip zip("lying_uncompressed_size.zip");
 
-  // The size field is trusted verbatim...
+  // Size queries still report the raw header value; they feed progress math
+  // only and never allocate from it.
   size_t size = 0;
   ASSERT_TRUE(zip->getInflatedFileSize("deflated.txt", &size));
-  EXPECT_EQ(0xFFFFFFF0u, size) << "size is taken from the header without validation";
+  EXPECT_EQ(0xFFFFFFF0u, size);
 
-  // ...and readFileToMemory allocates it. Simulate device OOM for the huge
-  // request; the call must then fail gracefully (return nullptr, no crash).
+  // The read path must reject before malloc: no allocation anywhere near the
+  // lied-about size, and a graceful nullptr.
   uint8_t* data = nullptr;
   size_t maxAlloc = 0;
   {
-    allocguard::TrackScope guard(/*failAbove=*/64u << 20);  // 64 MiB
+    allocguard::TrackScope guard;
     data = zip->readFileToMemory("deflated.txt");
     maxAlloc = allocguard::maxSingle;
   }
   EXPECT_EQ(nullptr, data);
-  // Pinning the bug: the attempted allocation is enormous (would be fatal on
-  // device). If ZipFile is fixed to bound sizes, this expectation should be
-  // tightened to EXPECT_LT(maxAlloc, kSaneCap).
-  EXPECT_GE(maxAlloc, 0xFFFFFFF0u) << "readFileToMemory attempted to allocate the lied-about size";
+  EXPECT_LT(maxAlloc, kSaneCap) << "readFileToMemory allocated for the lied-about size";
+
+  // The streaming path allocates per-chunk regardless of the declared size,
+  // and the size mismatch surfaces as a failed read.
+  ByteCollector out;
+  size_t maxStreamAlloc = 0;
+  {
+    allocguard::TrackScope guard;
+    EXPECT_FALSE(zip->readFileToStream("deflated.txt", out, 64));
+    maxStreamAlloc = allocguard::maxSingle;
+  }
+  EXPECT_LT(maxStreamAlloc, kSaneCap);
+}
+
+namespace {
+
+// Byte-patch a fixture's central directory in a temp copy: find the CDH whose
+// name matches, then overwrite (compressedSize, uncompressedSize). Layout per
+// APPNOTE: CDH sig 0x02014b50, compSize at +20, uncompSize at +24, nameLen at
+// +28, name at +46.
+std::string patchCentralDirSizes(const char* fixture, const std::string& entryName, uint32_t compSize,
+                                 uint32_t uncompSize) {
+  std::ifstream in(res(fixture), std::ios::binary);
+  std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  EXPECT_FALSE(bytes.empty());
+
+  const char sig[4] = {0x50, 0x4b, 0x01, 0x02};
+  bool patched = false;
+  for (size_t pos = 0; (pos = bytes.find(sig, pos, 4)) != std::string::npos; pos++) {
+    if (pos + 46 > bytes.size()) break;
+    uint16_t nameLen;
+    std::memcpy(&nameLen, &bytes[pos + 28], sizeof(nameLen));
+    if (pos + 46 + nameLen > bytes.size()) break;
+    if (bytes.compare(pos + 46, nameLen, entryName) == 0) {
+      std::memcpy(&bytes[pos + 20], &compSize, sizeof(compSize));
+      std::memcpy(&bytes[pos + 24], &uncompSize, sizeof(uncompSize));
+      patched = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(patched) << "entry not found in central directory: " << entryName;
+
+  const std::string outPath =
+      ::testing::TempDir() + "patched_" + std::to_string(compSize) + "_" + std::to_string(uncompSize) + ".zip";
+  std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
+  out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  out.close();
+  return outPath;
+}
+
+}  // namespace
+
+// A compressed size that overruns the physical archive must be rejected on
+// both read paths before any payload is read (100000 passes the in-memory cap,
+// so this exercises the fits-in-file check specifically).
+TEST(ZipFileTest, CompressedSizePastEofIsRejected) {
+  const std::string path = patchCentralDirSizes("good.zip", "stored.txt", 100000, 100000);
+  ZipFile zip(path);
+  EXPECT_EQ(nullptr, zip.readFileToMemory("stored.txt"));
+  ByteCollector out;
+  EXPECT_FALSE(zip.readFileToStream("stored.txt", out, 64));
+}
+
+// A STORED entry undergoes no transformation, so mismatched size fields can
+// only come from corruption; the entry must be rejected, not read with the
+// larger of the two.
+TEST(ZipFileTest, StoredEntryWithMismatchedSizesIsRejected) {
+  // Real stored payload is 42 bytes; keep compressed honest, lie uncompressed.
+  const std::string path = patchCentralDirSizes("good.zip", "stored.txt", 42, 4242);
+  ZipFile zip(path);
+  size_t maxAlloc = 0;
+  uint8_t* data = nullptr;
+  {
+    allocguard::TrackScope guard;
+    data = zip.readFileToMemory("stored.txt");
+    maxAlloc = allocguard::maxSingle;
+  }
+  EXPECT_EQ(nullptr, data);
+  EXPECT_LT(maxAlloc, kSaneCap);
+  ByteCollector out;
+  EXPECT_FALSE(zip.readFileToStream("stored.txt", out, 64));
 }
 
 TEST(ZipFileTest, GarbageDeflateStreamIsRejectedWithoutHugeAllocation) {
