@@ -167,16 +167,19 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
     bool fileEmbeddedStyle;
     uint8_t fileImageRendering;
     bool fileFocusReadingEnabled;
-    serialization::readPod(file, fileFontId);
-    serialization::readPod(file, fileLineCompression);
-    serialization::readPod(file, fileExtraParagraphSpacing);
-    serialization::readPod(file, fileParagraphAlignment);
-    serialization::readPod(file, fileViewportWidth);
-    serialization::readPod(file, fileViewportHeight);
-    serialization::readPod(file, fileHyphenationEnabled);
-    serialization::readPod(file, fileEmbeddedStyle);
-    serialization::readPod(file, fileImageRendering);
-    serialization::readPod(file, fileFocusReadingEnabled);
+    const bool specHeaderRead =
+        serialization::readPod(file, fileFontId) && serialization::readPod(file, fileLineCompression) &&
+        serialization::readPod(file, fileExtraParagraphSpacing) &&
+        serialization::readPod(file, fileParagraphAlignment) && serialization::readPod(file, fileViewportWidth) &&
+        serialization::readPod(file, fileViewportHeight) && serialization::readPod(file, fileHyphenationEnabled) &&
+        serialization::readPod(file, fileEmbeddedStyle) && serialization::readPod(file, fileImageRendering) &&
+        serialization::readPod(file, fileFocusReadingEnabled);
+    if (!specHeaderRead) {
+      file.close();
+      LOG_ERR("SCT", "Deserialization failed: truncated header");
+      clearCache();
+      return false;
+    }
 
     if (spec.fontId != fileFontId || spec.lineCompression != fileLineCompression ||
         spec.extraParagraphSpacing != fileExtraParagraphSpacing || spec.paragraphAlignment != fileParagraphAlignment ||
@@ -190,7 +193,38 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
     }
   }
 
-  serialization::readPod(file, pageCount);
+  if (!serialization::readPod(file, pageCount)) {
+    file.close();
+    LOG_ERR("SCT", "Deserialization failed: truncated header");
+    clearCache();
+    pageCount = 0;
+    return false;
+  }
+
+  if (!filePartial) {
+    // A finalized file's tables (page LUT, anchor map, paragraph/li/visible
+    // LUTs) were written before the header was patched, so their extents must
+    // lie inside the file. A section .bin truncated after the fact (torn copy,
+    // interrupted card transfer) would otherwise pass the header-only check and
+    // fail nondeterministically at every page load; reject it here so the next
+    // open rebuilds. The cursor sits at the offset block after pageCount.
+    uint32_t lutOff = 0, anchorOff = 0, paraOff = 0, liOff = 0, visOff = 0;
+    const uint32_t pageLutBytes = static_cast<uint32_t>(pageCount) * sizeof(uint32_t);
+    const bool offsetsRead = serialization::readPod(file, lutOff) && serialization::readPod(file, anchorOff) &&
+                             serialization::readPod(file, paraOff) && serialization::readPod(file, liOff) &&
+                             serialization::readPod(file, visOff);
+    const bool tablesInBounds = offsetsRead && lutOff >= HEADER_SIZE &&
+                                anchorOff >= static_cast<uint64_t>(lutOff) + pageLutBytes && paraOff >= anchorOff &&
+                                liOff >= paraOff && visOff >= liOff &&
+                                static_cast<uint64_t>(visOff) + pageLutBytes <= file.size();
+    if (!tablesInBounds) {
+      file.close();
+      LOG_ERR("SCT", "Deserialization failed: table offsets out of bounds");
+      clearCache();
+      pageCount = 0;
+      return false;
+    }
+  }
 
   if (filePartial) {
     // A partial's pageCount is the watermark of a suspended build. Read the watermark
@@ -748,24 +782,37 @@ std::unique_ptr<Page> Section::loadPageAt(const int page) const {
     return nullptr;
   }
 
+  // Every read is checked and every offset bounds-tested against the file, so
+  // a file truncated or corrupted after loadSectionFile's validation (torn
+  // copy, card yanked mid-transfer) fails with a deterministic nullptr instead
+  // of deserializing whatever bytes happen to be there.
+  const size_t fileSize = f.size();
   f.seek(HEADER_SIZE - sizeof(uint32_t) * 5);
   uint32_t lutOffset;
-  serialization::readPod(f, lutOffset);
-  f.seek(lutOffset + sizeof(uint32_t) * page);
+  if (!serialization::readPod(f, lutOffset)) return nullptr;
+  const uint64_t lutEntry = static_cast<uint64_t>(lutOffset) + sizeof(uint32_t) * static_cast<uint32_t>(page);
+  if (lutOffset < HEADER_SIZE || lutEntry + sizeof(uint32_t) > fileSize) return nullptr;
+  if (!f.seek(static_cast<size_t>(lutEntry))) return nullptr;
   uint32_t pagePos;
-  serialization::readPod(f, pagePos);
+  if (!serialization::readPod(f, pagePos)) return nullptr;
+  // Pages are written between the header and the page LUT.
+  if (pagePos < HEADER_SIZE || pagePos >= lutOffset) return nullptr;
 
   // Read this page's visible-codepoint start offset from the visible-offset LUT (last header slot)
   // in the same open handle, so the reader can persist progress without reopening the section file
   // on every page turn (see Page::visibleTextOffset). A malformed/old file leaves it at 0.
   f.seek(HEADER_SIZE - sizeof(uint32_t));
-  uint32_t visibleLutOffset;
-  serialization::readPod(f, visibleLutOffset);
+  uint32_t visibleLutOffset = 0;
   uint32_t visibleTextOffset = 0;
-  const uint32_t visibleEntry = visibleLutOffset + sizeof(uint32_t) * page;
-  if (visibleLutOffset >= HEADER_SIZE && visibleEntry + sizeof(uint32_t) <= f.size()) {
-    f.seek(visibleEntry);
-    serialization::readPod(f, visibleTextOffset);
+  if (serialization::readPod(f, visibleLutOffset)) {
+    const uint64_t visibleEntry =
+        static_cast<uint64_t>(visibleLutOffset) + sizeof(uint32_t) * static_cast<uint32_t>(page);
+    if (visibleLutOffset >= HEADER_SIZE && visibleEntry + sizeof(uint32_t) <= fileSize) {
+      f.seek(static_cast<size_t>(visibleEntry));
+      if (!serialization::readPod(f, visibleTextOffset)) {
+        visibleTextOffset = 0;
+      }
+    }
   }
 
   f.seek(pagePos);

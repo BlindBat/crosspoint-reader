@@ -197,31 +197,45 @@ TEST_F(EpubSectionCacheTest, CorruptPageDataFailsWithBoundedAllocation) {
   EXPECT_LT(bytesAllocated, 64u * 1024u) << "corrupt page load allocated " << bytesAllocated << " bytes";
 }
 
-TEST_F(EpubSectionCacheTest, TruncatedFinalizedFileDegradesWithoutCrash) {
+TEST_F(EpubSectionCacheTest, TruncatedFinalizedFileIsRejectedAndCleared) {
   const auto spec = makeSpec();
   buildWith(spec);
-  const std::string original = readAll(sectionBinPath(*epub));
 
   // Cut the file roughly in half: the header survives, the trailing tables and
-  // later pages do not. Current behavior: the header-only validation still
-  // accepts the file (pinned here); every page load must then fail or degrade
-  // without crashing and without unbounded allocation.
+  // later pages do not. loadSectionFile validates the finalized table extents
+  // against the file size, so the torn file is rejected outright and cleared
+  // for rebuild instead of being served with nondeterministic page loads.
   patchFile([](std::string& bytes) { bytes.resize(kHeaderSize + (bytes.size() - kHeaderSize) / 2); });
 
   auto section = makeSection();
-  EXPECT_TRUE(section->loadSectionFile(spec));  // header-only check passes
+  EXPECT_FALSE(section->loadSectionFile(spec));
+  EXPECT_EQ(section->pageCount, 0);
+  EXPECT_FALSE(fileExists(sectionBinPath(*epub)));
+}
+
+TEST_F(EpubSectionCacheTest, TruncationAfterLoadYieldsNullPagesDeterministically) {
+  const auto spec = makeSpec();
+  buildWith(spec);
+  auto section = makeSection();
+  ASSERT_TRUE(section->loadSectionFile(spec));
   const uint16_t claimed = section->pageCount;
-  EXPECT_EQ(claimed, readAt<uint16_t>(original, kOffPageCount));
+  ASSERT_GT(claimed, 2);
+
+  // Truncate underneath the already-loaded section (the validation at load
+  // time cannot help here). The page LUT lives at the file's tail, so every
+  // page load must fail with a deterministic nullptr -- never garbage pages --
+  // and with bounded allocation.
+  patchFile([](std::string& bytes) { bytes.resize(kHeaderSize + (bytes.size() - kHeaderSize) / 2); });
 
   size_t bytesAllocated = 0;
   {
     alloc_counter::CountingScope scope;
     for (uint16_t p = 0; p < claimed; p++) {
-      section->loadPage(p);  // result unspecified on a truncated file; must not crash
+      EXPECT_EQ(section->loadPage(p), nullptr) << "page " << p << " must fail deterministically";
     }
     bytesAllocated = scope.bytes();
   }
-  EXPECT_LT(bytesAllocated, 4u * 1024u * 1024u);
+  EXPECT_LT(bytesAllocated, 64u * 1024u);
 
   // The tables live past the truncation point, so table lookups come back
   // empty instead of crashing.
