@@ -255,6 +255,23 @@ TEST(XtcParser, ChapterRangesAreClampedAndInvalidOnesDropped) {
   EXPECT_EQ(chapters[1].endPage, 3u);  // clamped to last page
 }
 
+TEST(XtcParser, ChapterOffsetReadIgnoresHeaderPaddingBytes) {
+  // chapters_padded.xtc is chapters.xtc with 0xDEADBEEF in the header's 4-byte
+  // padding field (0x34). chapterOffset is a uint32_t at 0x30 (XtcTypes.h); a
+  // parser that reads it as a uint64_t folds the padding into the offset's high
+  // half, fails the bounds checks, and silently drops every chapter.
+  xtc::XtcParser parser;
+  ASSERT_EQ(parser.open(fixture("chapters_padded.xtc").c_str()), xtc::XtcError::OK);
+  ASSERT_TRUE(parser.hasChapters());
+
+  const auto& chapters = parser.getChapters();
+  ASSERT_EQ(chapters.size(), 2u);
+  EXPECT_EQ(chapters[0].name, "Intro");
+  EXPECT_EQ(chapters[0].startPage, 0u);
+  EXPECT_EQ(chapters[0].endPage, 1u);
+  EXPECT_EQ(chapters[1].name, "Overflow End");
+}
+
 TEST(XtcParser, CloseResetsStateAndAllowsReuse) {
   xtc::XtcParser parser;
   ASSERT_EQ(parser.open(fixture("chapters.xtc").c_str()), xtc::XtcError::OK);

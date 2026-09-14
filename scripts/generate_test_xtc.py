@@ -32,7 +32,7 @@ PAGE_H = 4
 
 def build_header(magic, page_count, page_table_offset, data_offset,
                  version=(1, 0), has_metadata=1, has_chapters=0,
-                 chapter_offset=0, metadata_offset=0x38):
+                 chapter_offset=0, metadata_offset=0x38, padding=0):
     return struct.pack(
         "<IBBHBBBBIQQQQII",
         magic,
@@ -48,7 +48,7 @@ def build_header(magic, page_count, page_table_offset, data_offset,
         data_offset,
         0,              # thumbOffset
         chapter_offset,
-        0,              # padding (readChapters reads offset+padding as one u64)
+        padding,        # padding at 0x34 (any value; must never affect parsing)
     )
 
 
@@ -73,7 +73,7 @@ def build_chapter(name, start_page, end_page):
 
 def build_container(magic, page_seeds, chapters=None, page_count_override=None,
                     version=(1, 0), page_table_offset_override=None,
-                    entry_offset_override=None):
+                    entry_offset_override=None, header_padding=0):
     """Assemble header + metadata [+ chapters] + page table + page data."""
     if magic == XTCH_MAGIC:
         page_magic = XTH_MAGIC
@@ -105,6 +105,7 @@ def build_container(magic, page_seeds, chapters=None, page_count_override=None,
         version=version,
         has_chapters=1 if chapters else 0,
         chapter_offset=chapter_offset,
+        padding=header_padding,
     )
     return header + build_metadata() + chapter_blob + table + b"".join(pages)
 
@@ -186,6 +187,13 @@ def main():
         build_chapter("Past The End", 200, 210),
     ]
     emit("chapters.xtc", build_container(XTC_MAGIC, page_seeds=[0xA0, 0xB0, 0xC0, 0xD0], chapters=chapters))
+
+    # Same book, but with nonzero bytes in the header's 4-byte padding field
+    # (0x34). chapterOffset is a uint32_t at 0x30; a parser reading it as a
+    # uint64_t would fold the padding into the offset's high half and lose
+    # every chapter.
+    emit("chapters_padded.xtc", build_container(XTC_MAGIC, page_seeds=[0xA0, 0xB0, 0xC0, 0xD0],
+                                                chapters=chapters, header_padding=0xDEADBEEF))
 
 
 if __name__ == "__main__":
