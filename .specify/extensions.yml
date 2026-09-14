@@ -1,0 +1,83 @@
+# Spec-kit extension hooks for CrossPoint Reader (fork).
+# Read by the /speckit-* skills' Pre/Post-Execution Checks.
+#
+# Autocommit policy (see .specify/extensions/speckit-git-commit/SKILL.md):
+# - Artifact phases commit automatically: pure docs on a feature branch,
+#   allow-list staging, semantic docs(...) messages — zero risk.
+# - implement is OPTIONAL (prompted): code commits need one-logical-change
+#   granularity and a human-chosen semantic type; the hook suggests, the
+#   human triggers.
+# - analyze/taskstoissues have no hooks: they produce no local artifacts.
+# - The plan phase deliberately does NOT commit agent context files (e.g.
+#   CLAUDE.md): the root CLAUDE.md is an upstream-tracked pointer and .claude/
+#   is gitignored; plan edits to them stay local and are surfaced by the
+#   script's unstaged-changes note instead.
+# - The command never pushes and refuses to run on master/develop.
+#
+# The active skill lives at .claude/skills/speckit-git-commit/ (gitignored,
+# like all .claude/*); the tracked source of truth is
+# .specify/extensions/speckit-git-commit/SKILL.md. On a fresh clone:
+#   mkdir -p .claude/skills/speckit-git-commit && \
+#   cp .specify/extensions/speckit-git-commit/SKILL.md .claude/skills/speckit-git-commit/
+
+extensions:
+  git-commit:
+    description: "Constitution-compliant autocommit of spec-kit workflow artifacts"
+    source: ".specify/extensions/speckit-git-commit/SKILL.md"
+
+hooks:
+  after_specify:
+    - extension: git-commit
+      command: speckit.git.commit
+      enabled: true
+      optional: false
+      description: "Commit the new spec.md (docs(spec) commit, artifact allow-list only)"
+      prompt: "Autocommit the specify phase artifacts: run /speckit-git-commit with phase 'specify'."
+
+  after_clarify:
+    - extension: git-commit
+      command: speckit.git.commit
+      enabled: true
+      optional: false
+      description: "Commit clarification edits to spec.md"
+      prompt: "Autocommit the clarify phase artifacts: run /speckit-git-commit with phase 'clarify'."
+
+  after_plan:
+    - extension: git-commit
+      command: speckit.git.commit
+      enabled: true
+      optional: false
+      description: "Commit plan.md and design artifacts (research, data-model, contracts, quickstart)"
+      prompt: "Autocommit the plan phase artifacts: run /speckit-git-commit with phase 'plan'."
+
+  after_tasks:
+    - extension: git-commit
+      command: speckit.git.commit
+      enabled: true
+      optional: false
+      description: "Commit tasks.md"
+      prompt: "Autocommit the tasks phase artifacts: run /speckit-git-commit with phase 'tasks'."
+
+  after_checklist:
+    - extension: git-commit
+      command: speckit.git.commit
+      enabled: true
+      optional: false
+      description: "Commit generated quality checklists"
+      prompt: "Autocommit the checklist phase artifacts: run /speckit-git-commit with phase 'checklist'."
+
+  after_constitution:
+    - extension: git-commit
+      command: speckit.git.commit
+      enabled: true
+      optional: false
+      description: "Commit constitution amendment and synced templates"
+      prompt: "Autocommit the constitution amendment: run /speckit-git-commit with phase 'constitution'."
+
+  after_implement:
+    - extension: git-commit
+      command: speckit.git.commit
+      enabled: true
+      optional: true
+      description: "Checkpoint-commit implementation work (semantic type, per logical change; never replaces the merge gates)"
+      prompt: "Implementation finished or reached a checkpoint. To commit it under the constitution's rules (one logical change, semantic type, format-fixed, tasks.md progress included), run /speckit-git-commit with phase 'implement', a '-m \"type: subject\"' message, and the touched file paths. Remember the merge gates (bin/run-tests, --asan, pio run, pio check) before pushing."
