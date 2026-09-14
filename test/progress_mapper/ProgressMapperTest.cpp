@@ -303,14 +303,11 @@ TEST_F(ProgressMapperTest, BodyTextXPathResolvesBareBodyText) {
   EXPECT_EQ(pos.pageNumber, 1);
 }
 
-TEST_F(ProgressMapperTest, CommentBeforeElementBreaksAncestryResolution) {
-  // PRODUCTION BUG (present on this branch AND upstream develop): the
-  // ParagraphStreamer tag scanner treats "<!--" as an opening element named
-  // "--" that never closes, desyncing its depth tracking. An xpath whose
-  // target follows a comment inside a partially-matched ancestry therefore
-  // fails content resolution and falls back to raw percentage. This test
-  // pins the current (wrong) behavior; the companion assertions show the
-  // identical comment-free markup resolves fine.
+TEST_F(ProgressMapperTest, CommentBeforeElementDoesNotBreakAncestryResolution) {
+  // Regression guard: the ParagraphStreamer tag scanner used to treat "<!--"
+  // as an opening element named "--" that never closes, permanently desyncing
+  // its depth tracking. Comments must be skipped without affecting element
+  // depth, sibling counting, or visible-char offsets.
   const auto clean = makeSingleChapterBook("<html><body><div><p>abcd</p></div></body></html>");
   const auto commented = makeSingleChapterBook("<html><body><div><!-- note --><p>abcd</p></div></body></html>");
   auto& lut = SectionStubRegistry::forSpine(0);
@@ -324,7 +321,56 @@ TEST_F(ProgressMapperTest, CommentBeforeElementBreaksAncestryResolution) {
   EXPECT_EQ(cleanPos.visibleTextOffset, 2u);
 
   const auto commentedPos = ProgressMapper::toCrossPoint(commented, ko, renderer);
-  EXPECT_FALSE(commentedPos.hasVisibleTextOffset);  // should resolve to offset 2 like cleanPos
+  ASSERT_TRUE(commentedPos.hasVisibleTextOffset);
+  EXPECT_EQ(commentedPos.visibleTextOffset, 2u);
+}
+
+TEST_F(ProgressMapperTest, CommentContentIsOpaqueToTagAndSiblingTracking) {
+  // '>' and '<p>' inside a comment are comment content: they must not end the
+  // comment early, must not count as visible text, and must not bump the
+  // sibling counter used to match p[1].
+  const auto epub =
+      makeSingleChapterBook("<html><body><div><!-- a > b <p>fake</p> --><p>abcd</p><!-- tail --></div></body></html>");
+  auto& lut = SectionStubRegistry::forSpine(0);
+  lut.cachedPageCount = 1;
+  lut.pageStartOffsets = {0};
+
+  const SavedProgressPosition ko{"/body/DocFragment[1]/body/div[1]/p[1]/text()[1].2", 0.1f};
+  const auto pos = ProgressMapper::toCrossPoint(epub, ko, renderer);
+
+  ASSERT_TRUE(pos.hasVisibleTextOffset);
+  EXPECT_EQ(pos.visibleTextOffset, 2u);
+}
+
+TEST_F(ProgressMapperTest, CommentWithExtraDashesStillCloses) {
+  // "--->" ends a comment (the scanner keeps skipping through interior "--"
+  // runs until the first "-->" byte sequence).
+  const auto epub = makeSingleChapterBook("<html><body><div><!-- dashes ---><p>abcd</p></div></body></html>");
+  auto& lut = SectionStubRegistry::forSpine(0);
+  lut.cachedPageCount = 1;
+  lut.pageStartOffsets = {0};
+
+  const SavedProgressPosition ko{"/body/DocFragment[1]/body/div[1]/p[1]/text()[1].2", 0.1f};
+  const auto pos = ProgressMapper::toCrossPoint(epub, ko, renderer);
+
+  ASSERT_TRUE(pos.hasVisibleTextOffset);
+  EXPECT_EQ(pos.visibleTextOffset, 2u);
+}
+
+TEST_F(ProgressMapperTest, XmlDeclAndDoctypePrologDoesNotBreakResolution) {
+  // "<?xml ...?>" / "<!DOCTYPE html>" are markup declarations, not elements:
+  // the scanner must skip them instead of opening bogus "xml"/"DOCTYPE" tags.
+  const auto epub = makeSingleChapterBook(
+      "<?xml version=\"1.0\" encoding=\"utf-8\"?><!DOCTYPE html><html><body><div><p>abcd</p></div></body></html>");
+  auto& lut = SectionStubRegistry::forSpine(0);
+  lut.cachedPageCount = 1;
+  lut.pageStartOffsets = {0};
+
+  const SavedProgressPosition ko{"/body/DocFragment[1]/body/div[1]/p[1]/text()[1].2", 0.1f};
+  const auto pos = ProgressMapper::toCrossPoint(epub, ko, renderer);
+
+  ASSERT_TRUE(pos.hasVisibleTextOffset);
+  EXPECT_EQ(pos.visibleTextOffset, 2u);
 }
 
 TEST_F(ProgressMapperTest, StyleTextInsideBodyIsNotCounted) {

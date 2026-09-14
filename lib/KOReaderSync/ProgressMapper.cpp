@@ -238,8 +238,20 @@ class ParagraphStreamer final : public Print {
   int stepEnteredAtDepth[MAX_XPATH_DEPTH] = {};
   bool relaxFirstStepDepth = false;
 
-  // Tag name accumulation
-  enum TagParseState { TAG_IDLE, TAG_IN_NAME, TAG_ATTRS } tagState = TAG_IDLE;
+  // Tag name accumulation. TAG_BANG/TAG_BANG_DASH disambiguate "<!--" (comment)
+  // from other "<!...>" markup declarations; TAG_COMMENT* skip comment bytes until
+  // "-->"; TAG_DECL skips "<!DOCTYPE ...>" / "<?...?>" until the closing '>'.
+  enum TagParseState {
+    TAG_IDLE,
+    TAG_IN_NAME,
+    TAG_ATTRS,
+    TAG_BANG,
+    TAG_BANG_DASH,
+    TAG_COMMENT,
+    TAG_COMMENT_DASH,
+    TAG_COMMENT_DASH_DASH,
+    TAG_DECL
+  } tagState = TAG_IDLE;
   bool tagIsClose = false;
   char tagName[12] = {};
   int tagNameLen = 0;
@@ -593,7 +605,11 @@ class ParagraphStreamer final : public Print {
         if (c == '/') {
           tagIsClose = true;
           tagState = TAG_IN_NAME;
-        } else if (c != '!' && c != '?') {
+        } else if (c == '!') {
+          tagState = TAG_BANG;
+        } else if (c == '?') {
+          tagState = TAG_DECL;
+        } else {
           tagIsClose = false;
           tagName[0] = static_cast<char>(c);
           tagNameLen = 1;
@@ -637,7 +653,35 @@ class ParagraphStreamer final : public Print {
           onCloseTag();
         }
         break;
+      case TAG_BANG:
+        tagState = (c == '-') ? TAG_BANG_DASH : TAG_DECL;
+        break;
+      case TAG_BANG_DASH:
+        tagState = (c == '-') ? TAG_COMMENT : TAG_DECL;
+        break;
+      case TAG_COMMENT:
+        if (c == '-') tagState = TAG_COMMENT_DASH;
+        break;
+      case TAG_COMMENT_DASH:
+        tagState = (c == '-') ? TAG_COMMENT_DASH_DASH : TAG_COMMENT;
+        break;
+      case TAG_COMMENT_DASH_DASH:
+        if (c == '>') {
+          // "-->": comment ends without ever having opened an element.
+          globalInTag = false;
+          tagState = TAG_IDLE;
+        } else if (c != '-') {
+          tagState = TAG_COMMENT;  // "--x" inside a comment: keep skipping ("--->" still closes)
+        }
+        break;
+      case TAG_DECL:
+        // Skipped until the terminating '>' (handled in write()).
+        break;
     }
+  }
+
+  bool inCommentBody() const {
+    return tagState == TAG_COMMENT || tagState == TAG_COMMENT_DASH || tagState == TAG_COMMENT_DASH_DASH;
   }
 
  public:
@@ -700,7 +744,11 @@ class ParagraphStreamer final : public Print {
     const bool afterCR = prevCR;
     prevCR = false;
 
-    if (c == '<') {
+    if (globalInTag && inCommentBody()) {
+      // Comment bytes are opaque: '<' and '>' inside "<!-- ... -->" are content,
+      // and only processByteInTag's "-->" detection may end the comment.
+      processByteInTag(c);
+    } else if (c == '<') {
       globalInTag = true;
       tagState = TAG_IDLE;
       tagNameLen = 0;
