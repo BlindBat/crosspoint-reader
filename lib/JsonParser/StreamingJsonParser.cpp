@@ -10,6 +10,7 @@ void StreamingJsonParser::reset() {
   expectingValue = false;
   escaped = false;
   tokenOverflow = false;
+  valueOverflow = false;
   error = false;
   nestingDepth = 0;
   literalLen = 0;
@@ -179,7 +180,9 @@ void StreamingJsonParser::handleNumber(char c) {
     return;
   }
 
-  if (!tokenOverflow && cb.onNumber) {
+  if (tokenOverflow) {
+    valueOverflow = true;
+  } else if (cb.onNumber) {
     tokenBuf[tokenLen] = '\0';
     cb.onNumber(cb.ctx, tokenBuf, tokenLen);
   }
@@ -232,6 +235,9 @@ void StreamingJsonParser::appendToken(char c) {
 }
 
 void StreamingJsonParser::emitToken() {
+  if (tokenOverflow) {
+    valueOverflow = true;
+  }
   if (state == State::IN_STRING_KEY) {
     if (!tokenOverflow && cb.onKey) {
       tokenBuf[tokenLen] = '\0';

@@ -255,6 +255,62 @@ TEST(StreamingJsonParser, LargeTokenTruncation) {
   EXPECT_FALSE(foundLongValue);
 }
 
+TEST(StreamingJsonParser, ValueOverflowFlagLatchesWhileParsingContinues) {
+  std::string longVal(StreamingJsonParser::TOKEN_BUF_SIZE, 'x');
+  std::string json = R"({"long": ")" + longVal + R"(", "after": "ok"})";
+
+  TestContext ctx;
+  StreamingJsonParser parser(makeCallbacks(&ctx));
+  EXPECT_FALSE(parser.valueOverflowed());
+  parser.feed(json.data(), json.size());
+
+  // The oversized value is skipped, observable via the latch — not an error.
+  EXPECT_TRUE(parser.valueOverflowed());
+  EXPECT_FALSE(parser.hasError());
+
+  // Parsing continued: the following key/value pair still arrived.
+  bool foundAfter = false;
+  for (auto& e : ctx.events) {
+    if (e.type == EventType::STRING && e.value == "ok") foundAfter = true;
+  }
+  EXPECT_TRUE(foundAfter);
+
+  // reset() clears the latch.
+  parser.reset();
+  EXPECT_FALSE(parser.valueOverflowed());
+  const char* small = R"({"k":"v"})";
+  parser.feed(small, strlen(small));
+  EXPECT_FALSE(parser.valueOverflowed());
+}
+
+TEST(StreamingJsonParser, MaximumSizedTokenIsEmittedWithoutOverflowFlag) {
+  // TOKEN_BUF_SIZE-1 bytes is the largest value that still fits (the buffer
+  // keeps one byte for the NUL terminator).
+  std::string maxVal(StreamingJsonParser::TOKEN_BUF_SIZE - 1, 'y');
+  std::string json = R"({"k": ")" + maxVal + R"("})";
+
+  TestContext ctx;
+  StreamingJsonParser parser(makeCallbacks(&ctx));
+  parser.feed(json.data(), json.size());
+
+  EXPECT_FALSE(parser.valueOverflowed());
+  ASSERT_EQ(ctx.events.size(), 4u);
+  EXPECT_EQ(ctx.events[2].type, EventType::STRING);
+  EXPECT_EQ(ctx.events[2].value, maxVal);
+}
+
+TEST(StreamingJsonParser, OversizedKeyAlsoLatchesOverflowFlag) {
+  std::string longKey(StreamingJsonParser::TOKEN_BUF_SIZE, 'k');
+  std::string json = "{\"" + longKey + R"(": 1})";
+
+  TestContext ctx;
+  StreamingJsonParser parser(makeCallbacks(&ctx));
+  parser.feed(json.data(), json.size());
+
+  EXPECT_TRUE(parser.valueOverflowed());
+  EXPECT_FALSE(parser.hasError());
+}
+
 TEST(StreamingJsonParser, EmptyObject) {
   auto events = parse("{}");
   ASSERT_EQ(events.size(), 2u);

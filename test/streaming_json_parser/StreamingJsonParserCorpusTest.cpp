@@ -211,19 +211,22 @@ TEST_F(JsonCorpusBehavior, MaxAllowedNestingDepthParsesCompletely) {
   EXPECT_EQ(log.count(EventType::NUMBER), 1u);
 }
 
-// Documents a current limitation: a value longer than TOKEN_BUF_SIZE-1 is
-// dropped SILENTLY — no callback, no error latch. Consumers cannot tell an
-// oversized value from an absent one.
-TEST_F(JsonCorpusBehavior, OversizedNumberIsSilentlyDroppedWithoutError) {
+// A value longer than TOKEN_BUF_SIZE-1 is skipped (no callback) so that
+// oversized fields nobody needs — e.g. the long "body" of a GitHub release
+// JSON — cannot break the stream, but the skip is observable: the
+// valueOverflowed() latch reports it while hasError() stays false.
+TEST_F(JsonCorpusBehavior, OversizedNumberIsSkippedButLatchesOverflowFlag) {
   feedFile("huge_number_600_digits.json");
   EXPECT_EQ(log.count(EventType::NUMBER), 0u);
+  EXPECT_TRUE(parser.valueOverflowed());
   EXPECT_FALSE(parser.hasError());
   EXPECT_EQ(log.count(EventType::OBJECT_END), 1u);  // parsing continued past it
 }
 
-TEST_F(JsonCorpusBehavior, OversizedStringIsSilentlyDroppedWithoutError) {
+TEST_F(JsonCorpusBehavior, OversizedStringIsSkippedButLatchesOverflowFlag) {
   feedFile("huge_string_600_chars.json");
   EXPECT_EQ(log.count(EventType::STRING), 0u);
+  EXPECT_TRUE(parser.valueOverflowed());
   EXPECT_FALSE(parser.hasError());
   EXPECT_EQ(log.count(EventType::OBJECT_END), 1u);
 }

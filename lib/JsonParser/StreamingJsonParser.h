@@ -28,6 +28,14 @@ class StreamingJsonParser {
 
   bool hasError() const { return error; }
 
+  // Latched true once any token (key, string, or number) exceeded
+  // TOKEN_BUF_SIZE-1 bytes and was therefore skipped without firing its
+  // callback. This is deliberately NOT an error: parsing continues past the
+  // oversized token (e.g. the long "body" field of a GitHub release JSON),
+  // but consumers that need completeness can query this after feeding.
+  // Cleared by reset().
+  bool valueOverflowed() const { return valueOverflow; }
+
  private:
   enum class State : uint8_t {
     SCANNING,
@@ -62,6 +70,7 @@ class StreamingJsonParser {
   bool expectingValue;
   bool escaped;
   bool tokenOverflow;
+  bool valueOverflow;
   bool error;
 
   Container nestingStack[MAX_NESTING];
