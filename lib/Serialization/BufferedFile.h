@@ -6,6 +6,8 @@
 #include <cstring>
 #include <string>
 
+#include "Serialization.h"  // MAX_STRING_LENGTH shared with the unbuffered overloads
+
 namespace serialization {
 
 // Sequential buffered wrappers over HalFile.
@@ -133,14 +135,15 @@ class BufferedFileReader {
 };
 
 // serialization:: overloads mirroring the HalFile ones in Serialization.h.
+// The read overloads return false on a short read, matching Serialization.h.
 template <typename T>
 void writePod(BufferedFileWriter& out, const T& value) {
   out.write(&value, sizeof(T));
 }
 
 template <typename T>
-void readPod(BufferedFileReader& in, T& value) {
-  in.read(&value, sizeof(T));
+bool readPod(BufferedFileReader& in, T& value) {
+  return in.read(&value, sizeof(T)) == sizeof(T);
 }
 
 inline void writeString(BufferedFileWriter& out, const std::string& s) {
@@ -149,13 +152,18 @@ inline void writeString(BufferedFileWriter& out, const std::string& s) {
   out.write(s.data(), len);
 }
 
-inline void readString(BufferedFileReader& in, std::string& s) {
+inline bool readString(BufferedFileReader& in, std::string& s, const uint32_t maxLen = MAX_STRING_LENGTH) {
   uint32_t len;
-  readPod(in, len);
-  s.resize(len);
-  if (len > 0) {
-    in.read(&s[0], len);
+  if (!readPod(in, len) || len > maxLen) {
+    s.clear();
+    return false;
   }
+  s.resize(len);
+  if (len > 0 && in.read(&s[0], len) != len) {
+    s.clear();
+    return false;
+  }
+  return true;
 }
 
 }  // namespace serialization

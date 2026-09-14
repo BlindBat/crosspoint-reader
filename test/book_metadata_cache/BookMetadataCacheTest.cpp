@@ -283,13 +283,12 @@ TEST(BookMetadataCacheTest, TruncationAtEverySectionBoundaryIsNotGracefullyRejec
 
 /* ---------- Corruption: oversized length-prefixed string ---------- */
 
-// Documents a CURRENT limitation (see bugsFound): load() reads each string as a
-// u32 length followed by that many bytes, calling std::string::resize(len)
-// without bounding len against the file size. A corrupt/malicious book.bin can
-// declare a ~4GB string and drive an unbounded allocation -- on the 380KB
-// device that is an immediate OOM/crash. Here the heap guard fails the oversized
-// request (as the device would) so the host does not actually reserve GBs.
-TEST(BookMetadataCacheTest, HugeStringLengthDrivesUnboundedAllocation) {
+// Regression guard: serialization::readString bounds every length prefix
+// against MAX_STRING_LENGTH and the bytes actually left in the file, so a
+// corrupt/malicious book.bin declaring a ~4GB string can no longer drive an
+// unbounded std::string::resize (which, with -fno-exceptions on the device,
+// would abort the firmware when the allocation fails).
+TEST(BookMetadataCacheTest, HugeStringLengthIsRejectedWithoutUnboundedAllocation) {
   const std::string dir = makeTempDir();
   buildValidCache(dir);
 
@@ -306,10 +305,8 @@ TEST(BookMetadataCacheTest, HugeStringLengthDrivesUnboundedAllocation) {
   size_t maxAlloc = 0;
   const LoadOutcome outcome = loadGuarded(dir, 64u << 20, &maxAlloc);
 
-  // Pinning the bug: load() attempted to allocate the lied-about length. It
-  // does not bound the size, so on device this OOMs. If BookMetadataCache gains
-  // a bound, this expectation should flip to a small cap.
-  EXPECT_GE(maxAlloc, static_cast<size_t>(bogusLen))
-      << "load() resized a std::string to the unvalidated declared length";
-  EXPECT_NE(LoadOutcome::ReturnedFalse, outcome) << "load() did not reject the corrupt length; it tried to honor it";
+  // The lied-about length must never reach an allocator: the largest single
+  // allocation stays far below the device's ~380KB heap.
+  EXPECT_LT(maxAlloc, 64u * 1024u) << "load() allocated for an unvalidated declared length";
+  EXPECT_NE(LoadOutcome::Threw, outcome) << "the bounded read must fail cleanly, not via allocation failure";
 }
