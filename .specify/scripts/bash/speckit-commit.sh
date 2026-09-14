@@ -5,7 +5,7 @@
 # Encodes the fork's commit rules (Constitution Principle VII + AGENTS.md):
 #   - never commits directly on master (integration branch), develop, or detached HEAD
 #   - stages an explicit per-phase allow-list, never `git add -A`
-#   - semantic commit messages, no Co-Authored-By / AI-attribution trailers
+#   - semantic commit messages, no AI attribution or AI co-authors (human co-authors OK)
 #   - no-op success when the phase produced nothing to commit (idempotent)
 #
 # Usage:
@@ -52,17 +52,18 @@ if [[ "$BRANCH" == "master" || "$BRANCH" == "develop" ]]; then
   die "refusing to commit directly on '$BRANCH' (Constitution Principle VII). Create a feature branch first."
 fi
 
-# --- Message hygiene: semantic prefix, no AI attribution (repo hard rule).
+# --- Message hygiene: no AI attribution (repo hard rule). Human Co-Authored-By
+# trailers are allowed (credit for an adapted PR's author); an AI co-author
+# trips the tool-name check below via its name or email domain.
 if [[ -n "$MSG" ]]; then
-  # Always-forbidden attribution forms.
-  if echo "$MSG" | grep -qiE "co-authored-by|generated (with|by)"; then
-    die "commit message must not carry AI attribution or co-author trailers (repo rule)"
+  if echo "$MSG" | grep -qiE "generated (with|by)"; then
+    die "commit message must not carry generated-by attribution (repo rule)"
   fi
   # Tool names are forbidden except as file/path references (CLAUDE.md, .claude/,
   # CLAUDE.local.md are legitimate repo paths).
   STRIPPED="$(echo "$MSG" | tr 'A-Z' 'a-z' | sed -E 's/claude(\.local)?\.md//g; s/\.claude(\/[^ ]*)?//g')"
-  if echo "$STRIPPED" | grep -qE "(^|[^[:alnum:]_])(claude|copilot|chatgpt|anthropic)([^[:alnum:]_]|$)|[[:space:]]ai[[:space:]-]"; then
-    die "commit message must not name AI tools outside file references (repo rule)"
+  if echo "$STRIPPED" | grep -qE "(^|[^[:alnum:]_])(claude|copilot|chatgpt|openai|codex|gemini|anthropic)([^[:alnum:]_]|$)|[[:space:]]ai[[:space:]-]"; then
+    die "commit message must not name AI tools or AI co-authors outside file references (repo rule)"
   fi
 fi
 

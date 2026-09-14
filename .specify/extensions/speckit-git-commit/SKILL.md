@@ -51,8 +51,9 @@ directly on `master` or `develop`.
 
 You MAY pass a better subject with `-m "docs(spec): <subject>"` when the
 default (derived from the branch name) reads poorly — keep the same
-`docs(<phase>)` prefix and NEVER include AI attribution or co-author trailers
-(the script rejects them).
+`docs(<phase>)` prefix and NEVER include AI attribution or AI co-authors (the
+script rejects them). A human `Co-Authored-By` trailer is fine when crediting
+the author of an adapted PR.
 
 ### Implement phase (`implement`)
 
@@ -83,5 +84,6 @@ refuses AI-attribution text.
   detached HEAD.
 - Allow-list staging only; unrelated working-tree changes are surfaced, never
   swept into the commit.
-- No `Co-Authored-By`, no AI/tool attribution, ever.
+- No AI/tool attribution and no AI co-authors, ever; human `Co-Authored-By`
+  trailers are allowed.
 - Never pushes; pushing goes through the user and the pre-push hook.
