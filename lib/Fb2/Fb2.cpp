@@ -17,6 +17,16 @@ constexpr uint8_t FB2_CACHE_VERSION = 2;
 // field must never drive a multi-megabyte resize on a ~380KB-RAM device.
 constexpr uint32_t FB2_CACHE_MAX_STRING = 4096;
 
+// Minimum serialized footprint of one cache list entry, derived from
+// saveMetadataCache: a section entry is a length-prefixed string (u32 prefix,
+// possibly empty) plus two u32 fields; a TOC entry is a string plus an i16
+// index. A count field claiming more entries than the remaining file bytes
+// could possibly hold is corrupt and must be rejected BEFORE reserve():
+// a 0xFFFF section count would request ~2.6MB of vector storage up front,
+// which on the ~380KB-RAM device means a bare-new abort.
+constexpr uint32_t FB2_CACHE_MIN_SECTION_ENTRY = sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t);
+constexpr uint32_t FB2_CACHE_MIN_TOC_ENTRY = sizeof(uint32_t) + sizeof(int16_t);
+
 // Checked variants of the serialization readers: fail instead of accepting
 // short reads or unbounded string lengths, so a corrupted/truncated book.bin
 // is rejected and the caller reparses the source file.
@@ -38,6 +48,16 @@ bool readStringChecked(HalFile& file, std::string& value) {
     return true;
   }
   return file.read(reinterpret_cast<uint8_t*>(&value[0]), length) == static_cast<int>(length);
+}
+
+// True when the unread tail of the file can still hold count entries of at
+// least minEntrySize bytes each. Guards reserve() against corrupted counts.
+bool countFitsRemainingFile(HalFile& file, const uint32_t count, const uint32_t minEntrySize) {
+  const int available = file.available();
+  if (available < 0) {
+    return false;
+  }
+  return static_cast<uint64_t>(count) * minEntrySize <= static_cast<uint64_t>(available);
 }
 }  // namespace
 
@@ -77,6 +97,10 @@ bool Fb2::loadMetadataCache() {
     LOG_DBG("FB2", "Cache section count invalid");
     return false;
   }
+  if (!countFitsRemainingFile(file, sectionCount, FB2_CACHE_MIN_SECTION_ENTRY)) {
+    LOG_DBG("FB2", "Cache section count %u exceeds file size", sectionCount);
+    return false;
+  }
   sections.clear();
   sections.reserve(sectionCount);
   for (uint16_t i = 0; i < sectionCount; i++) {
@@ -95,6 +119,11 @@ bool Fb2::loadMetadataCache() {
   uint16_t tocCount;
   if (!readPodChecked(file, tocCount)) {
     LOG_DBG("FB2", "Cache TOC count corrupted");
+    sections.clear();
+    return false;
+  }
+  if (!countFitsRemainingFile(file, tocCount, FB2_CACHE_MIN_TOC_ENTRY)) {
+    LOG_DBG("FB2", "Cache TOC count %u exceeds file size", tocCount);
     sections.clear();
     return false;
   }

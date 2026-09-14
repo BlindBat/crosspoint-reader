@@ -11,6 +11,7 @@
 #undef private
 #undef class
 
+#include "AllocCounter.h"
 #include "Fb2TestSupport.h"
 
 namespace {
@@ -19,6 +20,16 @@ using fb2test::fileExists;
 using fb2test::fixturePath;
 using fb2test::readAll;
 using fb2test::writeAll;
+
+template <typename T>
+void appendPod(std::string& out, const T value) {
+  out.append(reinterpret_cast<const char*>(&value), sizeof(T));
+}
+
+void appendString(std::string& out, const std::string& value) {
+  appendPod(out, static_cast<uint32_t>(value.size()));
+  out += value;
+}
 
 class Fb2BookTest : public ::testing::Test {
  protected:
@@ -155,6 +166,73 @@ TEST_F(Fb2BookTest, GarbageStringLengthInCacheIsRejectedNotAllocated) {
   Fb2 rebuilt(fixturePath("basic.fb2"), tmp.path());
   ASSERT_TRUE(rebuilt.load(true));
   EXPECT_EQ(rebuilt.getTitle(), "The Crosspoint Chronicle");
+}
+
+// A corrupted section count (0xFFFF) in a tiny cache file must be rejected
+// against the remaining file size BEFORE sections.reserve() runs: on the
+// ~380KB-RAM device that reserve is a ~2.6MB up-front request, which aborts.
+// The allocation cap pins that no such reserve happens on the host either.
+TEST_F(Fb2BookTest, HugeSectionCountInTinyCacheIsRejectedWithoutReserving) {
+  Fb2 book(fixturePath("basic.fb2"), tmp.path());
+  book.setupCacheDir();
+  const std::string cacheFile = book.getCachePath() + "/book.bin";
+
+  std::string bogus;
+  bogus.push_back(2);  // valid version byte
+  appendString(bogus, "Tiny");
+  appendString(bogus, "Author");
+  appendString(bogus, "en");
+  appendString(bogus, "");
+  appendPod<uint16_t>(bogus, 0xFFFF);  // claims 65535 sections...
+  bogus += "xx";                       // ...backed by 2 bytes of data
+  ASSERT_TRUE(writeAll(cacheFile, bogus));
+
+  Fb2 cacheOnly(fixturePath("basic.fb2"), tmp.path());
+  bool loaded = true;
+  size_t bytesAllocated = 0;
+  {
+    alloc_counter::CountingScope scope;
+    loaded = cacheOnly.load(false);
+    bytesAllocated = scope.bytes();
+  }
+  EXPECT_FALSE(loaded);
+  EXPECT_LT(bytesAllocated, 64u * 1024u) << "corrupt section count allocated " << bytesAllocated << " bytes";
+
+  // The real book still loads via reparse.
+  ASSERT_TRUE(book.load(true));
+  EXPECT_EQ(book.getSectionCount(), 2);
+}
+
+// Same hazard on the TOC list: a huge TOC count at the tail of a tiny file
+// must fail the remaining-size bound instead of driving tocEntries.reserve().
+TEST_F(Fb2BookTest, HugeTocCountInTinyCacheIsRejectedWithoutReserving) {
+  Fb2 book(fixturePath("basic.fb2"), tmp.path());
+  book.setupCacheDir();
+  const std::string cacheFile = book.getCachePath() + "/book.bin";
+
+  std::string bogus;
+  bogus.push_back(2);  // valid version byte
+  appendString(bogus, "Tiny");
+  appendString(bogus, "Author");
+  appendString(bogus, "en");
+  appendString(bogus, "");
+  appendPod<uint16_t>(bogus, 1);  // one valid section entry
+  appendString(bogus, "Section One");
+  appendPod<uint32_t>(bogus, 0);
+  appendPod<uint32_t>(bogus, 100);
+  appendPod<uint16_t>(bogus, 0xFFFF);  // TOC count with no data behind it
+  ASSERT_TRUE(writeAll(cacheFile, bogus));
+
+  Fb2 cacheOnly(fixturePath("basic.fb2"), tmp.path());
+  bool loaded = true;
+  size_t bytesAllocated = 0;
+  {
+    alloc_counter::CountingScope scope;
+    loaded = cacheOnly.load(false);
+    bytesAllocated = scope.bytes();
+  }
+  EXPECT_FALSE(loaded);
+  EXPECT_LT(bytesAllocated, 64u * 1024u) << "corrupt TOC count allocated " << bytesAllocated << " bytes";
 }
 
 TEST_F(Fb2BookTest, TocEntryPointingPastSectionListIsRejected) {
