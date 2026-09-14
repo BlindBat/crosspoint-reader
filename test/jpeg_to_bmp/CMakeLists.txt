@@ -21,8 +21,10 @@ add_executable(JpegToBmpTest
 # The former shift opt-out (negative shift exponent in Huffman table init,
 # hit on every decode) is fixed by scripts/jpegdec_patches/0003-*.patch, so
 # the shift check now runs -- a regressed patch fails the ASan/UBSan suite.
+# JPEGDEC gets memset/memcpy/NULL through Arduino.h on device; off-device,
+# <cstring> is force-included so the TU builds against libstdc++ as well as libc++.
 set_source_files_properties(${jpegdec_SOURCE_DIR}/src/JPEGDEC.cpp
-  PROPERTIES COMPILE_OPTIONS "-w;-fno-sanitize=alignment")
+  PROPERTIES COMPILE_OPTIONS "-w;-fno-sanitize=alignment;-include;cstring")
 
 target_include_directories(JpegToBmpTest PRIVATE
   ${REPO_ROOT}/test/image_common/stubs
