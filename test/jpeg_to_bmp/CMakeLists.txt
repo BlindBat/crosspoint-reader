@@ -10,19 +10,19 @@ add_executable(JpegToBmpTest
   ${jpegdec_SOURCE_DIR}/src/JPEGDEC.cpp
 )
 
-# Third-party TU: JPEGDEC is not held to this repo's warning bar. Two UBSan
-# checks are disabled for this ONE file (ASan and every other UBSan check
-# stay on) because upstream JPEGDEC trips them on every decode, valid input
-# included -- both are pre-existing upstream defects, benign-by-accident on
-# the device, documented in the QA report:
+# Third-party TU: JPEGDEC is not held to this repo's warning bar. ONE UBSan
+# check is disabled for this ONE file (ASan and every other UBSan check --
+# including shift -- stay on):
 #   * alignment: with ALLOWS_UNALIGNED (set for x86-64/arm64 hosts AND the
-#     ESP32 Arduino build) JPEGDEC deliberately does misaligned uint16/32
-#     loads (INTELSHORT/MOTOSHORT in JPEGDEC.h).
-#   * shift: jpeg.inl:1115 computes `cc >> (iBitNum-5)` with iBitNum < 5
-#     during Huffman table init -> negative shift exponent (UB; RISC-V/arm
-#     mask the count, so the following == 0x1f test happens to work out).
+#     ESP32 Arduino build) JPEGDEC DELIBERATELY does misaligned uint16/32
+#     loads (INTELSHORT/MOTOSHORT in JPEGDEC.h) as a vendor design choice
+#     for cores that support them. Do not "fix" these upstream reads; this
+#     opt-out is the permanent documentation of that design.
+# The former shift opt-out (negative shift exponent in Huffman table init,
+# hit on every decode) is fixed by scripts/jpegdec_patches/0003-*.patch, so
+# the shift check now runs -- a regressed patch fails the ASan/UBSan suite.
 set_source_files_properties(${jpegdec_SOURCE_DIR}/src/JPEGDEC.cpp
-  PROPERTIES COMPILE_OPTIONS "-w;-fno-sanitize=alignment;-fno-sanitize=shift")
+  PROPERTIES COMPILE_OPTIONS "-w;-fno-sanitize=alignment")
 
 target_include_directories(JpegToBmpTest PRIVATE
   ${REPO_ROOT}/test/image_common/stubs
