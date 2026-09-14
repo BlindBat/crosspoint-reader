@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="windows-1252"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+  <description>
+    <title-info>
+      <book-title>Café “München”</book-title>
+      <lang>fr</lang>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Début</p></title>
+      <p>déjà — naïve</p>
+    </section>
+  </body>
+</FictionBook>

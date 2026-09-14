@@ -5,6 +5,7 @@ add_executable(Fb2SectionParserTest
   Fb2SectionParserTest.cpp
   Fb2SectionParserLinkStubs.cpp
   ${REPO_ROOT}/lib/Fb2/Fb2/Fb2SectionParser.cpp
+  ${REPO_ROOT}/lib/Fb2/Fb2/Fb2XmlEncoding.cpp
   ${REPO_ROOT}/lib/Epub/Epub/ParsedText.cpp
   ${REPO_ROOT}/lib/Epub/Epub/blocks/TextBlock.cpp
   ${REPO_ROOT}/lib/Epub/Epub/hyphenation/HyphenationCommon.cpp

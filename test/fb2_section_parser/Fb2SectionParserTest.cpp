@@ -394,6 +394,19 @@ TEST(Fb2SectionParserFile, NestedSectionsSkewTargetSectionIndexing) {
   EXPECT_FALSE(containsWord(secondWords, "level"));     // right chapter never appears
 }
 
+TEST(Fb2SectionParserFile, DeclaredWindows1251BodyTextDecodesToUtf8) {
+  GfxRenderer renderer;
+  auto result = parseSection(fixturePath("cp1251-declared.fb2"), 0, renderer, makeSpec());
+  ASSERT_TRUE(result.ok);
+  const auto words = collectWords(result.pages);
+  // cp1251 bytes must come out as UTF-8, including 'ё' (0xB8) and '№' (0xB9).
+  EXPECT_TRUE(containsWord(words, "Привет,"));
+  EXPECT_TRUE(containsWord(words, "мир"));
+  EXPECT_TRUE(containsWord(words, "объём"));
+  EXPECT_TRUE(containsWord(words, "№7"));
+  EXPECT_FALSE(containsWord(words, "Второй"));  // section 1 stays out
+}
+
 TEST(Fb2SectionParserFile, PagesBreakAtViewportHeight) {
   GfxRenderer renderer;
   const auto spec = makeSpec();  // 64 px viewport, 16 px lines -> 4 lines/page

@@ -6,6 +6,8 @@
 
 #include <cstring>
 
+#include "Fb2XmlEncoding.h"
+
 namespace {
 // Strip namespace prefix from tag name (e.g., "l:title" -> "title")
 const char* stripNs(const char* name) {
@@ -206,6 +208,7 @@ bool Fb2MetadataParser::parse() {
 
   parser = xmlParser;
 
+  fb2RegisterExtraEncodings(xmlParser);
   XML_SetUserData(xmlParser, this);
   XML_SetElementHandler(xmlParser, startElement, endElement);
   XML_SetCharacterDataHandler(xmlParser, characterData);

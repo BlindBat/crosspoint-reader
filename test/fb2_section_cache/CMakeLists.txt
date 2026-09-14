@@ -10,6 +10,7 @@ add_executable(Fb2SectionCacheTest
   ${REPO_ROOT}/lib/Fb2/Fb2/Fb2CoverExtractor.cpp
   ${REPO_ROOT}/lib/Fb2/Fb2/Fb2Section.cpp
   ${REPO_ROOT}/lib/Fb2/Fb2/Fb2SectionParser.cpp
+  ${REPO_ROOT}/lib/Fb2/Fb2/Fb2XmlEncoding.cpp
   ${REPO_ROOT}/lib/Epub/Epub/Page.cpp
   ${REPO_ROOT}/lib/Epub/Epub/ParsedText.cpp
   ${REPO_ROOT}/lib/Epub/Epub/blocks/TextBlock.cpp

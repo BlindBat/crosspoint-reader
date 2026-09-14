@@ -174,12 +174,56 @@ TEST(Fb2MetadataParser, MissingFileFailsParse) {
   EXPECT_FALSE(parser.parse());
 }
 
-// KNOWN BUG (documents current behavior): the parser is created with
-// XML_ParserCreate(nullptr) and no UnknownEncodingHandler, so any FB2 that
-// declares a non-built-in encoding -- windows-1251 covers most Russian FB2s
-// in the wild -- fails to parse entirely.
-TEST(Fb2MetadataParser, DeclaredWindows1251EncodingFailsParse) {
+// windows-1251 covers most Russian FB2s in the wild; the registered
+// unknown-encoding handler must map the cp1251 bytes to UTF-8 output.
+TEST(Fb2MetadataParser, DeclaredWindows1251EncodingDecodesToUtf8) {
   Fb2MetadataParser parser(fixturePath("cp1251-declared.fb2"));
+  ASSERT_TRUE(parser.parse());
+  EXPECT_EQ(parser.getTitle(), "Тестовая книга");
+  EXPECT_EQ(parser.getAuthor(), "Лев Толстой");
+  EXPECT_EQ(parser.getLanguage(), "ru");
+  const auto& sections = parser.getSections();
+  ASSERT_EQ(sections.size(), 2u);
+  EXPECT_EQ(sections[0].title, "Глава первая");
+  EXPECT_EQ(sections[1].title, "Глава вторая");
+}
+
+TEST(Fb2MetadataParser, DeclaredWindows1252EncodingDecodesToUtf8) {
+  Fb2MetadataParser parser(fixturePath("cp1252-declared.fb2"));
+  ASSERT_TRUE(parser.parse());
+  // C1-range curly quotes (0x93/0x94) plus Latin-1 accents.
+  EXPECT_EQ(parser.getTitle(), "Café “München”");
+  EXPECT_EQ(parser.getLanguage(), "fr");
+  ASSERT_EQ(parser.getSections().size(), 1u);
+  EXPECT_EQ(parser.getSections()[0].title, "Début");
+}
+
+TEST(Fb2MetadataParser, EncodingNameMatchIsCaseInsensitiveAndAcceptsCp1251Alias) {
+  fb2test::TempDir tmp;
+  ASSERT_TRUE(tmp.valid());
+  const std::string path = tmp.path() + "/alias.fb2";
+  // "CP1251" alias, uppercase; title bytes are cp1251 for "Ёж" (0xA8 0xE6).
+  std::string doc =
+      "<?xml version=\"1.0\" encoding=\"CP1251\"?>\n"
+      "<FictionBook><description><title-info>"
+      "<book-title>\xA8\xE6</book-title>"
+      "</title-info></description>"
+      "<body><section><p>x</p></section></body></FictionBook>\n";
+  ASSERT_TRUE(fb2test::writeAll(path, doc));
+  Fb2MetadataParser parser(path);
+  ASSERT_TRUE(parser.parse());
+  EXPECT_EQ(parser.getTitle(), "Ёж");
+}
+
+TEST(Fb2MetadataParser, TrulyUnknownEncodingStillFailsParse) {
+  fb2test::TempDir tmp;
+  ASSERT_TRUE(tmp.valid());
+  const std::string path = tmp.path() + "/koi8.fb2";
+  std::string doc =
+      "<?xml version=\"1.0\" encoding=\"koi8-r\"?>\n"
+      "<FictionBook><body><section><p>x</p></section></body></FictionBook>\n";
+  ASSERT_TRUE(fb2test::writeAll(path, doc));
+  Fb2MetadataParser parser(path);
   EXPECT_FALSE(parser.parse());
 }
 

@@ -99,6 +99,24 @@ TEST_F(Fb2CoverExtractorTest, InvalidBase64CharsAreSilentlySkipped) {
   EXPECT_EQ(readAll(outPath()), std::string("GOODDD\x15\x44\x10", 9));
 }
 
+TEST_F(Fb2CoverExtractorTest, DeclaredWindows1251DocumentStillExtractsCover) {
+  // Russian FB2s declare windows-1251; the cover binary itself is plain
+  // base64 ASCII, but the parser must accept the document encoding first.
+  const std::string fb2Path = tmp.path() + "/cp1251.fb2";
+  std::string doc =
+      "<?xml version=\"1.0\" encoding=\"windows-1251\"?>\n"
+      "<FictionBook><description><title-info>"
+      "<book-title>\xCA\xED\xE8\xE3\xE0</book-title>"  // cp1251 for the Russian word for "book"
+      "</title-info></description>"
+      "<body><section><p>x</p></section></body>"
+      "<binary id=\"c.jpg\" content-type=\"image/jpeg\">QUJD</binary>"
+      "</FictionBook>\n";
+  ASSERT_TRUE(writeAll(fb2Path, doc));
+  Fb2CoverExtractor extractor(fb2Path, "c.jpg", outPath());
+  ASSERT_TRUE(extractor.extract());
+  EXPECT_EQ(readAll(outPath()), "ABC");
+}
+
 TEST_F(Fb2CoverExtractorTest, MissingBinaryIdFailsAndLeavesNoFiles) {
   Fb2CoverExtractor extractor(fixturePath("basic.fb2"), "no-such-binary", outPath());
   EXPECT_FALSE(extractor.extract());

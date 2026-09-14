@@ -3,12 +3,21 @@
   <description>
     <title-info>
       <book-title>Тестовая книга</book-title>
+      <author>
+        <first-name>Лев</first-name>
+        <last-name>Толстой</last-name>
+      </author>
       <lang>ru</lang>
     </title-info>
   </description>
   <body>
     <section>
-      <p>Привет, мир</p>
+      <title><p>Глава первая</p></title>
+      <p>Привет, мир — объём №7</p>
+    </section>
+    <section>
+      <title><p>Глава вторая</p></title>
+      <p>Второй раздел</p>
     </section>
   </body>
 </FictionBook>

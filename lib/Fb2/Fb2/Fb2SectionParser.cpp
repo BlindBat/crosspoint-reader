@@ -9,6 +9,8 @@
 
 #include <cstring>
 
+#include "Fb2XmlEncoding.h"
+
 namespace {
 constexpr size_t MIN_SIZE_FOR_POPUP = 50 * 1024;
 
@@ -396,6 +398,7 @@ bool Fb2SectionParser::parseAndBuildPages() {
 
   // For FB2, we parse the entire file but the section offsets help us identify content.
   // Since expat requires well-formed XML from the start, we parse the whole file.
+  fb2RegisterExtraEncodings(xmlParser);
   XML_SetUserData(xmlParser, this);
   XML_SetElementHandler(xmlParser, startElement, endElement);
   XML_SetCharacterDataHandler(xmlParser, characterData);

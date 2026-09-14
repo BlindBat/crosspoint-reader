@@ -7,6 +7,8 @@
 
 #include <cstring>
 
+#include "Fb2XmlEncoding.h"
+
 namespace {
 // Base64 decoding table
 constexpr int8_t B64_INVALID = -1;
@@ -135,6 +137,7 @@ bool Fb2CoverExtractor::extractBinaryToJpeg(const std::string& tempJpegPath) con
     return false;
   }
 
+  fb2RegisterExtraEncodings(xmlParser);
   XML_SetUserData(xmlParser, &state);
   XML_SetElementHandler(xmlParser, onStart, onEnd);
   XML_SetCharacterDataHandler(xmlParser, onCharData);

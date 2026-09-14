@@ -4,6 +4,7 @@
 add_executable(Fb2MetadataParserTest
   Fb2MetadataParserTest.cpp
   ${REPO_ROOT}/lib/Fb2/Fb2/Fb2MetadataParser.cpp
+  ${REPO_ROOT}/lib/Fb2/Fb2/Fb2XmlEncoding.cpp
   ${REPO_ROOT}/lib/expat/xmlparse.c
   ${REPO_ROOT}/lib/expat/xmlrole.c
   ${REPO_ROOT}/lib/expat/xmltok.c
