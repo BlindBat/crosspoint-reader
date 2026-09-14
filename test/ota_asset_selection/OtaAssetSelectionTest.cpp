@@ -316,16 +316,38 @@ TEST_F(OtaTest, NotNewerBeforeAnySuccessfulCheck) {
   EXPECT_FALSE(updater.isUpdateNewer());
 }
 
-TEST_F(OtaTest, UnparseableTagDoesNotCrash) {
-  // PRODUCTION BUG (reported, not fixed here): isUpdateNewer() never checks
-  // sscanf's return value, so a tag_name that does not start with a digit
-  // (e.g. GitHub's common "v1.7.0" form) leaves latestMajor/Minor/Patch
-  // UNINITIALIZED and the comparison result is garbage. This test only pins
-  // that the call does not crash; the boolean outcome is unspecified and
-  // deliberately not asserted.
+TEST_F(OtaTest, VPrefixedTagComparesNumerically) {
+  // Regression guard: isUpdateNewer() used to ignore sscanf's return value,
+  // so GitHub's common "vX.Y.Z" tag form left the parsed segments
+  // uninitialized and compared garbage. A single leading 'v'/'V' is now
+  // stripped before the semver comparison.
   OtaUpdater updater;
+  g_testCurrentVersion = "1.6.0";
   ASSERT_EQ(checkWithTag(updater, "v1.7.0"), OtaUpdater::OK);
-  (void)updater.isUpdateNewer();
+  EXPECT_TRUE(updater.isUpdateNewer());
+  ASSERT_EQ(checkWithTag(updater, "V1.7.0"), OtaUpdater::OK);
+  EXPECT_TRUE(updater.isUpdateNewer());
+  // Same version behind a 'v' prefix is not an update.
+  ASSERT_EQ(checkWithTag(updater, "v1.6.0"), OtaUpdater::OK);
+  EXPECT_FALSE(updater.isUpdateNewer());
+  // Nor is a v-prefixed older release.
+  ASSERT_EQ(checkWithTag(updater, "v1.5.9"), OtaUpdater::OK);
+  EXPECT_FALSE(updater.isUpdateNewer());
+}
+
+TEST_F(OtaTest, NonSemverTagIsNeverNewer) {
+  // A tag that does not parse as MAJOR.MINOR.PATCH must fail safe: no update
+  // offered, no garbage comparison.
+  OtaUpdater updater;
+  g_testCurrentVersion = "1.6.0";
+  ASSERT_EQ(checkWithTag(updater, "nightly"), OtaUpdater::OK);
+  EXPECT_FALSE(updater.isUpdateNewer());
+  ASSERT_EQ(checkWithTag(updater, "release-2"), OtaUpdater::OK);
+  EXPECT_FALSE(updater.isUpdateNewer());
+  ASSERT_EQ(checkWithTag(updater, "1.7"), OtaUpdater::OK);  // only two segments
+  EXPECT_FALSE(updater.isUpdateNewer());
+  ASSERT_EQ(checkWithTag(updater, "v"), OtaUpdater::OK);
+  EXPECT_FALSE(updater.isUpdateNewer());
 }
 
 // ---------------------------------------------------------------------------

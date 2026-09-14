@@ -78,14 +78,25 @@ bool OtaUpdater::isUpdateNewer() const {
     return false;
   }
 
-  int currentMajor, currentMinor, currentPatch;
-  int latestMajor, latestMinor, latestPatch;
+  int currentMajor = 0, currentMinor = 0, currentPatch = 0;
+  int latestMajor = 0, latestMinor = 0, latestPatch = 0;
 
   const auto currentVersion = CROSSPOINT_VERSION;
 
-  // semantic version check (only match on 3 segments)
-  sscanf(latestVersion.c_str(), "%d.%d.%d", &latestMajor, &latestMinor, &latestPatch);
-  sscanf(currentVersion, "%d.%d.%d", &currentMajor, &currentMinor, &currentPatch);
+  // GitHub release tags conventionally carry a leading 'v' ("v1.7.0").
+  const char* latestTag = latestVersion.c_str();
+  if (*latestTag == 'v' || *latestTag == 'V') latestTag++;
+
+  // semantic version check (only match on 3 segments); a tag that does not
+  // parse as MAJOR.MINOR.PATCH ("nightly", "beta", ...) is never an update.
+  if (sscanf(latestTag, "%d.%d.%d", &latestMajor, &latestMinor, &latestPatch) != 3) {
+    LOG_INF("OTA", "Release tag '%s' is not semver; not treating as newer", latestVersion.c_str());
+    return false;
+  }
+  if (sscanf(currentVersion, "%d.%d.%d", &currentMajor, &currentMinor, &currentPatch) != 3) {
+    LOG_ERR("OTA", "Current version '%s' is not semver; refusing update", currentVersion);
+    return false;
+  }
 
   /*
    * Compare major versions.
