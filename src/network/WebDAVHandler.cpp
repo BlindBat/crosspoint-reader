@@ -4,6 +4,8 @@
 #include <HalStorage.h>
 #include <Logging.h>
 
+#include <cstdlib>
+
 #include "util/BookCacheUtils.h"
 #include "util/TaskWatchdog.h"
 
@@ -14,6 +16,33 @@ constexpr const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};
 // ESP32 doesn't have real-time clock set by default, so we use a fixed epoch date
 // as a fallback. The date is not critical for WebDAV Class 1 operations.
 const char* FIXED_DATE = "Thu, 01 Jan 2024 00:00:00 GMT";
+
+// True when the RAW (still percent-encoded) text would decode to a NUL byte.
+// Every consumer past the decode is NUL-terminated -- normalisePath reads the decoded
+// String through c_str() and the storage layer takes C paths -- so such a request
+// would silently act on the truncated prefix of its real path. Callers must reject it.
+//
+// The scan runs on the undecoded text, before any String holds a NUL, because no
+// String representation of an embedded NUL can be probed portably: the device's
+// Arduino String answers indexOf('\0') through strchr, which finds the C-string
+// terminator of EVERY string (arduino-esp32 WString.cpp). Escapes are consumed
+// exactly as WebServer::urlDecode consumes them -- '%' plus the next two characters,
+// parsed via strtol -- so "%00" is caught (as are malformed escapes such as "%zz",
+// which strtol also reads as 0 and the decoder turns into a NUL on device), while
+// "%2500" is not: it decodes to the literal, harmless text "%00".
+bool decodesToEmbeddedNul(const String& raw) {
+  const unsigned int len = raw.length();
+  unsigned int i = 0;
+  while (i < len) {
+    const char c = raw.charAt(i++);
+    if (c == '\0') return true;  // a literal NUL needs no decoding to truncate
+    if (c != '%' || i + 1 >= len) continue;
+    const char hex[] = {'0', 'x', raw.charAt(i), raw.charAt(i + 1), '\0'};
+    i += 2;
+    if (strtol(hex, nullptr, 16) == 0) return true;
+  }
+  return false;
+}
 }  // namespace
 
 // ── RequestHandler interface ─────────────────────────────────────────────────
@@ -47,6 +76,13 @@ bool WebDAVHandler::canRaw(WebServer& server, const String& uri) {
 void WebDAVHandler::raw(WebServer& server, const String& uri, HTTPRaw& raw) {
   (void)uri;
   if (raw.status == RAW_START) {
+    // See handle(): a %00 URI must not produce a truncated _putPath. handle() sends
+    // the 400 once the body has been consumed.
+    if (decodesToEmbeddedNul(server.uri())) {
+      _putPath = "/";
+      _putOk = false;
+      return;
+    }
     _putPath = getRequestPath(server);
     if (isProtectedPath(_putPath)) {
       _putOk = false;
@@ -117,6 +153,13 @@ void WebDAVHandler::raw(WebServer& server, const String& uri, HTTPRaw& raw) {
 
 bool WebDAVHandler::handle(WebServer& server, HTTPMethod method, const String& uri) {
   (void)uri;
+  // Reject any request whose raw URI would decode to an embedded NUL (%00)
+  // before it can reach a path-consuming handler; the path would otherwise be
+  // silently truncated at the NUL (see decodesToEmbeddedNul).
+  if (decodesToEmbeddedNul(server.uri())) {
+    server.send(400, "text/plain", "Bad Request");
+    return true;
+  }
   switch (method) {
     case HTTP_OPTIONS:
       handleOptions(server);
@@ -715,6 +758,12 @@ String WebDAVHandler::getDestinationPath(WebServer& s) const {
       dest = "/";
     }
   }
+
+  // A %00 in the Destination header would decode to a NUL and truncate the
+  // path below; report it as an invalid (empty) destination so MOVE/COPY
+  // answer 400. Checked on the raw header text, before decoding (see
+  // decodesToEmbeddedNul).
+  if (decodesToEmbeddedNul(dest)) return "";
 
   String decoded = WebServer::urlDecode(dest);
   std::string normalized = FsHelpers::normalisePath(decoded.c_str());

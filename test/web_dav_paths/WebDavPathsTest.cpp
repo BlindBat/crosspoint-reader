@@ -106,9 +106,11 @@ TEST(DecodeUriEscapes, PassesMalformedEscapesThroughUnchanged) {
 }
 
 TEST(DecodeUriEscapes, DecodesNulByteIntoTheString) {
-  // %00 becomes a real NUL inside the std::string. Anything later handed to
-  // a c_str()-consuming API is silently truncated at this byte -- the WebDAV
-  // test below pins that consequence end to end.
+  // %00 becomes a real NUL inside the std::string. Anything later handed to a
+  // c_str()-consuming API would be silently truncated at this byte -- which is
+  // why WebDAVHandler rejects, from the still-encoded request text, any URI
+  // that would decode to a NUL (the WebDAV tests below pin that rejection end
+  // to end).
   const std::string decoded = FsHelpers::decodeUriEscapes("a%00b");
   ASSERT_EQ(decoded.size(), 3u);
   EXPECT_EQ(decoded[0], 'a');
@@ -275,15 +277,96 @@ TEST_F(WebDavPathsTest, EncodedBackslashPathsNeverReachTheFilesystemAsComponents
   expectStorageSawOnlyNormalizedPaths();
 }
 
-TEST_F(WebDavPathsTest, EncodedNulByteTruncatesTheRestOfThePath) {
-  // Documents current limitation: getRequestPath re-reads the decoded String
-  // through c_str(), so everything after an encoded %00 is silently dropped
-  // and the request acts on the truncated path.
+TEST_F(WebDavPathsTest, EncodedNulByteInThePathRejectsTheRequest) {
+  // %00 decodes to an embedded NUL; every consumer past the decode is
+  // NUL-terminated (normalisePath via c_str(), the storage layer), so the
+  // handler must fail the request outright instead of acting on the silently
+  // truncated path. The guard scans the RAW, still-encoded URI: the decoded
+  // String cannot be probed for an embedded NUL portably (on device,
+  // indexOf('\0') finds the C-string terminator of every string -- see the
+  // WString stub), so these requests pin the raw-text scan, not any host
+  // String representation of a decoded NUL.
   auto server = makeRequest(HTTP_MKCOL, "/evil%00/../ignored");
-  EXPECT_EQ(run(server), 201);
-  EXPECT_TRUE(existsAt(root + "/evil"));
+  EXPECT_EQ(run(server), 400);
+  EXPECT_FALSE(existsAt(root + "/evil"));
   EXPECT_FALSE(existsAt(root + "/ignored"));
+  EXPECT_TRUE(HalStorage::getInstance().receivedPaths.empty());
+
+  // Same guard on GET: a NUL cannot spoof the served path or its extension.
+  auto spoof = makeRequest(HTTP_GET, "/notes.txt%00.jpg");
+  EXPECT_EQ(run(spoof), 400);
+  EXPECT_TRUE(HalStorage::getInstance().receivedPaths.empty());
+
+  // %00 mid-path, inside a segment: still caught.
+  auto midPath = makeRequest(HTTP_GET, "/Books/sto%00ry.epub");
+  EXPECT_EQ(run(midPath), 400);
+  EXPECT_TRUE(HalStorage::getInstance().receivedPaths.empty());
+
+  // Escapes before the NUL escape, in either hex-digit case: "%0a"/"%0A" must
+  // each be consumed as one (harmless) escape and the "%00" after it caught.
+  auto lowerHex = makeRequest(HTTP_MKCOL, "/line%0a%00/x");
+  EXPECT_EQ(run(lowerHex), 400);
+  auto upperHex = makeRequest(HTTP_MKCOL, "/line%0A%00/x");
+  EXPECT_EQ(run(upperHex), 400);
+  EXPECT_TRUE(HalStorage::getInstance().receivedPaths.empty());
+}
+
+TEST_F(WebDavPathsTest, DoubleEncodedNulIsLiteralTextNotANul) {
+  // "%2500" decodes to the three literal characters "%00" ('%25' -> '%', then
+  // '0' '0' as plain text), NOT to a NUL byte. The raw-URI scan must consume
+  // "%25" as one escape and leave the request alone: MKCOL succeeds and
+  // creates a directory whose name genuinely contains the text "%00".
+  auto server = makeRequest(HTTP_MKCOL, "/pct%2500dir");
+  EXPECT_EQ(run(server), 201);
+  EXPECT_TRUE(existsAt(root + "/pct%00dir"));
   expectStorageSawOnlyNormalizedPaths();
+}
+
+TEST_F(WebDavPathsTest, LiteralNulByteInTheRawUriRejectsTheRequest) {
+  // A raw 0x00 byte in the request line needs no decoding to truncate every
+  // c_str() consumer. The guard reads the URI by index (charAt), which
+  // behaves identically on device and host, and rejects it up front.
+  WebServer server;
+  server.requestMethod = HTTP_GET;
+  server.requestUri = String(std::string("/notes.txt\0.jpg", 15));
+  EXPECT_EQ(run(server), 400);
+  EXPECT_TRUE(HalStorage::getInstance().receivedPaths.empty());
+}
+
+TEST_F(WebDavPathsTest, EncodedNulByteInAPutUploadWritesNothing) {
+  // The PUT body streams through raw() before handle() runs, so the guard has
+  // to hold there too: no temp file, no write, and the final response is 400.
+  auto server = makeRequest(HTTP_PUT, "/good.txt%00.tmp");
+
+  HTTPRaw raw;
+  raw.status = RAW_START;
+  handler.raw(server, server.uri(), raw);
+
+  const char payload[] = "data123";
+  raw.status = RAW_WRITE;
+  raw.currentSize = sizeof(payload) - 1;
+  std::memcpy(raw.buf, payload, raw.currentSize);
+  handler.raw(server, server.uri(), raw);
+
+  raw.status = RAW_END;
+  raw.totalSize = sizeof(payload) - 1;
+  handler.raw(server, server.uri(), raw);
+
+  EXPECT_TRUE(handler.handle(server, HTTP_PUT, server.uri()));
+  EXPECT_EQ(server.statusCode, 400);
+  EXPECT_FALSE(existsAt(root + "/good.txt"));
+  EXPECT_TRUE(HalStorage::getInstance().receivedPaths.empty());
+}
+
+TEST_F(WebDavPathsTest, EncodedNulByteInTheDestinationHeaderRejectsTheMove) {
+  // Same raw-text guard, applied to the Destination header before it is
+  // decoded: the MOVE must answer 400 and touch nothing.
+  auto server = makeRequest(HTTP_MOVE, "/notes.txt");
+  server.requestHeaders["Destination"] = String("http://192.168.4.1/renamed%00.txt");
+
+  EXPECT_EQ(run(server), 400);
+  EXPECT_TRUE(existsAt(root + "/notes.txt"));
+  EXPECT_FALSE(existsAt(root + "/renamed"));
 }
 
 TEST_F(WebDavPathsTest, DeleteRootIsForbiddenEvenViaTraversal) {

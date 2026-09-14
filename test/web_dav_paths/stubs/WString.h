@@ -5,8 +5,16 @@
 // embedded NUL bytes survive inside the object (as they do in the Arduino
 // String, which tracks an explicit length) while c_str() consumers stop at
 // the first NUL -- exactly the mismatch some path tests pin.
+//
+// indexOf(char) deliberately mirrors the device implementation (arduino-esp32
+// WString.cpp), which searches through strchr: indexOf('\0') finds the
+// C-string TERMINATOR of every string, so production code must never probe a
+// String for an embedded NUL through this API -- NUL guards have to run on
+// the raw, still-encoded text instead, and this stub keeps host runs honest
+// about that.
 
 #include <cstddef>
+#include <cstring>
 #include <string>
 
 class String {
@@ -46,8 +54,11 @@ class String {
   }
 
   int indexOf(char c, size_t from = 0) const {
-    const auto pos = value_.find(c, from);
-    return pos == std::string::npos ? -1 : static_cast<int>(pos);
+    // Mirrors the device: strchr over the NUL-terminated buffer, so a search
+    // for '\0' answers the terminator position, never "not found".
+    if (from >= value_.size()) return -1;
+    const char* hit = std::strchr(value_.c_str() + from, c);
+    return hit == nullptr ? -1 : static_cast<int>(hit - value_.c_str());
   }
   int indexOf(const char* s, size_t from = 0) const {
     const auto pos = value_.find(s, from);
