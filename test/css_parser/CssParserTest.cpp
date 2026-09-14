@@ -257,6 +257,73 @@ TEST_F(CssParserTest, BomOnlyAppliesToTheVeryStartOfTheStream) {
   EXPECT_FALSE(parser.resolveStyle("q", "").hasFontWeight());
 }
 
+TEST_F(CssParserTest, BracesAndSemicolonsInsideQuotedValuesAreLiteral) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser,
+                    "p { font-family: \"Weird};Name\"; text-align: center }\n"
+                    "q { font-family: 'It''s{fine'; font-weight: bold }\n"
+                    ".x { font-style: italic }\n"),
+            CssParser::ParseResult::Complete);
+
+  // The quoted '}' and ';' must not terminate the block or the declaration:
+  // the declarations after them still apply, as does the following rule.
+  EXPECT_EQ(parser.resolveStyle("p", "").textAlign, CssTextAlign::Center);
+  EXPECT_EQ(parser.resolveStyle("q", "").fontWeight, CssFontWeight::Bold);
+  EXPECT_EQ(parser.resolveStyle("span", "x").fontStyle, CssFontStyle::Italic);
+}
+
+TEST_F(CssParserTest, EscapedQuotesStayInsideTheString) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser, "p { content: \"a\\\"}b\"; text-align: right }\n"), CssParser::ParseResult::Complete);
+
+  // The escaped quote does not close the string, so the '}' after it is
+  // still literal and text-align survives.
+  EXPECT_EQ(parser.resolveStyle("p", "").textAlign, CssTextAlign::Right);
+}
+
+TEST_F(CssParserTest, CommentMarkersInsideQuotedValuesAreLiteral) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser, "p { content: \"/* not a comment */\"; text-align: center }\n"),
+            CssParser::ParseResult::Complete);
+  EXPECT_EQ(parser.resolveStyle("p", "").textAlign, CssTextAlign::Center);
+}
+
+TEST_F(CssParserTest, UnterminatedStringRecoversAtNewline) {
+  // CSS bad-string error recovery: an unescaped newline ends the broken
+  // string, so a stray quote poisons only its own declaration, not the whole
+  // sheet. Everything up to the newline is string content (the quoted ';'
+  // does not split declarations), and with no ';' before the '}' the rest of
+  // the block stays part of that one invalid declaration -- but the '}' after
+  // the newline is structural again, so the block closes and the following
+  // declaration and rule survive.
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser,
+                    "p { content: \"oops; text-align: center;\n"
+                    "  font-weight: bold;\n"
+                    "  text-indent: 2em }\n"
+                    ".after { font-style: italic }\n"),
+            CssParser::ParseResult::Complete);
+
+  const CssStyle style = parser.resolveStyle("p", "");
+  EXPECT_FALSE(style.hasTextAlign());   // swallowed by the broken string
+  EXPECT_FALSE(style.hasFontWeight());  // same invalid declaration (no ';' until after it)
+  ASSERT_TRUE(style.hasTextIndent());   // first declaration after a real ';'
+  EXPECT_FLOAT_EQ(style.textIndent.value, 2.0f);
+  EXPECT_EQ(parser.resolveStyle("i", "after").fontStyle, CssFontStyle::Italic);
+}
+
+TEST_F(CssParserTest, QuotedBracesInsideAtRulesDoNotEndTheAtRule) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser,
+                    "@import url(\"a}b.css\");\n"
+                    "@media screen { p { content: \"}\" } }\n"
+                    "p { text-align: justify }\n"),
+            CssParser::ParseResult::Complete);
+
+  EXPECT_EQ(parser.ruleCount(), 1u);
+  EXPECT_EQ(parser.resolveStyle("p", "").textAlign, CssTextAlign::Justify);
+}
+
 TEST_F(CssParserTest, IncompleteInputMarksParsePartial) {
   for (const char* css : {".a { font-weight: bold;", "@media screen {", "/* unfinished", ".unfinished"}) {
     CssParser parser(cachePath());

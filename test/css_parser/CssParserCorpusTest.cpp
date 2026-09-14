@@ -89,7 +89,7 @@ const std::map<std::string, PinnedOutcome>& pinnedOutcomes() {
       {"unterminated_block.css", {R::Partial, 0}},
       {"unterminated_comment.css", {R::Partial, 1}},
       {"unterminated_atrule.css", {R::Partial, 0}},
-      {"unterminated_string.css", {R::Complete, 1}},
+      {"unterminated_string.css", {R::Partial, 0}},
       {"deep_nesting_64_blocks.css", {R::Complete, 0}},
       {"deep_nesting_64_unbalanced.css", {R::Partial, 0}},
       {"huge_selector_4k.css", {R::Partial, 0}},
@@ -136,12 +136,15 @@ TEST_F(CssCorpusBehavior, RuleBeforeUnterminatedCommentIsKept) {
   EXPECT_EQ(parser.resolveStyle("p", "").textAlign, CssTextAlign::Center);
 }
 
-// Documents a current limitation: the tokenizer has no string awareness, so a
-// '}' inside a quoted value closes the rule block early. The rule after the
-// bogus quote still parses.
-TEST_F(CssCorpusBehavior, BraceInsideQuotedValueEndsTheBlockEarly) {
+// The tokenizer is string-aware: 'p { content: "abc } .x { ... }' opens a
+// quoted value that never closes (and has no newline to recover at), so the
+// '}' inside it is literal text, the block never ends, and everything after
+// the stray quote is swallowed into the string — nothing may leak out as
+// bogus rules. The load reports Partial because the block is still open.
+TEST_F(CssCorpusBehavior, BraceInsideQuotedValueDoesNotEndTheBlock) {
   loadCorpusFile("unterminated_string.css");
-  EXPECT_EQ(parser.resolveStyle("div", "x").fontWeight, CssFontWeight::Bold);
+  EXPECT_EQ(parser.ruleCount(), 0u);
+  EXPECT_FALSE(parser.resolveStyle("div", "x").hasFontWeight());
   EXPECT_FALSE(parser.resolveStyle("p", "").defined.anySet());
 }
 

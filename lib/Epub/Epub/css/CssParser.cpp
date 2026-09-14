@@ -747,7 +747,53 @@ CssParser::ParseResult CssParser::loadFromStream(HalFile& source) {
   bool inputTruncated = false;
   CssStyle currentStyle;
 
+  // Quoted-string state: inside single or double quotes, '{', '}', ';', ','
+  // and comment markers are literal text, never structure. An unescaped
+  // newline terminates the string (CSS bad-string error recovery), bounding
+  // the damage of a stray quote to one line.
+  bool inString = false;
+  char stringQuote = 0;
+  bool stringEscape = false;
+
+  // Forward c into whatever buffer the current context accumulates, without
+  // interpreting it. Used for quoted-string content.
+  auto appendToContext = [&](const char c) {
+    if (inAtRule) return;  // at-rule content is skipped entirely
+    if (bodyDepth == 0) {
+      if (selector.empty() && isCssWhitespace(c)) return;
+      if (!selector.push_back(c)) {
+        selectorTruncated = true;
+        inputTruncated = true;
+      }
+      return;
+    }
+    if (bodyDepth > 1 || skippingRule) return;  // nested block content is skipped
+    if (!declBuffer.push_back(c)) {
+      declarationTruncated = true;
+      inputTruncated = true;
+    }
+  };
+
   auto handleChar = [&](const char c) {
+    if (inString) {
+      appendToContext(c);
+      if (stringEscape) {
+        stringEscape = false;
+      } else if (c == '\\') {
+        stringEscape = true;
+      } else if (c == stringQuote || c == '\n') {
+        inString = false;
+      }
+      return;
+    }
+    if (c == '"' || c == '\'') {
+      inString = true;
+      stringQuote = c;
+      stringEscape = false;
+      appendToContext(c);
+      return;
+    }
+
     if (inAtRule) {
       if (c == '{') {
         ++atDepth;
@@ -836,6 +882,12 @@ CssParser::ParseResult CssParser::loadFromStream(HalFile& source) {
       return;
     }
 
+    if (inString) {
+      // Comment markers inside a quoted string are literal text.
+      handleChar(c);
+      return;
+    }
+
     if (maybeSlash) {
       maybeSlash = false;
       if (c == '*') {
@@ -897,7 +949,7 @@ CssParser::ParseResult CssParser::loadFromStream(HalFile& source) {
   if (inputTruncated) {
     LOG_ERR("CSS", "CSS input exceeded parser buffer; cache will remain partial");
   }
-  const bool incompleteInput = bodyDepth > 0 || inAtRule || inComment || !selector.empty();
+  const bool incompleteInput = bodyDepth > 0 || inAtRule || inComment || inString || !selector.empty();
   LOG_DBG("CSS", "Parsed %zu rules from %zu bytes", ruleCount(), totalRead);
   return ruleGrowthStopped_ || inputTruncated || incompleteInput ? ParseResult::Partial : ParseResult::Complete;
 }
