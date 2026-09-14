@@ -164,6 +164,8 @@ bool isExplicitHyphen(const uint32_t cp) {
 
 bool isSoftHyphen(const uint32_t cp) { return cp == 0x00AD; }
 
+bool isNonBreakingHyphen(const uint32_t cp) { return cp == 0x2011; }
+
 void trimSurroundingPunctuationAndFootnote(std::vector<CodepointInfo>& cps) {
   if (cps.empty()) {
     return;

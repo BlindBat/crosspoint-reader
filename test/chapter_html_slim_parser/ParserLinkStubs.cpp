@@ -13,6 +13,7 @@ const char* lookupHtmlEntity(const char*, size_t) { return nullptr; }
 
 bool isExplicitHyphen(uint32_t) { return false; }
 bool isSoftHyphen(uint32_t) { return false; }
+bool isNonBreakingHyphen(uint32_t) { return false; }
 
 std::vector<Hyphenator::BreakInfo> Hyphenator::breakOffsets(const std::string&, bool) { return {}; }
 

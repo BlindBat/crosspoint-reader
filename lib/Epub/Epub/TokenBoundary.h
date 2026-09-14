@@ -22,8 +22,7 @@ constexpr bool isJustifiableGap(const bool continues, const bool noSpaceBefore, 
 // Soft hyphens become visible only when their conditional break is taken. U+2011 exists to forbid
 // a break. Every other character classified by isExplicitHyphen is a visible break opportunity.
 inline bool allowsBreakAfterExplicitHyphen(const uint32_t cp) {
-  constexpr uint32_t NON_BREAKING_HYPHEN_CP = 0x2011;
-  return isExplicitHyphen(cp) && !isSoftHyphen(cp) && cp != NON_BREAKING_HYPHEN_CP;
+  return isExplicitHyphen(cp) && !isSoftHyphen(cp) && !isNonBreakingHyphen(cp);
 }
 
 }  // namespace TokenBoundary

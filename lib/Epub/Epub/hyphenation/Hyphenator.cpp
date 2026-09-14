@@ -75,11 +75,28 @@ std::vector<Hyphenator::BreakInfo> buildExplicitBreakInfos(const std::vector<Cod
     if (!isExplicitHyphen(cp) || !isAlphabetic(cps[i - 1].value) || !isAlphabetic(cps[i + 1].value)) {
       continue;
     }
+    // U+2011 exists to forbid the break at its position (TokenBoundary::allowsBreakAfterExplicitHyphen
+    // excludes it for the same reason). It still separates segments for pattern hyphenation.
+    if (isNonBreakingHyphen(cp)) {
+      continue;
+    }
     // Offset points to the next codepoint so rendering starts after the hyphen marker.
     breaks.push_back({cps[i + 1].byteOffset, isSoftHyphen(cp)});
   }
 
   return breaks;
+}
+
+// True when the word contains any explicit hyphen between two letters -- including U+2011, which
+// contributes no break itself but must still route the word through segment-based hyphenation so
+// no full-word fallback break can land at the forbidden position.
+bool hasHyphenSeparatorBetweenLetters(const std::vector<CodepointInfo>& cps) {
+  for (size_t i = 1; i + 1 < cps.size(); ++i) {
+    if (isExplicitHyphen(cps[i].value) && isAlphabetic(cps[i - 1].value) && isAlphabetic(cps[i + 1].value)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool isSegmentSeparator(const uint32_t cp) { return isExplicitHyphen(cp) || isApostrophe(cp); }
@@ -195,9 +212,11 @@ std::vector<Hyphenator::BreakInfo> Hyphenator::breakOffsets(const std::string& w
     }
   }
 
-  // Explicit hyphen markers (soft or hard) take precedence over language breaks.
+  // Explicit hyphen markers (soft or hard) take precedence over language breaks. A word whose
+  // only marker is a non-breaking hyphen also takes this branch: it yields no explicit break,
+  // and the plain-word path below must not offer pattern/fallback breaks at the forbidden spot.
   auto explicitBreakInfos = buildExplicitBreakInfos(cps);
-  if (!explicitBreakInfos.empty()) {
+  if (!explicitBreakInfos.empty() || hasHyphenSeparatorBetweenLetters(cps)) {
     // When a word contains explicit hyphens we also run Liang patterns on each alphabetic
     // segment between them. Without this, "US-Satellitensystems" would only offer one split
     // point (after "US-"), making it impossible to break mid-"Satellitensystems" even when

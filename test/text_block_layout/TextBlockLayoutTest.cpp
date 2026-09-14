@@ -316,21 +316,35 @@ TEST_F(TextBlockLayoutTest, ExplicitHyphenBreaksAfterTheHyphenWithoutInsertingOn
   EXPECT_EQ(lines[1].visibleOffset, 105u);
 }
 
-TEST_F(TextBlockLayoutTest, NonBreakingHyphenIsTreatedAsABreakOpportunity) {
-  // KNOWN LIMITATION (pinned, not endorsed): U+2011 NON-BREAKING HYPHEN exists
-  // to forbid a break, and TokenBoundary::allowsBreakAfterExplicitHyphen()
-  // deliberately excludes it -- but Hyphenator::breakOffsets() classifies it
-  // via isExplicitHyphen() only, so the hyphenation-enabled line breaker DOES
-  // split "no‑go" after the non-breaking hyphen. If this test starts
-  // failing with ["no‑go"] on one line, the limitation was fixed:
-  // update this pin.
+TEST_F(TextBlockLayoutTest, NonBreakingHyphenForbidsTheBreak) {
+  // U+2011 NON-BREAKING HYPHEN exists to forbid a break, matching
+  // TokenBoundary::allowsBreakAfterExplicitHyphen(). Even though "no‑go"
+  // (50 px) overflows the 30 px viewport, neither the explicit-hyphen break
+  // nor a fallback break may split it: the word stays whole on one line.
   ParsedText text = makeText(leftAligned(), /*hyphenation=*/true);
   text.addWord("no\xE2\x80\x91go", EpdFontFamily::REGULAR);
 
   const auto lines = layoutAll(text, 30);
+  ASSERT_EQ(lines.size(), 1u);
+  EXPECT_EQ(wordsOf(*lines[0].block), (std::vector<std::string>{"no\xE2\x80\x91go"}));
+}
+
+TEST_F(TextBlockLayoutTest, RegularHyphenStillBreaksNextToANonBreakingOne) {
+  // "ab-cd‑ef": the ASCII '-' after "ab" is a break opportunity, the U+2011
+  // between "cd" and "ef" is not. At 40 px the layout takes the only legal
+  // break ("ab-" = 30 px fits) and the U+2011 keeps "cd‑ef" whole even
+  // though it overflows (50 px).
+  ParsedText text = makeText(leftAligned(), /*hyphenation=*/true);
+  text.addWord(
+      "ab-cd\xE2\x80\x91"
+      "ef",
+      EpdFontFamily::REGULAR);
+
+  const auto lines = layoutAll(text, 40);
   ASSERT_EQ(lines.size(), 2u);
-  EXPECT_EQ(wordsOf(*lines[0].block), (std::vector<std::string>{"no\xE2\x80\x91"}));
-  EXPECT_EQ(wordsOf(*lines[1].block), (std::vector<std::string>{"go"}));
+  EXPECT_EQ(wordsOf(*lines[0].block), (std::vector<std::string>{"ab-"}));
+  EXPECT_EQ(wordsOf(*lines[1].block), (std::vector<std::string>{"cd\xE2\x80\x91"
+                                                                "ef"}));
 }
 
 TEST_F(TextBlockLayoutTest, EnglishPatternsInsertAHyphenAtALegalBreak) {

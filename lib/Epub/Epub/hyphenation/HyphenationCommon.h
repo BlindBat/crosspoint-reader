@@ -22,6 +22,9 @@ bool isAsciiDigit(uint32_t cp);
 bool isApostrophe(uint32_t cp);
 bool isExplicitHyphen(uint32_t cp);
 bool isSoftHyphen(uint32_t cp);
+// U+2011 NON-BREAKING HYPHEN: renders as a hyphen but exists to forbid a line break at its
+// position. Classified by isExplicitHyphen for segmentation, but never a break opportunity.
+bool isNonBreakingHyphen(uint32_t cp);
 void trimSurroundingPunctuationAndFootnote(std::vector<CodepointInfo>& cps);
 std::vector<CodepointInfo> collectCodepoints(const std::string& word);
 // Overload that fills a caller-owned vector so its capacity can be reused across words.
