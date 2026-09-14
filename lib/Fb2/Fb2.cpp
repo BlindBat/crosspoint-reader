@@ -11,6 +11,34 @@ namespace {
 // v2: auxiliary <body name="..."> sections are no longer counted as
 // chapters, which shifts section numbering for books with footnote bodies.
 constexpr uint8_t FB2_CACHE_VERSION = 2;
+
+// Upper bound for any string stored in book.bin (title/author/language/cover
+// id/section titles). Real values are far below this; a corrupted length
+// field must never drive a multi-megabyte resize on a ~380KB-RAM device.
+constexpr uint32_t FB2_CACHE_MAX_STRING = 4096;
+
+// Checked variants of the serialization readers: fail instead of accepting
+// short reads or unbounded string lengths, so a corrupted/truncated book.bin
+// is rejected and the caller reparses the source file.
+template <typename T>
+bool readPodChecked(HalFile& file, T& value) {
+  return file.read(reinterpret_cast<uint8_t*>(&value), sizeof(T)) == static_cast<int>(sizeof(T));
+}
+
+bool readStringChecked(HalFile& file, std::string& value) {
+  uint32_t length;
+  if (!readPodChecked(file, length)) {
+    return false;
+  }
+  if (length > FB2_CACHE_MAX_STRING) {
+    return false;
+  }
+  value.resize(length);
+  if (length == 0) {
+    return true;
+  }
+  return file.read(reinterpret_cast<uint8_t*>(&value[0]), length) == static_cast<int>(length);
+}
 }  // namespace
 
 Fb2::Fb2(std::string filepath, const std::string& cacheDir) : filepath(std::move(filepath)) {
@@ -25,41 +53,62 @@ bool Fb2::loadMetadataCache() {
   }
 
   uint8_t version;
-  serialization::readPod(file, version);
+  if (!readPodChecked(file, version)) {
+    LOG_DBG("FB2", "Cache read failed");
+    return false;
+  }
   if (version != FB2_CACHE_VERSION) {
     LOG_DBG("FB2", "Cache version mismatch: %u vs %u", version, FB2_CACHE_VERSION);
     return false;
   }
 
-  serialization::readString(file, title);
-  serialization::readString(file, author);
-  serialization::readString(file, language);
-  serialization::readString(file, coverBinaryId);
+  // Every read is checked: a truncated, zero-filled or otherwise corrupted
+  // book.bin must be rejected so load() falls back to reparsing the book.
+  if (!readStringChecked(file, title) || !readStringChecked(file, author) || !readStringChecked(file, language) ||
+      !readStringChecked(file, coverBinaryId)) {
+    LOG_DBG("FB2", "Cache metadata strings corrupted");
+    return false;
+  }
 
   uint16_t sectionCount;
-  serialization::readPod(file, sectionCount);
+  if (!readPodChecked(file, sectionCount) || sectionCount == 0) {
+    // parseMetadata always produces at least one section (whole-file
+    // fallback), so a section-less cache is corrupt, not empty.
+    LOG_DBG("FB2", "Cache section count invalid");
+    return false;
+  }
   sections.clear();
   sections.reserve(sectionCount);
   for (uint16_t i = 0; i < sectionCount; i++) {
     SectionInfo info;
-    serialization::readString(file, info.title);
     uint32_t offset, length;
-    serialization::readPod(file, offset);
-    serialization::readPod(file, length);
+    if (!readStringChecked(file, info.title) || !readPodChecked(file, offset) || !readPodChecked(file, length)) {
+      LOG_DBG("FB2", "Cache section %u corrupted", i);
+      sections.clear();
+      return false;
+    }
     info.fileOffset = offset;
     info.length = length;
     sections.push_back(std::move(info));
   }
 
   uint16_t tocCount;
-  serialization::readPod(file, tocCount);
+  if (!readPodChecked(file, tocCount)) {
+    LOG_DBG("FB2", "Cache TOC count corrupted");
+    sections.clear();
+    return false;
+  }
   tocEntries.clear();
   tocEntries.reserve(tocCount);
   for (uint16_t i = 0; i < tocCount; i++) {
     TocEntry entry;
-    serialization::readString(file, entry.title);
     int16_t idx;
-    serialization::readPod(file, idx);
+    if (!readStringChecked(file, entry.title) || !readPodChecked(file, idx) || idx < 0 || idx >= sectionCount) {
+      LOG_DBG("FB2", "Cache TOC entry %u corrupted", i);
+      sections.clear();
+      tocEntries.clear();
+      return false;
+    }
     entry.sectionIndex = idx;
     tocEntries.push_back(std::move(entry));
   }

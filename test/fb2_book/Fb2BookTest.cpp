@@ -91,13 +91,10 @@ TEST_F(Fb2BookTest, CacheVersionMismatchIsRejectedThenRebuilt) {
   EXPECT_EQ(fresh[0], 2);
 }
 
-// KNOWN BUG (documents current behavior): loadMetadataCache never checks that
-// reads succeed or that the data is sane. A book.bin whose tail was replaced
-// by zeros still "loads": the title survives, every later field reads as
-// empty/zero, and load() reports success with ZERO sections instead of
-// falling back to a reparse. (Worse on device: a garbage string-length field
-// makes readString resize() by up to 4GB.)
-TEST_F(Fb2BookTest, CorruptedZeroFilledCacheIsTrustedInsteadOfReparsed) {
+// A book.bin whose tail was replaced by zeros must be rejected (a valid
+// cache always stores at least one section) and load() must fall back to
+// reparsing the real book instead of trusting the corrupted data.
+TEST_F(Fb2BookTest, CorruptedZeroFilledCacheIsRejectedAndReparsed) {
   Fb2 book(fixturePath("basic.fb2"), tmp.path());
   book.setupCacheDir();
   const std::string cacheFile = book.getCachePath() + "/book.bin";
@@ -111,9 +108,70 @@ TEST_F(Fb2BookTest, CorruptedZeroFilledCacheIsTrustedInsteadOfReparsed) {
   bogus.append(200, '\0');  // author/lang/cover/sections/toc all read as zeros
   ASSERT_TRUE(writeAll(cacheFile, bogus));
 
-  ASSERT_TRUE(book.load(true));  // would reparse if the cache were rejected
-  EXPECT_EQ(book.getTitle(), "Zombie");
-  EXPECT_EQ(book.getSectionCount(), 0);  // real file has 2 sections
+  // Cache-only load fails; a full load reparses the real book.
+  Fb2 cacheOnly(fixturePath("basic.fb2"), tmp.path());
+  EXPECT_FALSE(cacheOnly.load(false));
+
+  ASSERT_TRUE(book.load(true));
+  EXPECT_EQ(book.getTitle(), "The Crosspoint Chronicle");
+  EXPECT_EQ(book.getSectionCount(), 2);
+}
+
+TEST_F(Fb2BookTest, TruncatedCacheIsRejectedAndReparsed) {
+  Fb2 first(fixturePath("basic.fb2"), tmp.path());
+  ASSERT_TRUE(first.load());
+  const std::string cacheFile = first.getCachePath() + "/book.bin";
+
+  // Cut the cache mid-stream (inside the section list).
+  const std::string cache = readAll(cacheFile);
+  ASSERT_GT(cache.size(), 20u);
+  ASSERT_TRUE(writeAll(cacheFile, cache.substr(0, cache.size() / 2)));
+
+  Fb2 cacheOnly(fixturePath("basic.fb2"), tmp.path());
+  EXPECT_FALSE(cacheOnly.load(false));
+
+  Fb2 rebuilt(fixturePath("basic.fb2"), tmp.path());
+  ASSERT_TRUE(rebuilt.load(true));
+  EXPECT_EQ(rebuilt.getSectionCount(), 2);
+}
+
+TEST_F(Fb2BookTest, GarbageStringLengthInCacheIsRejectedNotAllocated) {
+  Fb2 book(fixturePath("basic.fb2"), tmp.path());
+  book.setupCacheDir();
+  const std::string cacheFile = book.getCachePath() + "/book.bin";
+
+  // Version byte followed by a ~4GB title length: must be rejected by the
+  // bounded string reader, never resize()d into oblivion.
+  std::string bogus;
+  bogus.push_back(2);
+  const uint32_t hugeLen = 0xFFFFFFF0u;
+  bogus.append(reinterpret_cast<const char*>(&hugeLen), sizeof(hugeLen));
+  bogus += "xx";
+  ASSERT_TRUE(writeAll(cacheFile, bogus));
+
+  Fb2 cacheOnly(fixturePath("basic.fb2"), tmp.path());
+  EXPECT_FALSE(cacheOnly.load(false));
+
+  Fb2 rebuilt(fixturePath("basic.fb2"), tmp.path());
+  ASSERT_TRUE(rebuilt.load(true));
+  EXPECT_EQ(rebuilt.getTitle(), "The Crosspoint Chronicle");
+}
+
+TEST_F(Fb2BookTest, TocEntryPointingPastSectionListIsRejected) {
+  Fb2 first(fixturePath("basic.fb2"), tmp.path());
+  ASSERT_TRUE(first.load());
+  const std::string cacheFile = first.getCachePath() + "/book.bin";
+
+  // The TOC section index is the final int16 of the file; point it past the
+  // section list.
+  std::string cache = readAll(cacheFile);
+  ASSERT_GT(cache.size(), 2u);
+  cache[cache.size() - 2] = 0x7F;
+  cache[cache.size() - 1] = 0x00;
+  ASSERT_TRUE(writeAll(cacheFile, cache));
+
+  Fb2 cacheOnly(fixturePath("basic.fb2"), tmp.path());
+  EXPECT_FALSE(cacheOnly.load(false));
 }
 
 TEST_F(Fb2BookTest, ClearCacheRemovesTheCacheDirectory) {
