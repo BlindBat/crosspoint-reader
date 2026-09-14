@@ -285,21 +285,67 @@ TEST_F(Fb2SectionCacheTest, CorruptPageDataYieldsNullPageNotCrash) {
   EXPECT_EQ(loaded.loadPage(0), nullptr);     // corrupt page fails gracefully
 }
 
-// KNOWN LIMITATION (documents current behavior): loadSectionFile validates
-// only the header, never that the page data or LUT are actually present, so
-// a truncated section file still reports its full page count. loadPage on
-// such a file reads whatever the missing LUT leaves behind.
-TEST_F(Fb2SectionCacheTest, TruncatedFileStillPassesHeaderValidation) {
+// loadSectionFile must verify that the page data and the complete LUT are
+// actually present, not just that the header matches: a truncated file that
+// still reported its full page count would send loadPage past EOF.
+TEST_F(Fb2SectionCacheTest, TruncatedFileIsRejectedAndCacheCleared) {
   auto built = buildSection(makeSpec());
   ASSERT_NE(built, nullptr);
-  const uint16_t builtPages = built->pageCount;
 
   std::string bytes = readAll(sectionFilePath());
   ASSERT_TRUE(writeAll(sectionFilePath(), bytes.substr(0, kHeaderSize + 2)));
 
   Fb2Section loaded(book, 0, renderer);
-  EXPECT_TRUE(loaded.loadSectionFile(makeSpec()));
-  EXPECT_EQ(loaded.pageCount, builtPages);
+  EXPECT_FALSE(loaded.loadSectionFile(makeSpec()));
+  EXPECT_EQ(loaded.pageCount, 0);
+  // The invalid file is discarded so the caller rebuilds from scratch.
+  EXPECT_FALSE(fileExists(sectionFilePath()));
+
+  auto rebuilt = buildSection(makeSpec());
+  ASSERT_NE(rebuilt, nullptr);
+  Fb2Section reloaded(book, 0, renderer);
+  EXPECT_TRUE(reloaded.loadSectionFile(makeSpec()));
+  EXPECT_NE(reloaded.loadPage(0), nullptr);
+}
+
+TEST_F(Fb2SectionCacheTest, FileCutInsideTheLutIsRejected) {
+  auto built = buildSection(makeSpec());
+  ASSERT_NE(built, nullptr);
+  ASSERT_GT(built->pageCount, 1);
+
+  // Drop the last LUT entry: header and page data intact, LUT incomplete.
+  std::string bytes = readAll(sectionFilePath());
+  ASSERT_TRUE(writeAll(sectionFilePath(), bytes.substr(0, bytes.size() - sizeof(uint32_t))));
+
+  Fb2Section loaded(book, 0, renderer);
+  EXPECT_FALSE(loaded.loadSectionFile(makeSpec()));
+  EXPECT_FALSE(fileExists(sectionFilePath()));
+}
+
+TEST_F(Fb2SectionCacheTest, GarbageLutOffsetIsRejected) {
+  auto built = buildSection(makeSpec());
+  ASSERT_NE(built, nullptr);
+
+  // Stomp the header's LUT offset with 0xFFFFFFFF.
+  std::string bytes = readAll(sectionFilePath());
+  for (size_t i = 19; i < 23; i++) bytes[i] = static_cast<char>(0xFF);
+  ASSERT_TRUE(writeAll(sectionFilePath(), bytes));
+
+  Fb2Section loaded(book, 0, renderer);
+  EXPECT_FALSE(loaded.loadSectionFile(makeSpec()));
+  EXPECT_FALSE(fileExists(sectionFilePath()));
+}
+
+TEST_F(Fb2SectionCacheTest, FileShorterThanHeaderIsRejected) {
+  auto built = buildSection(makeSpec());
+  ASSERT_NE(built, nullptr);
+
+  const std::string bytes = readAll(sectionFilePath());
+  ASSERT_TRUE(writeAll(sectionFilePath(), bytes.substr(0, kHeaderSize - 4)));
+
+  Fb2Section loaded(book, 0, renderer);
+  EXPECT_FALSE(loaded.loadSectionFile(makeSpec()));
+  EXPECT_FALSE(fileExists(sectionFilePath()));
 }
 
 TEST_F(Fb2SectionCacheTest, ClearCacheRemovesOnlyThatSectionFile) {

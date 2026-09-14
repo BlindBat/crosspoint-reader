@@ -63,6 +63,15 @@ bool Fb2Section::loadSectionFile(const ReaderRenderSpec& spec) {
     return false;
   }
 
+  // Anything shorter than the fixed header cannot be a valid section file;
+  // reject before reading fields that would come back uninitialized.
+  if (file.size() < HEADER_SIZE) {
+    file.close();
+    LOG_DBG("FBS", "Section file shorter than header");
+    clearCache();
+    return false;
+  }
+
   {
     uint8_t version;
     serialization::readPod(file, version);
@@ -101,6 +110,26 @@ bool Fb2Section::loadSectionFile(const ReaderRenderSpec& spec) {
   }
 
   serialization::readPod(file, pageCount);
+  uint32_t lutOffset;
+  serialization::readPod(file, lutOffset);
+
+  // The header alone is not enough: a truncated or corrupted file would
+  // still report its full page count and loadPage would then seek past EOF.
+  // Validate that the page data region and the complete LUT actually fit.
+  const size_t fileSize = file.size();
+  const size_t lutSize = static_cast<size_t>(pageCount) * sizeof(uint32_t);
+  const bool extentValid = fileSize >= HEADER_SIZE && lutOffset >= HEADER_SIZE &&
+                           static_cast<size_t>(lutOffset) + lutSize <= fileSize &&
+                           (pageCount == 0 || lutOffset > HEADER_SIZE);
+  if (!extentValid) {
+    file.close();
+    LOG_DBG("FBS", "Section file extent invalid (size %u, pages %d, lut %u)", static_cast<unsigned>(fileSize),
+            pageCount, static_cast<unsigned>(lutOffset));
+    pageCount = 0;
+    clearCache();
+    return false;
+  }
+
   file.close();
   LOG_DBG("FBS", "Loaded section: %d pages", pageCount);
   return true;
