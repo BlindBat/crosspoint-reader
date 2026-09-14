@@ -26,7 +26,7 @@ using fb2test::writeAll;
 // paragraphAlignment(1) + viewportWidth(2) + viewportHeight(2) +
 // hyphenationEnabled(1) + focusReadingEnabled(1) + pageCount(2) + lutOffset(4).
 constexpr uint32_t kHeaderSize = 23;
-constexpr uint8_t kSectionFileVersion = 2;
+constexpr uint8_t kSectionFileVersion = 3;
 
 ReaderRenderSpec makeSpec() {
   ReaderRenderSpec spec;

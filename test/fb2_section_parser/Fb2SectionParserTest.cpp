@@ -377,21 +377,27 @@ TEST(Fb2SectionParserFile, NestedSectionContentStaysInsideTargetSectionZero) {
   EXPECT_FALSE(containsWord(words, "level"));     // "Second top level paragraph." is section 1
 }
 
-// KNOWN BUG (documents current behavior): Fb2SectionParser counts EVERY
-// <section> it meets while not inside the target as a "top-level" section,
-// including sections nested inside earlier chapters. Fb2MetadataParser counts
-// only depth-1 sections. The indices therefore disagree as soon as any earlier
-// top-level section contains a nested <section>: asking for top-level section
-// 1 of nested-sections.fb2 returns the NESTED "Inner Chapter" content
-// ("innerword") instead of "Part Two" ("Second top level paragraph."), i.e.
-// the reader shows the wrong chapter.
-TEST(Fb2SectionParserFile, NestedSectionsSkewTargetSectionIndexing) {
+// Section indices must match Fb2MetadataParser's numbering, which counts only
+// depth-1 sections: nested <section>s inside an earlier chapter are that
+// chapter's content, never chapters of their own. Selecting top-level section
+// 1 of nested-sections.fb2 must return "Part Two", not the nested "Inner
+// Chapter" of section 0.
+TEST(Fb2SectionParserFile, NestedSectionsDoNotSkewTargetSectionIndexing) {
   GfxRenderer renderer;
   auto second = parseSection(fixturePath("nested-sections.fb2"), 1, renderer, makeSpec());
   ASSERT_TRUE(second.ok);
   const auto secondWords = collectWords(second.pages);
-  EXPECT_TRUE(containsWord(secondWords, "innerword"));  // wrong: nested child selected
-  EXPECT_FALSE(containsWord(secondWords, "level"));     // right chapter never appears
+  EXPECT_TRUE(containsWord(secondWords, "level"));       // "Second top level paragraph."
+  EXPECT_FALSE(containsWord(secondWords, "innerword"));  // nested child of section 0
+}
+
+TEST(Fb2SectionParserFile, NestedSectionsDoNotExtendTheTopLevelIndexRange) {
+  // Only 2 top-level sections exist; index 2 must select nothing even though
+  // three <section> tags appear in the file.
+  GfxRenderer renderer;
+  auto result = parseSection(fixturePath("nested-sections.fb2"), 2, renderer, makeSpec());
+  ASSERT_TRUE(result.ok);
+  EXPECT_TRUE(collectWords(result.pages).empty());
 }
 
 TEST(Fb2SectionParserFile, DeclaredWindows1251BodyTextDecodesToUtf8) {

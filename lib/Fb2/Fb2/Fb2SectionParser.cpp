@@ -89,16 +89,18 @@ void XMLCALL Fb2SectionParser::startElement(void* userData, const char* name, co
 
   // Track top-level sections within body
   if (strcmp(tag, "section") == 0 && self->inBody) {
-    // Only count top-level sections (direct children of body)
-    // A top-level section is one that starts when we're not inside any target section
-    if (!self->inTargetSection) {
+    // Count only top-level sections (direct children of body), matching
+    // Fb2MetadataParser's numbering. Sections nested inside an earlier
+    // chapter are content of that chapter, not chapters of their own.
+    if (self->sectionNesting == 0 && !self->inTargetSection) {
       if (self->topLevelSectionCount == self->targetSectionIndex) {
         self->inTargetSection = true;
         self->targetSectionDepth = self->depth;
       }
       self->topLevelSectionCount++;
     }
-    // Nested sections inside target section are just processed normally
+    // Nested sections inside the target section are just processed normally
+    self->sectionNesting++;
     self->depth++;
     return;
   }
@@ -280,9 +282,12 @@ void XMLCALL Fb2SectionParser::endElement(void* userData, const char* name) {
   }
 
   // Track closing of sections — check if we're leaving the target top-level section
-  if (strcmp(tag, "section") == 0 && self->inBody && self->inTargetSection) {
+  if (strcmp(tag, "section") == 0 && self->inBody) {
+    if (self->sectionNesting > 0) {
+      self->sectionNesting--;
+    }
     // depth has already been decremented above; compare with the depth at which the target section opened
-    if (self->depth == self->targetSectionDepth) {
+    if (self->inTargetSection && self->depth == self->targetSectionDepth) {
       self->inTargetSection = false;
       self->pastTargetSection = true;
     }

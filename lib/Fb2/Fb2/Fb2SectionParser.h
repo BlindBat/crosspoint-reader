@@ -32,6 +32,7 @@ class Fb2SectionParser {
   int boldUntilDepth = INT_MAX;
   int italicUntilDepth = INT_MAX;
   int topLevelSectionCount = 0;
+  int sectionNesting = 0;       // how many <section> elements are currently open
   int targetSectionDepth = -1;  // depth at which the target section was entered
   bool inTargetSection = false;
   bool pastTargetSection = false;

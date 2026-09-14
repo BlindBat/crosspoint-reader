@@ -13,7 +13,9 @@
 namespace {
 // FB2 section files track only the spec fields that affect FB2 layout
 // (no CSS, no images), so the version is independent of the EPUB one.
-constexpr uint8_t FB2_SECTION_FILE_VERSION = 2;
+// v3: top-level-only section counting in Fb2SectionParser — files built by
+// older firmware can hold a nested chapter's pages under a top-level index.
+constexpr uint8_t FB2_SECTION_FILE_VERSION = 3;
 // version + fontId + lineCompression + extraParagraphSpacing + paragraphAlignment +
 // viewportWidth + viewportHeight + hyphenationEnabled + focusReadingEnabled +
 // pageCount + lutOffset
