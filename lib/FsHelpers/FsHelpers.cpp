@@ -37,6 +37,15 @@ std::string decodeUriEscapes(const std::string& path) {
 }
 
 std::string normalisePath(const std::string& path) {
+  // Reject backslashes outright instead of guessing at separator semantics: '\' is not a
+  // valid FAT32 filename character, so it only shows up in traversal attempts like "..\..".
+  // The empty result resolves to the storage root -- the same place every ".." clamp already
+  // lands. Mirrors upstream #3353, whose isSafePathComponent also rejects '\' rather than
+  // normalising it.
+  if (path.find('\\') != std::string::npos) {
+    return "";
+  }
+
   std::vector<std::string_view> components;
   components.reserve(8);  // Eight nested folders is more than we might expect
 
@@ -45,7 +54,9 @@ std::string normalisePath(const std::string& path) {
     if (i == path.length() || path[i] == '/') {
       if (i > start) {
         std::string_view component(path.data() + start, i - start);
-        if (component == "..") {
+        if (component == ".") {
+          // Current-directory segment: resolves to nothing.
+        } else if (component == "..") {
           if (!components.empty()) {
             components.pop_back();
           }

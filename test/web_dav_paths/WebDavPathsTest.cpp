@@ -52,27 +52,32 @@ TEST(NormalisePath, ResultIsRelativeWithCollapsedSlashes) {
   EXPECT_EQ(FsHelpers::normalisePath(""), "");
 }
 
-TEST(NormalisePath, KeepsSingleDotSegments) {
-  // Documents current limitation: '.' segments are NOT resolved (only ".."
-  // is special-cased), so they pass through to the filesystem layer. Upstream
-  // fix #3353 leaves normalisePath unchanged and instead rejects "." only as
-  // a complete filename component (FsHelpers::isSafePathComponent).
-  EXPECT_EQ(FsHelpers::normalisePath("/a/./b"), "a/./b");
-  EXPECT_EQ(FsHelpers::normalisePath("."), ".");
-  // Quirk of the same limitation: ".." pops the literal "." component instead
-  // of the real directory, so traversal resolves DEEPER than true path
-  // semantics would (safe direction: it cannot climb further up than intended).
-  EXPECT_EQ(FsHelpers::normalisePath("/Books/./../secret"), "Books/secret");
+TEST(NormalisePath, ResolvesSingleDotSegments) {
+  // '.' segments resolve to nothing: they never reach the filesystem layer and
+  // never absorb a following "..".
+  EXPECT_EQ(FsHelpers::normalisePath("/a/./b"), "a/b");
+  EXPECT_EQ(FsHelpers::normalisePath("."), "");
+  EXPECT_EQ(FsHelpers::normalisePath("./x"), "x");
+  EXPECT_EQ(FsHelpers::normalisePath("/a/b/./.."), "a");
+  // ".." after "." pops the REAL directory. (Before '.' was resolved, it
+  // popped the literal "." component and the traversal resolved deeper than
+  // true path semantics.)
+  EXPECT_EQ(FsHelpers::normalisePath("/Books/./../secret"), "secret");
+  // Dot-PREFIXED names are ordinary components, not "." segments.
+  EXPECT_EQ(FsHelpers::normalisePath("/.crosspoint/./cfg"), ".crosspoint/cfg");
 }
 
-TEST(NormalisePath, DoesNotTreatBackslashAsASeparator) {
-  // Documents current limitation, still present upstream after #3353:
-  // normalisePath splits on '/' only, so Windows-style traversal survives as
-  // literal component text ("..\..\x" is ONE component, not two levels up).
-  // #3353 mitigates this for single filename inputs via isSafePathComponent
-  // (which rejects '\\'), not by changing normalisePath.
-  EXPECT_EQ(FsHelpers::normalisePath("..\\..\\x"), "..\\..\\x");
-  EXPECT_EQ(FsHelpers::normalisePath("/a\\..\\b/c"), "a\\..\\b/c");
+TEST(NormalisePath, RejectsPathsContainingBackslashes) {
+  // normalisePath splits on '/' only; rather than treating '\\' as a second
+  // separator it rejects the whole path, so Windows-style traversal cannot
+  // survive as literal component text. Rejection (over normalisation) mirrors
+  // upstream #3353, whose isSafePathComponent also rejects '\\'. '\\' is not a
+  // valid FAT32 filename character, so no legitimate path is refused; the
+  // empty result resolves to the storage root, where callers' protections
+  // apply.
+  EXPECT_EQ(FsHelpers::normalisePath("..\\..\\x"), "");
+  EXPECT_EQ(FsHelpers::normalisePath("/a\\..\\b/c"), "");
+  EXPECT_EQ(FsHelpers::normalisePath("a\\b"), "");
 }
 
 TEST(NormalisePath, HandlesOverlongPathsWithManyComponents) {
@@ -251,27 +256,22 @@ TEST_F(WebDavPathsTest, MkcolCreatesTheDirectoryAtTheNormalizedPath) {
   expectStorageSawOnlyNormalizedPaths();
 }
 
-TEST_F(WebDavPathsTest, EncodedBackslashComponentStaysOneLiteralComponent) {
-  // Documents current limitation (see NormalisePath.DoesNotTreatBackslash...):
-  // "%5C" decodes to '\\' and normalisePath keeps the whole "..\\up" as ONE
-  // component. Incidentally that component starts with '.', so the dot-prefix
-  // protection rejects the request -- backslash traversal that leads with
-  // "..\\" cannot even reach the filesystem.
+TEST_F(WebDavPathsTest, EncodedBackslashPathsNeverReachTheFilesystemAsComponents) {
+  // "%5C" decodes to '\\' and normalisePath rejects the whole backslash path
+  // (see NormalisePath.RejectsPathsContainingBackslashes), collapsing it to
+  // the root. MKCOL on the already-existing root answers 405, and no
+  // backslash-named entry is ever created or handed to the storage layer.
   auto dotLeading = makeRequest(HTTP_MKCOL, "/..%5Cup");
-  EXPECT_EQ(run(dotLeading), 403);
+  EXPECT_EQ(run(dotLeading), 405);
   EXPECT_FALSE(existsAt(root + "/..\\up"));
-  EXPECT_TRUE(HalStorage::getInstance().receivedPaths.empty());
 
-  // A backslash component NOT leading with '.' passes through verbatim: the
-  // storage layer receives the literal "up\\..\\x" name (one component, no
-  // escape on POSIX; upstream #3353 adds isSafePathComponent to reject '\\'
-  // in filename inputs, normalisePath itself is unchanged).
   auto nonDot = makeRequest(HTTP_MKCOL, "/up%5C..%5Cx");
-  EXPECT_EQ(run(nonDot), 201);
-  EXPECT_TRUE(existsAt(root + "/up\\..\\x"));
-  const auto& seen = HalStorage::getInstance().receivedPaths;
-  ASSERT_FALSE(seen.empty());
-  EXPECT_EQ(seen.back(), "/up\\..\\x");
+  EXPECT_EQ(run(nonDot), 405);
+  EXPECT_FALSE(existsAt(root + "/up\\..\\x"));
+
+  for (const auto& p : HalStorage::getInstance().receivedPaths) {
+    EXPECT_EQ(p.find('\\'), std::string::npos) << "backslash reached storage: " << p;
+  }
   expectStorageSawOnlyNormalizedPaths();
 }
 
