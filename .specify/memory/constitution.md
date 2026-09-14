@@ -1,26 +1,31 @@
 <!--
 Sync Impact Report
 ==================
-Version change: (template) → 1.0.0 (initial ratification)
-Modified principles: n/a (initial adoption)
-Added sections:
-  - Core Principles (I–VII)
-  - Platform Constraints & Standards
-  - Development Workflow & Quality Gates
-  - Governance
-Removed sections: none (template fully instantiated)
-Templates reviewed for consistency:
-  - .specify/templates/plan-template.md ✅ (generic "Constitution Check" gate; gates derive
-    from this file at plan time — no edits required)
-  - .specify/templates/spec-template.md ✅ (no constitution references; scope/requirements
-    sections compatible with Principle I scope tests)
-  - .specify/templates/tasks-template.md ✅ updated (its "Tests are OPTIONAL" default
-    contradicted Principle V; a project override now makes test tasks mandatory for
-    host-reachable logic)
+Version change: 1.0.0 → 2.0.0 (MAJOR: Principle VII's "master/develop MUST remain clean
+upstream mirrors" rule is redefined; fork `master` becomes the integration branch)
+Modified principles:
+  - VII. Upstream-First Fork Hygiene (title unchanged): branch model redefined. Fork
+    `master` carries fork work; no direct commits on `master`/`develop`; short-lived
+    feature/fix branches land by fast-forward or merge and are deleted; upstream syncs
+    merge `origin/develop` through a sync branch; upstream PR branches are cut from
+    `origin/develop`; tests/QA tooling stay out of upstream PR branches. Rationale extended.
+  - V. Tests Prove Behavior (title unchanged): merge gate is now "merge into fork `master`";
+    rationale no longer cites the retired `qa/autotests` branch.
+Modified sections:
+  - Development Workflow & Quality Gates: gates apply to every merge into fork `master`
+    (feature, fix, upstream sync); gate tooling lives on `master`, never in upstream PR
+    branches.
+Added sections: none
+Removed sections: none
+Templates reviewed: none edited (plan/spec/tasks templates resolve this file at runtime
+  and carry no branch-model text)
 Runtime guidance reviewed:
-  - AGENTS.md ✅ (remains the detailed runtime development guide; this constitution
-    distills and supersedes nothing in it — see Governance)
-Deferred TODOs: none
+  - AGENTS.md ✅ ("PR comparisons target develop" governs upstream-bound work; consistent
+    with PR branches cut from `origin/develop`)
+  - .specify/scripts/bash/speckit-commit.sh ⚠ comments and refusal message still call
+    master/develop "clean upstream mirrors" (guard behavior itself stays correct)
+  - .specify/extensions/speckit-git-commit/SKILL.md ⚠ same "mirrors" wording
+Deferred TODOs: none in this file (the two wording follow-ups above live outside it)
 -->
 
 # CrossPoint Reader Constitution
@@ -92,7 +97,7 @@ ship on hardware users cannot easily debug.
 
 All host-reachable logic MUST be covered by the host gtest program
 (`bin/run-tests`), and the full program MUST pass both plain and under
-ASan+UBSan before any merge into a fork working branch. New parser, format, or
+ASan+UBSan before any merge into fork `master`. New parser, format, or
 cache code lands together with its tests and deterministic fixtures (committed
 generators, no randomness). A test only counts if it fails when the behavior it
 guards is broken: new suites MUST demonstrate at least one production mutation
@@ -103,8 +108,8 @@ unfixed code. Host stubs MUST mirror device semantics for any behavior a test
 relies on (a guard that passes on host but is dead on device is a defect, not a
 fix).
 
-Rationale: this fork's QA program (the `qa/autotests` branch history and its
-defect register) surfaced 28 production defects precisely because every suite was
+Rationale: this fork's QA program (its host test suites and defect register, now on
+fork `master`) surfaced 28 production defects precisely because every suite was
 mutation-verified; unverified tests create confidence without safety.
 
 ### VI. Untrusted Input Is Hostile
@@ -124,13 +129,18 @@ history shows this is where real bugs live.
 
 ### VII. Upstream-First Fork Hygiene
 
-`master` and `develop` MUST remain clean mirrors of upstream — never commit to
-them locally. Fixes MUST be one-defect-one-commit with semantic messages so each
-is individually cherry-pickable onto a master-based branch for an upstream PR.
-Upstream PRs stay small (aim under 200 lines of non-test diff), carry semantic
+Fork `master` is the fork's integration branch: it carries fork-only work (host test
+suites, QA tooling, spec-kit scaffolding, fork features and fixes) on top of upstream.
+Commits MUST NOT be made directly on `master` (or on a local `develop`); work lands
+only by fast-forwarding or merging a short-lived feature/fix branch that passed the
+quality gates, and that branch is deleted after landing. Upstream syncs merge
+`origin/develop` (or an upstream `master` release) into `master` through a sync
+branch. Fixes MUST be one-defect-one-commit with semantic messages so each is
+individually cherry-pickable onto a branch cut from `origin/develop` for an upstream
+PR. Upstream PRs stay small (aim under 200 lines of non-test diff), carry semantic
 titles, disclose AI usage per the PR template, and never include AI-generated
 co-author credits. Test suites and QA tooling stay fork-only — they MUST NOT be
-bundled into feature or fix PRs. All maintainer-facing communication is written
+bundled into upstream PR branches. All maintainer-facing communication is written
 by the human, not generated. Before starting any work, existing upstream PRs,
 issues, and branches MUST be searched to avoid duplicating effort. When
 upstream has parallel work in an area (e.g. a pending fix on `develop`), fork
@@ -139,7 +149,9 @@ the next sync merges instead of conflicting. Large refactors get a Discussion
 first.
 
 Rationale: the fork's value depends on staying mergeable in both directions;
-these norms are the maintainers' explicitly stated preferences.
+these norms are the maintainers' explicitly stated preferences. One integration
+branch keeps fork work in one place, while PR branches cut from `origin/develop`
+keep upstream contributions free of fork-only code.
 
 ## Platform Constraints & Standards
 
@@ -166,7 +178,8 @@ these norms are the maintainers' explicitly stated preferences.
 
 ## Development Workflow & Quality Gates
 
-Every fork working-branch merge MUST pass, in order of cheapness:
+Every merge into fork `master` (feature, fix, or upstream sync) MUST pass, in order of
+cheapness:
 
 1. `./bin/clang-format-fix -c` — formatting gate.
 2. `bin/run-tests` — full host program green (plain).
@@ -180,8 +193,8 @@ Every fork working-branch merge MUST pass, in order of cheapness:
    sleep, or memory pressure claims: verify on hardware with serial output.
 
 These gates and their tooling (`bin/run-tests`, `bin/install-hooks`,
-`clang-format-fix -c`) live on the fork's QA branches (`qa/autotests` and
-descendants); `master`/`develop` stay clean upstream mirrors without them.
+`clang-format-fix -c`) live on fork `master` and MUST NOT be carried into upstream
+PR branches.
 Supporting practice: the opt-in pre-push hook (`bin/install-hooks`) runs gate 1
 plus a quick test subset (it skips the two slowest suites; it narrows the loop
 and does not replace gates 2–3); specs and plans produced under `.specify/`
@@ -209,4 +222,4 @@ and PRs MUST check compliance with Principles I–VII; violations require a
 documented justification in the plan's Complexity Tracking table or a change to
 this document — silent exceptions are not permitted.
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-14 | **Last Amended**: 2026-09-14
+**Version**: 2.0.0 | **Ratified**: 2026-09-14 | **Last Amended**: 2026-09-14
