@@ -3,7 +3,7 @@
 #
 # Invoked by the speckit-git-commit skill from .specify/extensions.yml hooks.
 # Encodes the fork's commit rules (Constitution Principle VII + AGENTS.md):
-#   - never commits on master/develop (clean upstream mirrors) or detached HEAD
+#   - never commits directly on master (integration branch), develop, or detached HEAD
 #   - stages an explicit per-phase allow-list, never `git add -A`
 #   - semantic commit messages, no Co-Authored-By / AI-attribution trailers
 #   - no-op success when the phase produced nothing to commit (idempotent)
@@ -45,11 +45,11 @@ case "$PHASE" in
   *) die "unknown or missing phase '$PHASE' (expected specify|clarify|plan|tasks|converge|checklist|constitution|implement)" ;;
 esac
 
-# --- Branch guard: Principle VII — master/develop stay clean upstream mirrors.
+# --- Branch guard: Principle VII — work lands on master only via short-lived branches.
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 [[ "$BRANCH" == "HEAD" ]] && die "detached HEAD — check out a branch first"
 if [[ "$BRANCH" == "master" || "$BRANCH" == "develop" ]]; then
-  die "refusing to commit on '$BRANCH' (clean upstream mirror — Constitution Principle VII). Create a feature branch first."
+  die "refusing to commit directly on '$BRANCH' (Constitution Principle VII). Create a feature branch first."
 fi
 
 # --- Message hygiene: semantic prefix, no AI attribution (repo hard rule).

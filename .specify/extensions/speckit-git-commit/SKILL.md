@@ -46,8 +46,8 @@ line) to the user.
 RECOVERY — if the script refuses because you are on `master`/`develop`
 (Principle VII): create the feature branch named after the spec directory
 (read `feature_directory` from `.specify/feature.json`, use its basename:
-`git checkout -b <basename>`), then re-run the same command. Never commit on
-the mirrors themselves.
+`git checkout -b <basename>`), then re-run the same command. Never commit
+directly on `master` or `develop`.
 
 You MAY pass a better subject with `-m "docs(spec): <subject>"` when the
 default (derived from the branch name) reads poorly — keep the same
@@ -79,7 +79,8 @@ refuses AI-attribution text.
 
 ## Guardrails (enforced by the script; do not bypass)
 
-- Refuses on `master`/`develop` (clean upstream mirrors) and detached HEAD.
+- Refuses direct commits on `master` (integration branch) and `develop`, and on
+  detached HEAD.
 - Allow-list staging only; unrelated working-tree changes are surfaced, never
   swept into the commit.
 - No `Co-Authored-By`, no AI/tool attribution, ever.
