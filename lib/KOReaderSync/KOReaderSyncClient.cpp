@@ -6,6 +6,7 @@
 #include <SecureHttpClient.h>
 #include <base64.h>
 
+#include <cstring>
 #include <string>
 
 #include "KOReaderCredentialStore.h"
@@ -13,6 +14,28 @@
 int KOReaderSyncClient::lastHttpCode = 0;
 
 namespace {
+
+// A sync response carries a short position string and two identifiers. The
+// server is remote and untrusted, so both the body and every field it feeds
+// into the in-memory model are bounded; the device has 380 KB of heap.
+constexpr size_t MAX_RESPONSE_BYTES = 8 * 1024;
+constexpr size_t MAX_XPATH_BYTES = 512;
+constexpr size_t MAX_DEVICE_BYTES = 128;
+
+// Reads a response field, refusing anything longer than maxLength rather than
+// truncating it: a cut-short XPath would silently point at the wrong place.
+std::string boundedResponseField(JsonVariantConst doc, const char* key, const size_t maxLength) {
+  const char* value = doc[key] | static_cast<const char*>(nullptr);
+  if (value == nullptr) {
+    return {};
+  }
+  if (strnlen(value, maxLength + 1) > maxLength) {
+    LOG_ERR("KOSync", "Response field '%s' exceeds %zu bytes; ignored", key, maxLength);
+    return {};
+  }
+  return std::string(value);
+}
+
 // Device identifier for CrossPoint reader
 constexpr char DEVICE_NAME[] = "CrossPoint";
 constexpr char DEVICE_ID[] = "crosspoint-reader";
@@ -180,8 +203,14 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
   }
 
   if (httpCode >= 200 && httpCode < 300) {
+    const std::string& body = http.getString();
+    if (body.size() > MAX_RESPONSE_BYTES) {
+      LOG_ERR("KOSync", "Response is %zu bytes, over the %zu-byte limit", body.size(), MAX_RESPONSE_BYTES);
+      http.end();
+      return JSON_ERROR;
+    }
     JsonDocument doc;
-    const DeserializationError error = deserializeJson(doc, http.getString().c_str());
+    const DeserializationError error = deserializeJson(doc, body.c_str());
     http.end();
 
     if (error) {
@@ -190,10 +219,10 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
     }
 
     outProgress.document = documentHash;
-    outProgress.progress = doc["progress"].as<std::string>();
+    outProgress.progress = boundedResponseField(doc, "progress", MAX_XPATH_BYTES);
     outProgress.percentage = doc["percentage"].as<float>();
-    outProgress.device = doc["device"].as<std::string>();
-    outProgress.deviceId = doc["device_id"].as<std::string>();
+    outProgress.device = boundedResponseField(doc, "device", MAX_DEVICE_BYTES);
+    outProgress.deviceId = boundedResponseField(doc, "device_id", MAX_DEVICE_BYTES);
     outProgress.timestamp = doc["timestamp"].as<int64_t>();
 
     outProgress.position.reset();

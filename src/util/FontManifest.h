@@ -40,6 +40,14 @@ enum class FontManifestError : uint8_t {
 // Script groups beyond this are ignored: scriptMask is a 32-bit membership mask.
 constexpr size_t FONT_MANIFEST_MAX_SCRIPT_GROUPS = 32;
 
+// The manifest is fetched over the network, so every repeated element needs a
+// ceiling: the device holds the parsed model in its 380 KB heap.
+constexpr size_t FONT_MANIFEST_MAX_FAMILIES = 128;
+constexpr size_t FONT_MANIFEST_MAX_STYLES_PER_FAMILY = 16;
+constexpr size_t FONT_MANIFEST_MAX_FILES_PER_FAMILY = 32;
+constexpr size_t FONT_MANIFEST_MAX_NAME_BYTES = 64;
+constexpr size_t FONT_MANIFEST_MAX_DESCRIPTION_BYTES = 256;
+
 // Reads a deserialized fonts.json into the caller's containers. On OK the
 // containers hold the manifest; on any error their contents are unspecified.
 FontManifestError parseFontManifest(JsonDocument& doc, std::string& baseUrl,

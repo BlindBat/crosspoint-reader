@@ -256,18 +256,16 @@ TEST(FontManifest, MissingOrMistypedCrc32IsMalformed) {
 }
 
 TEST(FontManifest, AMalformedFileEntryAbortsTheWholeManifest) {
-  const Parsed p = parse(manifestWith(
-      R"("families":[{"name":"Good","files":[{"name":"a","size":1,"crc32":1}]},)"
-      R"({"name":"Bad","files":[{"name":"b","size":1}]},)"
-      R"({"name":"Never","files":[{"name":"c","size":1,"crc32":3}]}])"));
+  const Parsed p = parse(manifestWith(R"("families":[{"name":"Good","files":[{"name":"a","size":1,"crc32":1}]},)"
+                                      R"({"name":"Bad","files":[{"name":"b","size":1}]},)"
+                                      R"({"name":"Never","files":[{"name":"c","size":1,"crc32":3}]}])"));
 
   EXPECT_EQ(p.result, FontManifestError::MALFORMED);
 }
 
 TEST(FontManifest, FileSizesAccumulateIntoTheFamilyTotal) {
-  const Parsed p = parse(manifestWith(
-      R"("families":[{"name":"A","files":[{"name":"a","size":10,"crc32":1},)"
-      R"({"name":"b","size":20,"crc32":2},{"name":"c","size":30,"crc32":3}]}])"));
+  const Parsed p = parse(manifestWith(R"("families":[{"name":"A","files":[{"name":"a","size":10,"crc32":1},)"
+                                      R"({"name":"b","size":20,"crc32":2},{"name":"c","size":30,"crc32":3}]}])"));
 
   ASSERT_EQ(p.result, FontManifestError::OK);
   ASSERT_EQ(p.families.size(), 1u);
@@ -278,9 +276,9 @@ TEST(FontManifest, FileSizesAccumulateIntoTheFamilyTotal) {
 TEST(FontManifest, OutOfRangeFileSizesFallBackToZero) {
   // Pinning current behaviour: `size` is read through `| 0`, whose int default
   // makes anything outside int range read as 0 rather than failing the parse.
-  const Parsed p = parse(manifestWith(
-      R"("families":[{"name":"A","files":[{"name":"huge","size":1000000000000,"crc32":1},)"
-      R"({"name":"nan","size":"12","crc32":2},{"name":"ok","size":5,"crc32":3}]}])"));
+  const Parsed p =
+      parse(manifestWith(R"("families":[{"name":"A","files":[{"name":"huge","size":1000000000000,"crc32":1},)"
+                         R"({"name":"nan","size":"12","crc32":2},{"name":"ok","size":5,"crc32":3}]}])"));
 
   ASSERT_EQ(p.result, FontManifestError::OK);
   ASSERT_EQ(p.families[0].files.size(), 3u);
@@ -291,9 +289,8 @@ TEST(FontManifest, OutOfRangeFileSizesFallBackToZero) {
 }
 
 TEST(FontManifest, DuplicateFamilyNamesAreBothRetained) {
-  const Parsed p = parse(manifestWith(
-      R"("families":[{"name":"Dup","files":[{"name":"a","size":1,"crc32":1}]},)"
-      R"({"name":"Dup","files":[{"name":"b","size":2,"crc32":2}]}])"));
+  const Parsed p = parse(manifestWith(R"("families":[{"name":"Dup","files":[{"name":"a","size":1,"crc32":1}]},)"
+                                      R"({"name":"Dup","files":[{"name":"b","size":2,"crc32":2}]}])"));
 
   ASSERT_EQ(p.result, FontManifestError::OK);
   ASSERT_EQ(p.families.size(), 2u);
@@ -303,7 +300,10 @@ TEST(FontManifest, DuplicateFamilyNamesAreBothRetained) {
   EXPECT_EQ(p.families[1].totalSize, 2u);
 }
 
-TEST(FontManifest, ALargeFamilyArrayParsesWithoutLoss) {
+TEST(FontManifest, AnOversizedFamilyArrayIsCappedInsteadOfFillingTheHeap) {
+  // The manifest arrives over the network and the parsed model sits in the
+  // device's 380 KB heap, so the family list is capped; the kept prefix is
+  // intact and the overflow is logged, not silently mixed in.
   std::string families = R"("families":[)";
   constexpr int COUNT = 300;
   for (int i = 0; i < COUNT; i++) {
@@ -315,17 +315,68 @@ TEST(FontManifest, ALargeFamilyArrayParsesWithoutLoss) {
   const Parsed p = parse(manifestWith(families));
 
   ASSERT_EQ(p.result, FontManifestError::OK);
+  ASSERT_EQ(p.families.size(), FONT_MANIFEST_MAX_FAMILIES);
+  EXPECT_EQ(p.families.front().name, "F0");
+  EXPECT_EQ(p.families.back().name, "F" + std::to_string(FONT_MANIFEST_MAX_FAMILIES - 1));
+}
+
+TEST(FontManifest, APlausibleFamilyCountIsUnaffectedByTheCap) {
+  std::string families = R"("families":[)";
+  constexpr int COUNT = 40;
+  for (int i = 0; i < COUNT; i++) {
+    if (i > 0) families += ",";
+    families += R"({"name":"F)" + std::to_string(i) + R"(","files":[{"name":"f","size":1,"crc32":1}]})";
+  }
+  families += "]";
+
+  const Parsed p = parse(manifestWith(families));
+
+  ASSERT_EQ(p.result, FontManifestError::OK);
   ASSERT_EQ(p.families.size(), static_cast<size_t>(COUNT));
-  EXPECT_EQ(p.families.back().name, "F299");
+  EXPECT_EQ(p.families.back().name, "F39");
+}
+
+TEST(FontManifest, OverLongNamesAndDescriptionsAreRefusedNotTruncated) {
+  const std::string longName(FONT_MANIFEST_MAX_NAME_BYTES + 1, 'n');
+  const std::string longDesc(FONT_MANIFEST_MAX_DESCRIPTION_BYTES + 1, 'd');
+  const Parsed p = parse(manifestWith(R"("families":[{"name":")" + longName + R"(","description":")" + longDesc +
+                                      R"(","files":[{"name":"f","size":1,"crc32":1}]}])"));
+
+  ASSERT_EQ(p.result, FontManifestError::OK);
+  ASSERT_EQ(p.families.size(), 1u);
+  EXPECT_TRUE(p.families[0].name.empty()) << "an over-long name must be refused, never cut short";
+  EXPECT_TRUE(p.families[0].description.empty());
+}
+
+TEST(FontManifest, StylesAndFilesPerFamilyAreCapped) {
+  std::string styles = R"("styles":[)";
+  for (size_t i = 0; i < FONT_MANIFEST_MAX_STYLES_PER_FAMILY + 5; i++) {
+    if (i > 0) styles += ",";
+    styles += R"("s)" + std::to_string(i) + R"(")";
+  }
+  styles += "]";
+  std::string files = R"("files":[)";
+  for (size_t i = 0; i < FONT_MANIFEST_MAX_FILES_PER_FAMILY + 5; i++) {
+    if (i > 0) files += ",";
+    files += R"({"name":"f)" + std::to_string(i) + R"(","size":1,"crc32":1})";
+  }
+  files += "]";
+
+  const Parsed p = parse(manifestWith(R"("families":[{"name":"F",)" + styles + "," + files + "}]"));
+
+  ASSERT_EQ(p.result, FontManifestError::OK);
+  ASSERT_EQ(p.families.size(), 1u);
+  EXPECT_EQ(p.families[0].styles.size(), FONT_MANIFEST_MAX_STYLES_PER_FAMILY);
+  EXPECT_EQ(p.families[0].files.size(), FONT_MANIFEST_MAX_FILES_PER_FAMILY);
 }
 
 TEST(FontManifest, HostileNamesSurviveParsingAndAreRejectedByTheInstaller) {
   // The parser is a transport decoder, not a validator: the path checks that
   // stop "../" live in FontInstaller and run before anything touches the SD
   // card. Both halves are asserted here so the pairing cannot silently rot.
-  const Parsed p = parse(manifestWith(
-      R"("families":[{"name":"../../.crosspoint","files":[{"name":"../evil.cpfont","size":1,"crc32":1}]},)"
-      R"({"name":"Good/Bad","files":[{"name":"ok_14.cpfont.tmp","size":1,"crc32":2}]}])"));
+  const Parsed p = parse(
+      manifestWith(R"("families":[{"name":"../../.crosspoint","files":[{"name":"../evil.cpfont","size":1,"crc32":1}]},)"
+                   R"({"name":"Good/Bad","files":[{"name":"ok_14.cpfont.tmp","size":1,"crc32":2}]}])"));
 
   ASSERT_EQ(p.result, FontManifestError::OK);
   ASSERT_EQ(p.families.size(), 2u);
@@ -356,10 +407,10 @@ TEST(FontManifest, TheAcceptedVersionIsTheOneTheHeaderPublishes) {
 TEST(FontManifest, InvalidUtf8InStringsIsCarriedThroughAndRejectedDownstream) {
   // ArduinoJson copies string bytes verbatim, so a manifest can smuggle a lone
   // continuation byte or a truncated multi-byte sequence into a family name.
-  const Parsed p = parse(manifestWith(
-      "\"families\":[{\"name\":\"Bad\x80"
-      "Cont\",\"files\":[{\"name\":\"a\",\"size\":1,\"crc32\":1}]},"
-      "{\"name\":\"Trunc\xE4\xB8\",\"files\":[{\"name\":\"b\",\"size\":1,\"crc32\":2}]}]"));
+  const Parsed p =
+      parse(manifestWith("\"families\":[{\"name\":\"Bad\x80"
+                         "Cont\",\"files\":[{\"name\":\"a\",\"size\":1,\"crc32\":1}]},"
+                         "{\"name\":\"Trunc\xE4\xB8\",\"files\":[{\"name\":\"b\",\"size\":1,\"crc32\":2}]}]"));
 
   ASSERT_FALSE(p.jsonError);
   ASSERT_EQ(p.result, FontManifestError::OK);
@@ -367,8 +418,9 @@ TEST(FontManifest, InvalidUtf8InStringsIsCarriedThroughAndRejectedDownstream) {
 
   // Both names survive intact, and the validator rejects them because non-ASCII
   // bytes are not alphanumeric.
-  EXPECT_EQ(p.families[0].name, "Bad\x80"
-                                "Cont");
+  EXPECT_EQ(p.families[0].name,
+            "Bad\x80"
+            "Cont");
   EXPECT_EQ(p.families[1].name, "Trunc\xE4\xB8");
   EXPECT_FALSE(FontInstaller::isValidFamilyName(p.families[0].name.c_str()));
   EXPECT_FALSE(FontInstaller::isValidFamilyName(p.families[1].name.c_str()));
@@ -378,8 +430,9 @@ TEST(FontManifest, AnEscapedNulSilentlyTruncatesTheRestOfTheName) {
   // ArduinoJson hands out a const char*, so an escaped NUL ends the name and
   // everything after it is dropped without failing the parse. A hostile entry
   // therefore installs under its harmless prefix rather than being rejected.
-  const Parsed p = parse(manifestWith("\"families\":[{\"name\":\"Ok\\u0000/../escape\","
-                                      "\"files\":[{\"name\":\"f\",\"size\":1,\"crc32\":1}]}]"));
+  const Parsed p =
+      parse(manifestWith("\"families\":[{\"name\":\"Ok\\u0000/../escape\","
+                         "\"files\":[{\"name\":\"f\",\"size\":1,\"crc32\":1}]}]"));
 
   ASSERT_FALSE(p.jsonError);
   ASSERT_EQ(p.result, FontManifestError::OK);

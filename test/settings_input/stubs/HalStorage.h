@@ -37,6 +37,13 @@ class HalStorage {
   std::string mapPath(const char* path) const { return root + path; }
 
   // --- API surface used by the compiled production code --------------------
+  // Path-based size query (HalStorage::fileSize): 0 for missing paths and directories.
+  size_t fileSize(const char* path) {
+    struct ::stat st{};
+    if (::stat(mapPath(path).c_str(), &st) != 0 || S_ISDIR(st.st_mode)) return 0;
+    return static_cast<size_t>(st.st_size);
+  }
+
   bool exists(const char* path) {
     struct stat st{};
     return ::stat(mapPath(path).c_str(), &st) == 0;

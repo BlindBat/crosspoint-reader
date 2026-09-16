@@ -50,8 +50,29 @@ class PersistableStoreBase {
   static bool writeDocToFile(const char* path, const JsonDocument& doc);
 
   // Reads path and parses it into doc. Returns false silently when the file
-  // does not exist (expected on first boot); logs on read/parse failure.
+  // does not exist (expected on first boot); logs on read/parse failure or when
+  // the file is larger than MAX_STORE_FILE_BYTES.
   static bool readDocFromFile(const char* path, JsonDocument& doc);
+
+  // Ceiling for a whole store file. Every store here holds a handful of short
+  // fields, so a file past this is corrupt or hostile; reading it into RAM
+  // would exhaust the 380 KB heap long before the parse failed.
+  static constexpr size_t MAX_STORE_FILE_BYTES = 64 * 1024;
+
+  // Per-field ceilings for untrusted strings. Generous for real data, small
+  // enough that a crafted file cannot pin megabytes in the in-memory model.
+  static constexpr size_t MAX_NAME_BYTES = 128;
+  static constexpr size_t MAX_URL_BYTES = 512;
+  static constexpr size_t MAX_USERNAME_BYTES = 128;
+  static constexpr size_t MAX_PASSWORD_BYTES = 256;
+  static constexpr size_t MAX_PATH_BYTES = 512;
+  static constexpr size_t MAX_TITLE_BYTES = 256;
+
+  // Reads obj[key] as a string of at most maxLength bytes. A missing field, a
+  // non-string, or an over-long value all yield an empty string: an over-long
+  // field is refused rather than truncated, since a truncated path or URL is
+  // silently wrong. Logs the refusal.
+  static std::string boundedField(JsonVariantConst obj, const char* key, size_t maxLength);
 
  protected:
   /**

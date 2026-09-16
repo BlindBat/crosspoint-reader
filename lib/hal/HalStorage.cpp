@@ -132,6 +132,17 @@ size_t HalStorage::readFileToBuffer(const char* path, char* buffer, size_t buffe
   HAL_STORAGE_WRAPPED_CALL(readFileToBuffer, path, buffer, bufferSize, maxBytes);
 }
 
+size_t HalStorage::fileSize(const char* path) {
+  StorageLock lock;
+  FsFile file;
+  if (!SDCard.openFileForRead("STORAGE", path, file)) {
+    return 0;
+  }
+  const size_t bytes = file.isDirectory() ? 0 : file.fileSize();
+  file.close();
+  return bytes;
+}
+
 bool HalStorage::writeFile(const char* path, const String& content) {
   HAL_STORAGE_WRAPPED_CALL(writeFile, path, content);
 }

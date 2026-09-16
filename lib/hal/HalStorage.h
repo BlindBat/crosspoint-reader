@@ -44,6 +44,9 @@ class HalStorage {
   bool readFileToStream(const char* path, Print& out, size_t chunkSize = 256);
   // Read up to `bufferSize-1` bytes into `buffer`, null-terminating it. Returns bytes read.
   size_t readFileToBuffer(const char* path, char* buffer, size_t bufferSize, size_t maxBytes = 0);
+  // Size of the file at `path` in bytes; 0 when it is missing, a directory, or
+  // cannot be opened. Lets a caller refuse an oversized file before reading it.
+  size_t fileSize(const char* path);
   // Write a string to `path` on the SD card. Overwrites existing file.
   // Returns true on success.
   bool writeFile(const char* path, const String& content);

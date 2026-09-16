@@ -522,10 +522,15 @@ TEST_F(KosyncClientTest, BasicAuthEncodesEverythingAfterTheFirstColon) {
 }
 
 TEST_F(KosyncClientTest, BasicAuthEncodesNonAsciiCredentialsAsUtf8Bytes) {
-  KOREADER_STORE.setCredentials("r\xC3\xA9" "ader", "s");
+  KOREADER_STORE.setCredentials(
+      "r\xC3\xA9"
+      "ader",
+      "s");
   enqueue(200);
   ASSERT_EQ(KOReaderSyncClient::authenticate(), Error::OK);
-  EXPECT_EQ(*lastExchange().header("x-auth-user"), "r\xC3\xA9" "ader");
+  EXPECT_EQ(*lastExchange().header("x-auth-user"),
+            "r\xC3\xA9"
+            "ader");
   EXPECT_EQ(*lastExchange().header("Authorization"), "Basic csOpYWRlcjpz");  // base64("r<U+00E9>ader:s")
 }
 
@@ -607,9 +612,8 @@ TEST_F(KosyncClientTest, GetProgressGatesOnCredentialsAndHeap) {
 
 TEST_F(KosyncClientTest, GetProgressParsesReferenceResponse) {
   withCredentials();
-  enqueue(200,
-          R"({"document":"server-side-id","progress":"/body/DocFragment[5]/body/p[3]/text().7","percentage":0.42,)"
-          R"("device":"KOReader","device_id":"abc123","timestamp":1735689600})");
+  enqueue(200, R"({"document":"server-side-id","progress":"/body/DocFragment[5]/body/p[3]/text().7","percentage":0.42,)"
+               R"("device":"KOReader","device_id":"abc123","timestamp":1735689600})");
   KOReaderProgress out;
   ASSERT_EQ(KOReaderSyncClient::getProgress(DOC_HASH, out), Error::OK);
   EXPECT_EQ(out.document, DOC_HASH);  // the requested id, not the body's
@@ -670,8 +674,8 @@ TEST_F(KosyncClientTest, GetProgressUnterminatedStringAndBadEscapeAreJsonErrors)
   EXPECT_EQ(KOReaderSyncClient::getProgress(DOC_HASH, out), Error::JSON_ERROR);
   enqueue(200, "{progress:1}");  // ArduinoJson accepts an unquoted key that starts with a letter
   EXPECT_EQ(KOReaderSyncClient::getProgress(DOC_HASH, out), Error::OK);
-  EXPECT_EQ(out.progress, "1");
-  enqueue(200, "{@:1}");  // ... but not one that starts with a symbol
+  EXPECT_EQ(out.progress, "");  // ... but a number is not an XPath, so the field is ignored
+  enqueue(200, "{@:1}");        // ... but not one that starts with a symbol
   EXPECT_EQ(KOReaderSyncClient::getProgress(DOC_HASH, out), Error::JSON_ERROR);
 }
 
@@ -723,37 +727,38 @@ TEST_F(KosyncClientTest, GetProgressBodyIsTruncatedAtAnEmbeddedNul) {
   EXPECT_FLOAT_EQ(out.percentage, 0.5f);
 }
 
-TEST_F(KosyncClientTest, GetProgressHugeBodyIsAcceptedUpToTheStringLengthLimit) {
+TEST_F(KosyncClientTest, GetProgressBodyOverTheLimitIsRefusedBeforeParsing) {
   withCredentials();
   KOReaderProgress out;
-  // The body itself is unbounded (T144 owns bounds), but ArduinoJson stores a
-  // string length in ARDUINOJSON_STRING_LENGTH_SIZE bytes -- 2 on every target
-  // with a pointer wider than 16 bits, host and ESP32-C3 alike. A single field
-  // longer than 65535 bytes fails the whole document with NoMemory, which the
-  // client reports as JSON_ERROR.
+  // A sync response carries a short position and two identifiers, so a body
+  // past the ceiling is refused before ArduinoJson allocates anything for it.
   enqueue(200, "{\"pad\":\"" + std::string(65535, 'x') + "\",\"percentage\":0.5}");
-  ASSERT_EQ(KOReaderSyncClient::getProgress(DOC_HASH, out), Error::OK);
-  EXPECT_FLOAT_EQ(out.percentage, 0.5f);
-
-  enqueue(200, "{\"pad\":\"" + std::string(65536, 'x') + "\",\"percentage\":0.5}");
   EXPECT_EQ(KOReaderSyncClient::getProgress(DOC_HASH, out), Error::JSON_ERROR);
 
   enqueue(200, "{\"progress\":\"" + std::string(200000, 'p') + "\"}");
   EXPECT_EQ(KOReaderSyncClient::getProgress(DOC_HASH, out), Error::JSON_ERROR);
 }
 
-TEST_F(KosyncClientTest, GetProgressManySmallFieldsAreAcceptedUnbounded) {
+TEST_F(KosyncClientTest, GetProgressBodyJustUnderTheLimitStillParses) {
   withCredentials();
-  // A 200 KB body made of short values parses fine: only per-string length is
-  // capped, not the document.
+  KOReaderProgress out;
+  // 8 KB is the ceiling; a body comfortably under it goes through untouched.
+  enqueue(200, "{\"pad\":\"" + std::string(4000, 'x') + "\",\"percentage\":0.5}");
+  ASSERT_EQ(KOReaderSyncClient::getProgress(DOC_HASH, out), Error::OK);
+  EXPECT_FLOAT_EQ(out.percentage, 0.5f);
+}
+
+TEST_F(KosyncClientTest, GetProgressManySmallFieldsStillCountTowardsTheBodyLimit) {
+  withCredentials();
+  // The ceiling is on the body, not on any single field: 4000 short values add
+  // up to 150 KB and are refused just the same.
   std::string body = "{";
   for (int i = 0; i < 4000; i++) body += "\"k" + std::to_string(i) + "\":\"" + std::string(30, 'v') + "\",";
   body += "\"percentage\":0.5}";
   ASSERT_GT(body.size(), 150000u);
   enqueue(200, body);
   KOReaderProgress out;
-  ASSERT_EQ(KOReaderSyncClient::getProgress(DOC_HASH, out), Error::OK);
-  EXPECT_FLOAT_EQ(out.percentage, 0.5f);
+  EXPECT_EQ(KOReaderSyncClient::getProgress(DOC_HASH, out), Error::JSON_ERROR);
 }
 
 TEST_F(KosyncClientTest, GetProgressManyKeysDoNotBreakFieldLookup) {
@@ -802,12 +807,12 @@ TEST_F(KosyncClientTest, GetProgressEmptyObjectYieldsDefaults) {
   EXPECT_FLOAT_EQ(out.percentage, 0.0f);
   EXPECT_EQ(out.timestamp, 0);
   EXPECT_FALSE(out.position.has_value());
-  // ArduinoJson's std::string converter serialises a non-string variant, so an
-  // absent string field arrives as the four characters "null" rather than "".
-  // KOReaderSyncClient.cpp:192-195 stores that verbatim.
-  EXPECT_EQ(out.progress, "null");
-  EXPECT_EQ(out.device, "null");
-  EXPECT_EQ(out.deviceId, "null");
+  // An absent string field yields an empty string. It used to arrive as the four
+  // characters "null" (ArduinoJson serialises a non-string variant), which the
+  // client then treated as a real XPath.
+  EXPECT_EQ(out.progress, "");
+  EXPECT_EQ(out.device, "");
+  EXPECT_EQ(out.deviceId, "");
 }
 
 TEST_F(KosyncClientTest, GetProgressNonObjectJsonYieldsDefaults) {
@@ -818,23 +823,25 @@ TEST_F(KosyncClientTest, GetProgressNonObjectJsonYieldsDefaults) {
     out.percentage = 9.0f;
     out.position = samplePosition();
     EXPECT_EQ(KOReaderSyncClient::getProgress(DOC_HASH, out), Error::OK) << body;
-    EXPECT_EQ(out.progress, "null") << body;  // subscripting a non-object yields an unbound variant
+    EXPECT_EQ(out.progress, "") << body;  // subscripting a non-object yields an unbound variant
     EXPECT_FLOAT_EQ(out.percentage, 0.0f) << body;
     EXPECT_EQ(out.timestamp, 0) << body;
     EXPECT_FALSE(out.position.has_value()) << body;
   }
 }
 
-TEST_F(KosyncClientTest, GetProgressWrongFieldTypesAreCoercedNotRejected) {
+TEST_F(KosyncClientTest, GetProgressWrongFieldTypesYieldEmptyStrings) {
+  // A number, a bool or a null in a string field is not a position: it is
+  // ignored rather than serialised into one. Numeric fields still coerce.
   withCredentials();
   enqueue(200, R"({"progress":42,"percentage":"0.25","device":true,"device_id":null,"timestamp":"soon"})");
   KOReaderProgress out;
   ASSERT_EQ(KOReaderSyncClient::getProgress(DOC_HASH, out), Error::OK);
-  EXPECT_EQ(out.progress, "42");  // ArduinoJson's std::string converter serialises non-strings
+  EXPECT_EQ(out.progress, "");
   EXPECT_FLOAT_EQ(out.percentage, 0.25f);
-  EXPECT_EQ(out.device, "true");
-  EXPECT_EQ(out.deviceId, "null");  // an explicit JSON null is serialised, not emptied
-  EXPECT_EQ(out.timestamp, 0);      // "soon" is not a number
+  EXPECT_EQ(out.device, "");
+  EXPECT_EQ(out.deviceId, "");
+  EXPECT_EQ(out.timestamp, 0);  // "soon" is not a number
 }
 
 TEST_F(KosyncClientTest, GetProgressOutOfRangeNumbersPassThrough) {
@@ -846,13 +853,33 @@ TEST_F(KosyncClientTest, GetProgressOutOfRangeNumbersPassThrough) {
   EXPECT_EQ(out.timestamp, -7);
 }
 
-TEST_F(KosyncClientTest, GetProgressHugeXpathIsAcceptedUnbounded) {
+TEST_F(KosyncClientTest, GetProgressHugeXpathIsRefusedNotTruncated) {
+  // A 5000-byte XPath is not a position this reader can use, and keeping it
+  // would pin 5 KB of the 380 KB heap. Refused outright: half an XPath would
+  // silently point somewhere else.
   withCredentials();
   const std::string huge(5000, 'p');
   enqueue(200, "{\"progress\":\"" + huge + "\"}");
   KOReaderProgress out;
   ASSERT_EQ(KOReaderSyncClient::getProgress(DOC_HASH, out), Error::OK);
-  EXPECT_EQ(out.progress.size(), 5000u);  // no field bound yet (T144)
+  EXPECT_TRUE(out.progress.empty());
+}
+
+TEST_F(KosyncClientTest, GetProgressXpathAtTheLimitIsKept) {
+  withCredentials();
+  const std::string atLimit(512, 'p');
+  enqueue(200, "{\"progress\":\"" + atLimit + "\"}");
+  KOReaderProgress out;
+  ASSERT_EQ(KOReaderSyncClient::getProgress(DOC_HASH, out), Error::OK);
+  EXPECT_EQ(out.progress.size(), 512u);
+}
+
+TEST_F(KosyncClientTest, GetProgressOversizedBodyIsRefusedBeforeParsing) {
+  withCredentials();
+  const std::string filler(9000, 'x');
+  enqueue(200, "{\"device\":\"" + filler + "\"}");
+  KOReaderProgress out;
+  EXPECT_EQ(KOReaderSyncClient::getProgress(DOC_HASH, out), Error::JSON_ERROR);
 }
 
 TEST_F(KosyncClientTest, GetProgressPositionIgnoredOnThirdPartyServer) {
@@ -866,9 +893,8 @@ TEST_F(KosyncClientTest, GetProgressPositionIgnoredOnThirdPartyServer) {
 
 TEST_F(KosyncClientTest, GetProgressPositionParsedOnCrossPointServer) {
   withCredentials();
-  enqueue(200,
-          R"({"percentage":0.5,"position":{"pctQ":500000,"spine":2,"page":3,"pages":8,"para":4,)"
-          R"("xpath":"/body/DocFragment[3]/body/p[4]"}})");
+  enqueue(200, R"({"percentage":0.5,"position":{"pctQ":500000,"spine":2,"page":3,"pages":8,"para":4,)"
+               R"("xpath":"/body/DocFragment[3]/body/p[4]"}})");
   KOReaderProgress out;
   ASSERT_EQ(KOReaderSyncClient::getProgress(DOC_HASH, out), Error::OK);
   ASSERT_TRUE(out.position.has_value());
@@ -1063,7 +1089,7 @@ TEST_F(KosyncClientTest, UpdateProgressXpathCapIs120Bytes) {
   ASSERT_EQ(KOReaderSyncClient::updateProgress(p), Error::OK);
   const JsonDocument body = parseBody(lastExchange().body);
   EXPECT_TRUE(body["position"]["xpath"].isNull());
-  EXPECT_EQ(body["position"]["para"].as<int>(), 7);  // the rest of the position survives
+  EXPECT_EQ(body["position"]["para"].as<int>(), 7);           // the rest of the position survives
   EXPECT_EQ(body["progress"].as<std::string>(), p.progress);  // standard xpointer is never capped
 }
 
@@ -1356,7 +1382,7 @@ TEST_F(KosyncClientTest, AlternateProbeComparesIdsByteForByte) {
 
 TEST_F(KosyncClientTest, RichPositionTruncatesIndicesToSixteenBits) {
   const auto pos = SmartSync::buildRichPosition(0.5f, 65536 + 3, 65536 + 5, 65536 + 7, std::nullopt, "");
-  EXPECT_EQ(pos.spineIndex, 3);      // wraps: no range check (T144 owns validation)
+  EXPECT_EQ(pos.spineIndex, 3);  // wraps: no range check (T144 owns validation)
   EXPECT_EQ(pos.pageNumber, 5);
   EXPECT_EQ(pos.totalPages, 7);
 }

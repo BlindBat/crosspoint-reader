@@ -39,8 +39,8 @@ class HalStorage {
 
   struct VirtualFile {
     size_t size = 0;
-    std::string bytes;                        // literal contents when non-empty
-    std::function<uint8_t(size_t)> byteAt;    // used when bytes is empty
+    std::string bytes;                      // literal contents when non-empty
+    std::function<uint8_t(size_t)> byteAt;  // used when bytes is empty
     uint8_t at(const size_t i) const { return bytes.empty() ? byteAt(i) : static_cast<uint8_t>(bytes[i]); }
   };
 
@@ -90,6 +90,14 @@ class HalStorage {
     return true;
   }
   bool remove(const char* path) { return jsonFiles.erase(path) > 0; }
+  // Path-based size query (HalStorage::fileSize): the store files live in
+  // jsonFiles, the sampled book files in files.
+  size_t fileSize(const char* path) {
+    const auto json = jsonFiles.find(path);
+    if (json != jsonFiles.end()) return json->second.size();
+    const auto it = files.find(path);
+    return it == files.end() ? 0 : it->second.size;
+  }
 
   // --- KOReaderDocumentId surface -----------------------------------------
   bool openFileForRead(const char* moduleName, const std::string& path, HalFile& file);

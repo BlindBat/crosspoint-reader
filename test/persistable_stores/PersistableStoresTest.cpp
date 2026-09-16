@@ -717,6 +717,73 @@ TEST_F(RecentBooksTest, LoadCapsAtTenEntries) {
   EXPECT_EQ(RECENT_BOOKS.getBooks()[9].path, "/books/x9.epub");
 }
 
+// ---------------------------------------------------------------------------
+// Untrusted-length bounds (T144). A store file comes off a removable card and
+// the API body off the network, so neither may size an allocation on its own.
+// ---------------------------------------------------------------------------
+
+TEST_F(StoreTest, AnOversizedStoreFileIsRefusedBeforeItIsRead) {
+  // Valid JSON, just far too big: readDocFromFile checks the size first, so the
+  // 380 KB heap never sees it.
+  std::string huge = "{\"books\":[{\"title\":\"";
+  huge.append(PersistableStoreBase::MAX_STORE_FILE_BYTES + 1024, 'x');
+  huge += "\"}]}";
+  writeDeviceFile("/.crosspoint/recent.json", huge);
+
+  const int countBefore = RECENT_BOOKS.getCount();
+  EXPECT_FALSE(RECENT_BOOKS.loadFromFile());
+  EXPECT_EQ(RECENT_BOOKS.getCount(), countBefore) << "a refused load must leave the model alone";
+}
+
+TEST_F(StoreTest, AFileJustUnderTheCeilingStillLoads) {
+  const size_t padding = PersistableStoreBase::MAX_STORE_FILE_BYTES - 512;
+  std::string doc = "{\"books\":[{\"path\":\"/books/a.epub\",\"title\":\"t\"}],\"pad\":\"";
+  doc.append(padding - doc.size(), 'x');
+  doc += "\"}";
+  ASSERT_LT(doc.size(), PersistableStoreBase::MAX_STORE_FILE_BYTES);
+  writeDeviceFile("/.crosspoint/recent.json", doc);
+
+  ASSERT_TRUE(RECENT_BOOKS.loadFromFile());
+  ASSERT_EQ(RECENT_BOOKS.getCount(), 1);
+  EXPECT_EQ(RECENT_BOOKS.getBooks()[0].path, "/books/a.epub");
+}
+
+TEST_F(StoreTest, OverLongRecentBookFieldsAreRefusedNotTruncated) {
+  const std::string longPath(PersistableStoreBase::MAX_PATH_BYTES + 1, 'p');
+  const std::string longTitle(PersistableStoreBase::MAX_TITLE_BYTES + 1, 't');
+  writeDeviceFile("/.crosspoint/recent.json",
+                  "{\"books\":[{\"path\":\"" + longPath + "\",\"title\":\"" + longTitle + "\",\"author\":\"ok\"}]}");
+
+  ASSERT_TRUE(RECENT_BOOKS.loadFromFile());
+  ASSERT_EQ(RECENT_BOOKS.getCount(), 1);
+  EXPECT_TRUE(RECENT_BOOKS.getBooks()[0].path.empty()) << "a truncated path would point at the wrong file";
+  EXPECT_TRUE(RECENT_BOOKS.getBooks()[0].title.empty());
+  EXPECT_EQ(RECENT_BOOKS.getBooks()[0].author, "ok") << "fields within the bound are untouched";
+}
+
+TEST_F(StoreTest, RecentBookFieldsAtTheBoundAreKept) {
+  const std::string atBound(PersistableStoreBase::MAX_PATH_BYTES, 'p');
+  writeDeviceFile("/.crosspoint/recent.json", "{\"books\":[{\"path\":\"" + atBound + "\"}]}");
+
+  ASSERT_TRUE(RECENT_BOOKS.loadFromFile());
+  ASSERT_EQ(RECENT_BOOKS.getCount(), 1);
+  EXPECT_EQ(RECENT_BOOKS.getBooks()[0].path.size(), PersistableStoreBase::MAX_PATH_BYTES);
+}
+
+TEST_F(StoreTest, OverLongOpdsFieldsAreRefusedNotTruncated) {
+  const std::string longName(PersistableStoreBase::MAX_NAME_BYTES + 1, 'n');
+  const std::string longUrl(PersistableStoreBase::MAX_URL_BYTES + 1, 'u');
+  writeDeviceFile("/.crosspoint/opds.json",
+                  "{\"servers\":[{\"name\":\"" + longName + "\",\"url\":\"" + longUrl + "\",\"username\":\"user\"}]}");
+
+  ASSERT_TRUE(OPDS_STORE.loadFromFile());
+  ASSERT_EQ(OPDS_STORE.getCount(), 1u);
+  const auto& server = OPDS_STORE.getServers()[0];
+  EXPECT_TRUE(server.name.empty());
+  EXPECT_TRUE(server.url.empty());
+  EXPECT_EQ(server.username, "user");
+}
+
 TEST_F(RecentBooksTest, LoadToleratesMissingOrWrongTypedBooksKey) {
   writeDeviceFile("/.crosspoint/recent.json", "{}");
   ASSERT_TRUE(RECENT_BOOKS.loadFromFile());
@@ -1122,9 +1189,8 @@ TEST_F(KoReaderTest, RoundTripAllFieldsWithObfuscatedPassword) {
   const std::string raw = readDeviceFile("/.crosspoint/koreader.json");
   EXPECT_EQ(raw.find("syncPW42"), std::string::npos) << raw;
 
-  // Scramble memory (clearCredentials also persists, so restore the file
-  // after), then reload from disk.
-  KOREADER_STORE.clearCredentials();
+  // Scramble memory, then reload from disk.
+  KOREADER_STORE.setCredentials("", "");
   KOREADER_STORE.setServerUrl("");
   writeDeviceFile("/.crosspoint/koreader.json", raw);
   ASSERT_TRUE(KOREADER_STORE.loadFromFile());

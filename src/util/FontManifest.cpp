@@ -5,6 +5,24 @@
 #include <algorithm>
 #include <cstring>
 
+namespace {
+
+// Reads a manifest string field, refusing anything longer than maxLength: the
+// manifest comes from the network and the parsed model lives in the device heap.
+std::string boundedManifestField(JsonObjectConst obj, const char* key, const size_t maxLength) {
+  const char* value = obj[key] | static_cast<const char*>(nullptr);
+  if (value == nullptr) {
+    return {};
+  }
+  if (strnlen(value, maxLength + 1) > maxLength) {
+    LOG_ERR("FONT", "Manifest field '%s' exceeds %zu bytes; ignored", key, maxLength);
+    return {};
+  }
+  return std::string(value);
+}
+
+}  // namespace
+
 FontManifestError parseFontManifest(JsonDocument& doc, std::string& baseUrl,
                                     std::vector<std::string>& scriptGroupLabels,
                                     std::vector<FontManifestFamily>& families) {
@@ -37,15 +55,26 @@ FontManifestError parseFontManifest(JsonDocument& doc, std::string& baseUrl,
   }
 
   JsonArray familiesArr = doc["families"].as<JsonArray>();
-  families.reserve(familiesArr.size());
+  const size_t familyCount = std::min(familiesArr.size(), FONT_MANIFEST_MAX_FAMILIES);
+  if (familiesArr.size() > FONT_MANIFEST_MAX_FAMILIES) {
+    LOG_ERR("FONT", "Manifest lists %zu families; keeping the first %zu", familiesArr.size(),
+            FONT_MANIFEST_MAX_FAMILIES);
+  }
+  families.reserve(familyCount);
 
   for (JsonObject fObj : familiesArr) {
+    if (families.size() >= FONT_MANIFEST_MAX_FAMILIES) break;
     FontManifestFamily family;
-    family.name = fObj["name"] | "";
-    family.description = fObj["description"] | "";
+    family.name = boundedManifestField(fObj, "name", FONT_MANIFEST_MAX_NAME_BYTES);
+    family.description = boundedManifestField(fObj, "description", FONT_MANIFEST_MAX_DESCRIPTION_BYTES);
 
     for (JsonVariant s : fObj["styles"].as<JsonArray>()) {
-      family.styles.push_back(s.as<std::string>());
+      if (family.styles.size() >= FONT_MANIFEST_MAX_STYLES_PER_FAMILY) break;
+      const char* style = s.as<const char*>();
+      if (style == nullptr || strnlen(style, FONT_MANIFEST_MAX_NAME_BYTES + 1) > FONT_MANIFEST_MAX_NAME_BYTES) {
+        continue;
+      }
+      family.styles.emplace_back(style);
     }
 
     for (JsonVariant script : fObj["scripts"].as<JsonArray>()) {
@@ -63,8 +92,13 @@ FontManifestError parseFontManifest(JsonDocument& doc, std::string& baseUrl,
 
     family.totalSize = 0;
     for (JsonObject fileObj : fObj["files"].as<JsonArray>()) {
+      if (family.files.size() >= FONT_MANIFEST_MAX_FILES_PER_FAMILY) {
+        LOG_ERR("FONT", "Family '%s' lists more than %zu files; the rest are ignored", family.name.c_str(),
+                FONT_MANIFEST_MAX_FILES_PER_FAMILY);
+        break;
+      }
       FontManifestFile file;
-      file.name = fileObj["name"] | "";
+      file.name = boundedManifestField(fileObj, "name", FONT_MANIFEST_MAX_NAME_BYTES);
       file.size = fileObj["size"] | 0;
 
       if (!fileObj["crc32"].is<uint32_t>()) {

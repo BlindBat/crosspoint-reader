@@ -22,6 +22,14 @@ bool PersistableStoreBase::readDocFromFile(const char* path, JsonDocument& doc) 
   if (!Storage.exists(path)) {
     return false;  // Expected on first boot — not an error.
   }
+  // Check the size before pulling the file into RAM: readFile() would happily
+  // allocate whatever the card holds.
+  const size_t bytes = Storage.fileSize(path);
+  if (bytes > MAX_STORE_FILE_BYTES) {
+    LOG_ERR("PERSIST", "%s is %zu bytes, over the %zu-byte limit", path, bytes, MAX_STORE_FILE_BYTES);
+    return false;
+  }
+
   String json = Storage.readFile(path);
   if (json.isEmpty()) {
     LOG_ERR("PERSIST", "Failed to read %s (empty)", path);
@@ -33,6 +41,21 @@ bool PersistableStoreBase::readDocFromFile(const char* path, JsonDocument& doc) 
     return false;
   }
   return true;
+}
+
+std::string PersistableStoreBase::boundedField(JsonVariantConst obj, const char* key, const size_t maxLength) {
+  // Read as const char* (never | std::string("")): the std::string converter
+  // drags a copy of the serializer into every translation unit.
+  const char* value = obj[key] | static_cast<const char*>(nullptr);
+  if (value == nullptr) {
+    return {};
+  }
+  const size_t length = strnlen(value, maxLength + 1);
+  if (length > maxLength) {
+    LOG_ERR("PERSIST", "Field '%s' exceeds %zu bytes; ignored", key, maxLength);
+    return {};
+  }
+  return std::string(value, length);
 }
 
 std::string PersistableStoreBase::extractPassword(JsonVariantConst doc, bool& needsResave) {

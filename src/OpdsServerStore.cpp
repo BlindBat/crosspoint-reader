@@ -28,10 +28,15 @@ bool OpdsServerStore::fromJson(JsonVariantConst doc) {
   for (JsonObjectConst obj : arr) {
     if (servers.size() >= OpdsServerStore::MAX_SERVERS) break;
     OpdsServer server;
-    server.name = obj["name"] | "";
-    server.url = obj["url"] | "";
-    server.username = obj["username"] | "";
-    server.password = extractPassword(obj, needsResave);
+    server.name = boundedField(obj, "name", MAX_NAME_BYTES);
+    server.url = boundedField(obj, "url", MAX_URL_BYTES);
+    server.username = boundedField(obj, "username", MAX_USERNAME_BYTES);
+    bool passwordValid = false;
+    server.password = extractPassword(obj, needsResave, MAX_PASSWORD_BYTES, passwordValid);
+    if (!passwordValid) {
+      LOG_ERR("OPS", "Password for '%s' exceeds %zu bytes; dropped", server.name.c_str(), MAX_PASSWORD_BYTES);
+      server.password.clear();
+    }
     servers.push_back(std::move(server));
   }
 
