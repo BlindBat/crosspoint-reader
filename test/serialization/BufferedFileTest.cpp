@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "TestFileUtil.h"
+#include "test/support/AllocCounter.h"
 
 namespace {
 
@@ -465,12 +466,37 @@ TEST_F(BufferedFileTest, BufferedReadStringRejectsLengthAboveMax) {
 }
 
 TEST_F(BufferedFileTest, BufferedReadStringRejectsLyingLength) {
-  // No size oracle behind the buffered reader, so a length that is under the
-  // cap but past the end of the file is only caught by the short read.
+  // Under the cap but past the end of the file: the reader knows how many bytes
+  // remain, so the claim is refused before resize() allocates from it.
   const TempPath path("rt_lying");
   std::vector<uint8_t> bytes;
   testutil::appendU32(bytes, 4096);
   testutil::appendChars(bytes, "nine byte");
+  testutil::writeRaw(path.c_str(), bytes);
+
+  HalFile in;
+  ASSERT_TRUE(Storage.openFileForRead("TEST", path.c_str(), in));
+  serialization::BufferedFileReader reader(in, kCap);  // its buffer is allocated outside the counted scope
+  std::string s = "sentinel";                          // short enough to stay inside the small-string buffer
+  bool ok = true;
+  size_t allocations = 0;
+  {
+    const alloc_counter::CountingScope scope;
+    ok = serialization::readString(reader, s);
+    allocations = scope.count();
+  }
+  EXPECT_FALSE(ok);
+  EXPECT_TRUE(s.empty());
+  EXPECT_EQ(allocations, 0u);
+}
+
+TEST_F(BufferedFileTest, BufferedReadStringRejectsLengthOneByteBeyondEof) {
+  // Tight boundary for the remaining-bytes check: the payload is one byte short
+  // of the claim.
+  const TempPath path("rt_off_by_one");
+  std::vector<uint8_t> bytes;
+  testutil::appendU32(bytes, 5);
+  testutil::appendChars(bytes, "four");
   testutil::writeRaw(path.c_str(), bytes);
 
   HalFile in;

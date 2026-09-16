@@ -360,6 +360,86 @@ TEST(ZipFileTest, StoredEntryWithMismatchedSizesIsRejected) {
   EXPECT_FALSE(zip.readFileToStream("stored.txt", out, 64));
 }
 
+namespace {
+
+// Byte-patch a fixture's EOCD in a temp copy: overwrite the entry counts (this
+// disk at +8, total at +10) and, when cdSize is non-null, the declared
+// central-directory size (+12). Everything else is left intact.
+std::string patchEocd(const char* fixture, uint16_t totalEntries, const uint32_t* cdSize, const char* tag) {
+  std::ifstream in(res(fixture), std::ios::binary);
+  std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  EXPECT_FALSE(bytes.empty());
+
+  const char sig[4] = {0x50, 0x4b, 0x05, 0x06};
+  const size_t pos = bytes.rfind(sig, std::string::npos, 4);
+  EXPECT_NE(std::string::npos, pos) << "no EOCD in fixture: " << fixture;
+  if (pos != std::string::npos && pos + 22 <= bytes.size()) {
+    std::memcpy(&bytes[pos + 8], &totalEntries, sizeof(totalEntries));
+    std::memcpy(&bytes[pos + 10], &totalEntries, sizeof(totalEntries));
+    if (cdSize != nullptr) std::memcpy(&bytes[pos + 12], cdSize, sizeof(*cdSize));
+  }
+
+  const std::string outPath = ::testing::TempDir() + "eocd_" + tag + ".zip";
+  std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
+  out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  out.close();
+  return outPath;
+}
+
+// Largest single allocation loadAllFileStatSlims may make while refusing a
+// lying entry count. Reserving for 65535 entries costs ~256KB of hash buckets
+// on the 32-bit device -- unsurvivable on a 380KB heap -- so the bound sits far
+// below that and far above the few hundred bytes a real scan needs.
+constexpr size_t kSlimReserveCap = 16 * 1024;
+
+// Runs loadAllFileStatSlims under the allocation guard.
+bool loadSlimsTrackingAllocs(ZipFile& zip, size_t* maxAlloc) {
+  allocguard::TrackScope guard;
+  const bool loaded = zip.loadAllFileStatSlims();
+  *maxAlloc = allocguard::maxSingle;
+  return loaded;
+}
+
+}  // namespace
+
+// The EOCD entry count drives loadAllFileStatSlims' reserve, so it is validated
+// against the directory that must hold those records before it is trusted: 46
+// bytes is the fixed part of one central-directory header, so C bytes describe
+// at most C / 46 entries. good.zip's directory is 175 bytes -- room for 3
+// records, nowhere near 65535.
+TEST(ZipFileTest, LoadAllFileStatSlimsRejectsEntryCountTooLargeForCentralDirectory) {
+  const std::string path = patchEocd("good.zip", 65535, nullptr, "count_only");
+  ZipFile zip(path);
+  size_t maxAlloc = 0;
+  const bool loaded = loadSlimsTrackingAllocs(zip, &maxAlloc);
+  EXPECT_FALSE(loaded);
+  EXPECT_LT(maxAlloc, kSlimReserveCap) << "reserved from the declared entry count";
+}
+
+// The declared directory size is untrusted too, so inflating it cannot launder
+// the entry count: it is clamped to the bytes physically between the directory
+// and the EOCD.
+TEST(ZipFileTest, LoadAllFileStatSlimsClampsDeclaredCentralDirectorySize) {
+  constexpr uint32_t hugeCdSize = 0xFFFFFFF0u;
+  const std::string path = patchEocd("good.zip", 65535, &hugeCdSize, "count_and_size");
+  ZipFile zip(path);
+  size_t maxAlloc = 0;
+  const bool loaded = loadSlimsTrackingAllocs(zip, &maxAlloc);
+  EXPECT_FALSE(loaded);
+  EXPECT_LT(maxAlloc, kSlimReserveCap) << "declared central-directory size was taken at face value";
+}
+
+// A ZIP64 archive's legacy EOCD carries 0xFFFF entries and a 0xFFFFFFFF
+// directory offset. Nothing physically precedes that offset, so no positive
+// entry count is credible and the slim-stat load is refused before reserving.
+TEST(ZipFileTest, LoadAllFileStatSlimsRejectsZip64SentinelEntryCount) {
+  OwnedZip zip("zip64.zip");
+  size_t maxAlloc = 0;
+  const bool loaded = loadSlimsTrackingAllocs(*zip, &maxAlloc);
+  EXPECT_FALSE(loaded);
+  EXPECT_LT(maxAlloc, kSlimReserveCap);
+}
+
 TEST(ZipFileTest, GarbageDeflateStreamIsRejectedWithoutHugeAllocation) {
   OwnedZip zip("garbage_deflate.zip");
   uint8_t* data = nullptr;

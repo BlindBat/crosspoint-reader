@@ -17,6 +17,9 @@ class ZipFile {
 
   struct ZipDetails {
     uint32_t centralDirOffset;
+    // Bytes the central directory can occupy: the EOCD's declared size clamped
+    // to what physically precedes the EOCD, so neither field can overstate it.
+    uint32_t centralDirSize;
     uint16_t totalEntries;
     bool isSet;
   };
@@ -41,7 +44,7 @@ class ZipFile {
  private:
   const std::string& filePath;
   HalFile file;
-  ZipDetails zipDetails = {0, 0, false};
+  ZipDetails zipDetails = {0, 0, 0, false};
   std::unordered_map<std::string, FileStatSlim> fileStatSlimCache;
 
   // Cursor for sequential central-dir scanning optimization

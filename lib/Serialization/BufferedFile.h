@@ -115,6 +115,15 @@ class BufferedFileReader {
   // Logical read position.
   size_t position() const { return bufStart + off; }
 
+  // Bytes between the logical read position and the end of the file. The
+  // wrapper is the file's only accessor, so the underlying size stays a valid
+  // bound even while the buffer has run ahead of the logical position.
+  size_t remaining() const {
+    const size_t total = file.size();
+    const size_t here = position();
+    return here < total ? total - here : 0;
+  }
+
   bool seek(const size_t target) {
     // Within the buffered window: just move the cursor.
     if (cap != 0 && target >= bufStart && target < bufStart + fill) {
@@ -157,7 +166,14 @@ inline void writeString(BufferedFileWriter& out, const std::string& s) {
 
 inline bool readString(BufferedFileReader& in, std::string& s, const uint32_t maxLen = MAX_STRING_LENGTH) {
   uint32_t len;
-  if (!readPod(in, len) || len > maxLen) {
+  if (!readPod(in, len)) {
+    s.clear();
+    return false;
+  }
+  // The length prefix comes off the SD card untrusted. Reject anything over the
+  // cap, or longer than the bytes left in the file, before resize() allocates
+  // from it -- a failed resize aborts a -fno-exceptions build.
+  if (len > maxLen || len > in.remaining()) {
     s.clear();
     return false;
   }

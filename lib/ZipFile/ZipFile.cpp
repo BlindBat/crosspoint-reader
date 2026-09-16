@@ -29,6 +29,12 @@ constexpr uint16_t ZIP_METHOD_DEFLATED = 8;
 // anything big goes through readFileToStream, which allocates per-chunk.
 constexpr uint32_t MAX_IN_MEMORY_UNCOMPRESSED_SIZE = 256 * 1024;
 
+// Fixed part of a central-directory file header (APPNOTE 4.3.12), before the
+// name, extra field and comment each record also carries. It is therefore the
+// smallest an entry can possibly be, and the divisor that turns a directory
+// size into the most entries it could describe.
+constexpr uint32_t MIN_CENTRAL_DIRECTORY_ENTRY_SIZE = 46;
+
 // RAII zip: opens the zip if not already open, closes on destruction only if
 // it performed the open.  Removes the wasOpen/close boilerplate from every method.
 class ScopedOpenClose final {
@@ -97,6 +103,18 @@ bool ZipFile::loadAllFileStatSlims() {
   if (!zip) return false;
 
   if (!loadZipDetails()) return false;
+
+  // The entry count is the archive's own claim and it sizes the reserve below,
+  // so check it against the directory that has to hold those records: C bytes
+  // cannot describe more than C / 46 entries. Without this a 0xFFFF count
+  // reserves ~256KB of hash buckets on a 380KB device before a single entry is
+  // read.
+  const uint32_t maxPossibleEntries = zipDetails.centralDirSize / MIN_CENTRAL_DIRECTORY_ENTRY_SIZE;
+  if (zipDetails.totalEntries > maxPossibleEntries) {
+    LOG_ERR("ZIP", "Central directory of %u bytes cannot hold the %u entries claimed",
+            static_cast<unsigned>(zipDetails.centralDirSize), static_cast<unsigned>(zipDetails.totalEntries));
+    return false;
+  }
 
   file.seek(zipDetails.centralDirOffset);
 
@@ -297,14 +315,27 @@ bool ZipFile::loadZipDetails() {
   // Now extract the values we need from the EOCD record
   // Relative positions within EOCD:
   // Offset 10: Total number of entries (2 bytes)
+  // Offset 12: Size of the central directory (4 bytes)
   // Offset 16: Offset of start of central directory with respect to the starting disk number (4 bytes)
   // Assemble little-endian fields byte-wise: foundOffset is an arbitrary byte
   // position, so wider loads through a cast would be misaligned (UB).
   zipDetails.totalEntries =
       static_cast<uint16_t>(buffer[foundOffset + 10]) | static_cast<uint16_t>(buffer[foundOffset + 11]) << 8;
+  const uint32_t declaredCentralDirSize =
+      static_cast<uint32_t>(buffer[foundOffset + 12]) | static_cast<uint32_t>(buffer[foundOffset + 13]) << 8 |
+      static_cast<uint32_t>(buffer[foundOffset + 14]) << 16 | static_cast<uint32_t>(buffer[foundOffset + 15]) << 24;
   zipDetails.centralDirOffset =
       static_cast<uint32_t>(buffer[foundOffset + 16]) | static_cast<uint32_t>(buffer[foundOffset + 17]) << 8 |
       static_cast<uint32_t>(buffer[foundOffset + 18]) << 16 | static_cast<uint32_t>(buffer[foundOffset + 19]) << 24;
+
+  // Both EOCD size fields are untrusted. The directory ends where the EOCD
+  // begins, so the bytes between the declared offset and that position bound
+  // the directory physically; keep the smaller of that and the declared size
+  // (a ZIP64 archive parks 0xFFFFFFFF in both, which the clamp absorbs).
+  const size_t eocdPosition = fileSize - static_cast<size_t>(scanRange) + static_cast<size_t>(foundOffset);
+  const uint64_t physicalSpan =
+      eocdPosition > zipDetails.centralDirOffset ? eocdPosition - zipDetails.centralDirOffset : 0;
+  zipDetails.centralDirSize = static_cast<uint32_t>(std::min<uint64_t>(declaredCentralDirSize, physicalSpan));
   zipDetails.isSet = true;
 
   free(buffer);

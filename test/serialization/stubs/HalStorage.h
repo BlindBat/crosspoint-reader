@@ -100,6 +100,13 @@ class HalStorage {
   bool openFileForRead(const char*, const char* path, HalFile& file) { return file.open(path, "rb"); }
   bool openFileForWrite(const char*, const char* path, HalFile& file) { return file.open(path, "wb+"); }
 
+  // Path-based size query (HalStorage::fileSize): 0 for missing paths and directories.
+  size_t fileSize(const char* path) {
+    struct ::stat st{};
+    if (::stat(path, &st) != 0 || S_ISDIR(st.st_mode)) return 0;
+    return static_cast<size_t>(st.st_size);
+  }
+
   bool exists(const char* path) {
     struct stat st{};
     return ::stat(path, &st) == 0;
