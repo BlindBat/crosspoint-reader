@@ -9,6 +9,7 @@
 
 #include "CrossPointSettings.h"
 #include "ReaderActivity.h"
+#include "ReaderProgressGuard.h"
 
 class TxtReaderActivity final : public ReaderActivity {
   std::unique_ptr<Txt> txt;
@@ -32,6 +33,9 @@ class TxtReaderActivity final : public ReaderActivity {
   int cachedOrientedMarginBottom = 0;
   int cachedOrientedMarginLeft = 0;
 
+  // Skips a progress.bin write when the page has not moved.
+  ReaderProgressGuard progressGuard;
+
   TxtPageIndex::Layout pageLayout() const;
   TxtPageIndex::CacheKey cacheKey() const;
   void renderPage(GfxRenderer& renderer);
@@ -40,7 +44,7 @@ class TxtReaderActivity final : public ReaderActivity {
   void buildPageIndex(GfxRenderer& renderer);
   bool loadPageIndexCache();
   void savePageIndexCache() const;
-  void saveProgress() const;
+  void saveProgress();
   void loadProgress();
   void renderStatusBar() const;
 

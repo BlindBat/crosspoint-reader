@@ -20,6 +20,7 @@
 #include "FontInstaller.h"
 #include "OpdsServerStore.h"
 #include "SdCardFontSystem.h"
+#include "SettingsApply.h"
 #include "SettingsList.h"
 #include "WebDAVHandler.h"
 #include "WebPathUtils.h"
@@ -1256,11 +1257,11 @@ void CrossPointWebServer::handlePostSettings() {
 
     switch (s.type) {
       case SettingType::TOGGLE: {
-        const int val = doc[s.key].as<int>() ? 1 : 0;
-        if (s.valuePtr) {
-          SETTINGS.*(s.valuePtr) = val;
+        // A toggle posted at its current value changes nothing on disk, so it
+        // does not count as applied and cannot trigger a settings.json write.
+        if (settings_apply::applyToggle(s, doc[s.key].as<int>())) {
+          applied++;
         }
-        applied++;
         break;
       }
       case SettingType::ENUM: {
@@ -1311,7 +1312,9 @@ void CrossPointWebServer::handlePostSettings() {
     }
   }
 
-  SETTINGS.saveToFile();
+  if (settings_apply::needsSettingsSave(applied)) {
+    SETTINGS.saveToFile();
+  }
 
   LOG_DBG("WEB", "Applied %d setting(s)", applied);
   server->send(200, "text/plain", String("Applied ") + String(applied) + " setting(s)");

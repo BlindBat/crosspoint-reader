@@ -12,7 +12,6 @@
 #include <algorithm>
 
 #include "CrossPointSettings.h"
-#include "ProgressFile.h"
 #include "ReaderActivity.h"
 #include "ReaderUtils.h"
 #include "components/UITheme.h"
@@ -285,10 +284,10 @@ bool TxtReaderActivity::isAtEndOfBook() const { return initialized && currentPag
 
 void TxtReaderActivity::onReturnFromEndOfBook() { currentPage = totalPages > 0 ? totalPages - 1 : 0; }
 
-void TxtReaderActivity::saveProgress() const {
+void TxtReaderActivity::saveProgress() {
   uint8_t data[TxtPageIndex::PROGRESS_SIZE];
   TxtPageIndex::encodeProgress(currentPage, data);
-  if (!ProgressFile::writeAtomic(txt->getCachePath(), data, sizeof(data))) {
+  if (!progressGuard.save(txt->getCachePath(), currentPage, data, sizeof(data))) {
     LOG_ERR("TRS", "Failed to save progress: page %d", currentPage);
   }
 }
@@ -299,6 +298,8 @@ void TxtReaderActivity::loadProgress() {
     uint8_t data[TxtPageIndex::PROGRESS_SIZE];
     if (f.read(data, sizeof(data)) == static_cast<int>(sizeof(data))) {
       currentPage = TxtPageIndex::decodeProgress(data, totalPages);
+      // progress.bin already holds this page, so the first render must not rewrite it.
+      progressGuard.markSaved(currentPage);
       LOG_DBG("TRS", "Loaded progress: page %d/%d", currentPage, totalPages);
     }
   }

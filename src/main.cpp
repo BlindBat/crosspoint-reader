@@ -225,8 +225,10 @@ bool handleX4ProFrontlightDoubleClick() {
   lastX4ProPowerClickAt = 0;
   const bool lightOn = !Frontlight.isOn();
   Frontlight.setOn(lightOn);
-  SETTINGS.frontlightOn = lightOn ? 1 : 0;
-  SETTINGS.saveToFile();
+  if (SETTINGS.frontlightOn != (lightOn ? 1 : 0)) {
+    SETTINGS.frontlightOn = lightOn ? 1 : 0;
+    SETTINGS.saveToFile();
+  }
   LOG_INF("LIGHT", "Frontlight toggled %s by power-button double-click", lightOn ? "on" : "off");
   return true;
 }
@@ -267,12 +269,17 @@ void enterDeepSleep(bool fromTimeout = false) {
   // it visible until the first useful reader or home paint replaces it.
   APP_STATE.showBootScreen = false;
 
-  APP_STATE.saveToFile();
-
   // Commit to sleeping before goToSleep() runs the outgoing activity's onExit():
   // a WiFi activity would otherwise silentRestart() here and reboot instead.
   deepSleepInProgress = true;
   activityManager.goToSleep(fromTimeout);
+
+  // One state.json write per sleep, after the sleep screen has picked its
+  // wallpaper: it carries lastSleepFromReader, the cleared showBootScreen and
+  // SleepActivity's recent-wallpaper ring in a single serialize + SD write.
+  // Anything that aborts before this point leaves showBootScreen set, so the
+  // next boot shows the splash instead of a splashless wake with no frame.
+  APP_STATE.saveToFile();
 
   if (isQuickResumeSleep) {
     saveSleepFrameBuffer();

@@ -21,6 +21,9 @@ bool OpdsServerStore::fromJson(JsonVariantConst doc) {
   // Tolerate a missing/invalid 'servers' key (treat as empty list); only a
   // JSON parse error is fatal. A null JsonArray iterates zero times.
   servers.clear();
+  // The list now comes from the file, so an earlier failed save no longer
+  // describes a divergence.
+  saveFailed = false;
   JsonArrayConst arr = doc["servers"].as<JsonArrayConst>();
   servers.reserve(std::min(arr.size(), MAX_SERVERS));
   bool needsResave = false;
@@ -50,6 +53,11 @@ bool OpdsServerStore::fromJson(JsonVariantConst doc) {
   return true;
 }
 
+bool OpdsServerStore::persist() {
+  saveFailed = !saveToFile();
+  return !saveFailed;
+}
+
 bool OpdsServerStore::addServer(const OpdsServer& server) {
   if (servers.size() >= MAX_SERVERS) {
     LOG_DBG("OPS", "Cannot add more servers, limit of %zu reached", MAX_SERVERS);
@@ -58,7 +66,7 @@ bool OpdsServerStore::addServer(const OpdsServer& server) {
 
   servers.push_back(server);
   LOG_DBG("OPS", "Added server: %s", server.name.c_str());
-  return saveToFile();
+  return persist();
 }
 
 bool OpdsServerStore::updateServer(size_t index, const OpdsServer& server) {
@@ -66,9 +74,14 @@ bool OpdsServerStore::updateServer(size_t index, const OpdsServer& server) {
     return false;
   }
 
+  if (!saveFailed && servers[index] == server) {
+    // Nothing on disk would change; skip the serialize and the SD write.
+    return true;
+  }
+
   servers[index] = server;
   LOG_DBG("OPS", "Updated server: %s", server.name.c_str());
-  return saveToFile();
+  return persist();
 }
 
 bool OpdsServerStore::removeServer(size_t index) {
@@ -78,7 +91,7 @@ bool OpdsServerStore::removeServer(size_t index) {
 
   LOG_DBG("OPS", "Removed server: %s", servers[index].name.c_str());
   servers.erase(servers.begin() + static_cast<ptrdiff_t>(index));
-  return saveToFile();
+  return persist();
 }
 
 const OpdsServer* OpdsServerStore::getServer(size_t index) const {

@@ -7,7 +7,6 @@
 #include <Memory.h>
 
 #include "CrossPointSettings.h"
-#include "ProgressFile.h"
 #include "ReaderActivity.h"
 #include "ReaderUtils.h"
 #include "XtcReaderChapterSelectionActivity.h"
@@ -305,14 +304,14 @@ void XtcReaderActivity::onReturnFromEndOfBook() {
   }
 }
 
-void XtcReaderActivity::saveProgress() const {
+void XtcReaderActivity::saveProgress() {
   if (!xtc) return;
   uint8_t data[4];
   data[0] = currentPage & 0xFF;
   data[1] = (currentPage >> 8) & 0xFF;
   data[2] = (currentPage >> 16) & 0xFF;
   data[3] = (currentPage >> 24) & 0xFF;
-  if (!ProgressFile::writeAtomic(xtc->getCachePath(), data, sizeof(data))) {
+  if (!progressGuard.save(xtc->getCachePath(), static_cast<int>(currentPage), data, sizeof(data))) {
     LOG_ERR("XTC", "Failed to save progress: page %lu", currentPage);
   }
 }
@@ -324,6 +323,8 @@ void XtcReaderActivity::loadProgress() {
     uint8_t data[4];
     if (f.read(data, 4) == 4) {
       currentPage = xtc_reader::decodeProgress(data, xtc->getPageCount());
+      // progress.bin already holds this page, so the first render must not rewrite it.
+      progressGuard.markSaved(static_cast<int>(currentPage));
       LOG_DBG("XTC", "Loaded progress: page %lu/%lu", currentPage + 1, xtc->getPageCount());
     }
   }

@@ -23,6 +23,7 @@
 #include <unistd.h>
 
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 #include "CrossPointSettings.h"
@@ -30,7 +31,9 @@
 #include "KOReaderCredentialStore.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
+#include "SettingsList.h"
 #include "WifiCredentialStore.h"
+#include "network/SettingsApply.h"
 
 namespace {
 
@@ -264,6 +267,41 @@ TEST_F(CrossPointStateTest, FillClampedToArraySizeAndOversizeArrayTruncated) {
   ASSERT_TRUE(APP_STATE.loadFromFile());
   EXPECT_EQ(APP_STATE.recentSleepFill, 16);
   EXPECT_EQ(APP_STATE.recentSleepImages[15], 16);
+}
+
+// One sleep cycle used to write state.json three times: enterDeepSleep()
+// (lastSleepFromReader + showBootScreen), SleepActivity's wallpaper picker
+// (the recent ring) and the splashless wake (re-arming showBootScreen). The
+// first two now share the single save enterDeepSleep() performs after the
+// sleep screen has been chosen, so that save must carry all of it.
+TEST_F(CrossPointStateTest, OneSleepWriteCarriesFlagsAndWallpaperRing) {
+  APP_STATE.openEpubPath = "/books/open.epub";
+  APP_STATE.recentSleepPos = 0;
+  APP_STATE.recentSleepFill = 0;
+  memset(APP_STATE.recentSleepImages, 0, sizeof(APP_STATE.recentSleepImages));
+
+  // enterDeepSleep() sets the flags, then SleepActivity pushes the wallpaper it
+  // picked; neither touches the SD card until the single save below.
+  APP_STATE.lastSleepFromReader = true;
+  APP_STATE.showBootScreen = false;
+  APP_STATE.pushRecentSleep(42);
+  EXPECT_EQ(Storage.writeCount, 0);
+
+  ASSERT_TRUE(APP_STATE.saveToFile());
+  EXPECT_EQ(Storage.writeCount, 1);
+  ASSERT_EQ(Storage.writtenPaths.size(), 1u);
+  EXPECT_EQ(Storage.writtenPaths[0], "/.crosspoint/state.json");
+
+  // Wake reads it back: nothing the three writes used to persist is lost.
+  APP_STATE.lastSleepFromReader = false;
+  APP_STATE.showBootScreen = true;
+  APP_STATE.recentSleepFill = 0;
+  ASSERT_TRUE(APP_STATE.loadFromFile());
+  EXPECT_TRUE(APP_STATE.lastSleepFromReader);
+  EXPECT_FALSE(APP_STATE.showBootScreen);
+  EXPECT_EQ(APP_STATE.openEpubPath, "/books/open.epub");
+  EXPECT_EQ(APP_STATE.recentSleepFill, 1);
+  EXPECT_TRUE(APP_STATE.isRecentSleep(42, 1));
 }
 
 TEST_F(CrossPointStateTest, LegacyLastSleepImageSeedsRing) {
@@ -968,6 +1006,74 @@ TEST_F(OpdsTest, UpdateAndRemoveCheckBounds) {
   EXPECT_FALSE(OPDS_STORE.hasServers());
 }
 
+TEST_F(OpdsTest, UpdateWithAnIdenticalServerWritesNothing) {
+  ASSERT_TRUE(OPDS_STORE.addServer({"Calibre", "http://192.168.1.2:8080/opds", "reader", "s3cretPW"}));
+  const OpdsServer same = *OPDS_STORE.getServer(0);
+  Storage.resetCounters();
+
+  // The server editor re-saves after every field, including the ones the
+  // keyboard handed back untouched.
+  EXPECT_TRUE(OPDS_STORE.updateServer(0, same));
+  EXPECT_TRUE(OPDS_STORE.updateServer(0, same));
+  EXPECT_EQ(Storage.writeCount, 0);
+  EXPECT_EQ(*OPDS_STORE.getServer(0), same);
+
+  // Any single field moving still persists.
+  OpdsServer edited = same;
+  edited.password = "newPW";
+  EXPECT_TRUE(OPDS_STORE.updateServer(0, edited));
+  EXPECT_EQ(Storage.writeCount, 1);
+  EXPECT_EQ(OPDS_STORE.getServer(0)->password, "newPW");
+
+  Storage.resetCounters();
+  for (const auto& field : {0, 1, 2}) {
+    OpdsServer moved = edited;
+    if (field == 0) moved.name = "Renamed";
+    if (field == 1) moved.url = "http://elsewhere/opds";
+    if (field == 2) moved.username = "other";
+    EXPECT_TRUE(OPDS_STORE.updateServer(0, moved));
+    edited = moved;
+  }
+  EXPECT_EQ(Storage.writeCount, 3);
+}
+
+TEST_F(OpdsTest, UnchangedUpdateSurvivesAReload) {
+  ASSERT_TRUE(OPDS_STORE.addServer({"Calibre", "http://x/opds", "reader", "pw"}));
+  const OpdsServer same = *OPDS_STORE.getServer(0);
+  Storage.resetCounters();
+  EXPECT_TRUE(OPDS_STORE.updateServer(0, same));
+  EXPECT_EQ(Storage.writeCount, 0);
+
+  // The skipped write loses nothing: opds.json still describes the server.
+  ASSERT_TRUE(OPDS_STORE.loadFromFile());
+  ASSERT_EQ(OPDS_STORE.getCount(), 1u);
+  EXPECT_EQ(*OPDS_STORE.getServer(0), same);
+}
+
+TEST_F(OpdsTest, AFailedSaveIsRetriedEvenWhenTheRecordIsUnchanged) {
+  ASSERT_TRUE(OPDS_STORE.addServer({"Calibre", "http://x/opds", "reader", "pw"}));
+  OpdsServer edited = *OPDS_STORE.getServer(0);
+  edited.url = "http://y/opds";
+
+  Storage.resetCounters();
+  Storage.failNextWrite = true;
+  EXPECT_FALSE(OPDS_STORE.updateServer(0, edited));
+  EXPECT_EQ(Storage.writeCount, 1);
+
+  // opds.json still carries the old URL while the list in memory has the new
+  // one, so the unchanged-record guard must not swallow the retry.
+  EXPECT_TRUE(OPDS_STORE.updateServer(0, edited));
+  EXPECT_EQ(Storage.writeCount, 2);
+
+  ASSERT_TRUE(OPDS_STORE.loadFromFile());
+  EXPECT_EQ(OPDS_STORE.getServer(0)->url, "http://y/opds");
+
+  // Once the write has landed, the guard is armed again.
+  Storage.resetCounters();
+  EXPECT_TRUE(OPDS_STORE.updateServer(0, edited));
+  EXPECT_EQ(Storage.writeCount, 0);
+}
+
 TEST_F(OpdsTest, MissingOrWrongTypedServersKeyLoadsEmpty) {
   ASSERT_TRUE(OPDS_STORE.addServer({"S", "http://x", "", ""}));
   writeDeviceFile("/.crosspoint/opds.json", "{\"servers\":\"oops\"}");
@@ -1235,6 +1341,77 @@ TEST_F(KoReaderTest, MissingSyncBehaviorDefaultsToAskAndResaves) {
   EXPECT_EQ(KOREADER_STORE.getSyncBehavior(), KOReaderSyncBehavior::ASK_EVERY_TIME);
   EXPECT_EQ(KOREADER_STORE.getMatchMethod(), DocumentMatchMethod::BINARY);
   EXPECT_EQ(Storage.writeCount, 1);
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/settings write guards (src/network/SettingsApply.h, used by
+// CrossPointWebServer::handlePostSettings)
+// ---------------------------------------------------------------------------
+
+class SettingsApplyTest : public StoreTest {
+ protected:
+  // First TOGGLE entry that the web API exposes on this board.
+  static const SettingInfo& anyToggle() {
+    static const std::vector<SettingInfo> list = getSettingsList();
+    for (const auto& info : list) {
+      if (info.type == SettingType::TOGGLE && info.key != nullptr && info.valuePtr != nullptr) return info;
+    }
+    ADD_FAILURE() << "SettingsList exposes no web-visible toggle";
+    static const SettingInfo none{};
+    return none;
+  }
+};
+
+TEST_F(SettingsApplyTest, ToggleAtItsCurrentValueIsNotAppliedAndWritesNothing) {
+  const SettingInfo& toggle = anyToggle();
+  ASSERT_NE(toggle.valuePtr, nullptr);
+  SETTINGS.*(toggle.valuePtr) = 1;
+  Storage.resetCounters();
+
+  int applied = 0;
+  if (settings_apply::applyToggle(toggle, 1)) applied++;
+  // A JSON true/1 and any other non-zero mean the same stored 1.
+  if (settings_apply::applyToggle(toggle, 7)) applied++;
+  EXPECT_EQ(applied, 0);
+
+  if (settings_apply::needsSettingsSave(applied)) SETTINGS.saveToFile();
+  EXPECT_EQ(Storage.writeCount, 0);
+  EXPECT_EQ(SETTINGS.*(toggle.valuePtr), 1);
+}
+
+TEST_F(SettingsApplyTest, ToggleThatMovesIsAppliedAndPersisted) {
+  const SettingInfo& toggle = anyToggle();
+  ASSERT_NE(toggle.valuePtr, nullptr);
+  SETTINGS.*(toggle.valuePtr) = 1;
+  Storage.resetCounters();
+
+  int applied = 0;
+  if (settings_apply::applyToggle(toggle, 0)) applied++;
+  EXPECT_EQ(applied, 1);
+  EXPECT_EQ(SETTINGS.*(toggle.valuePtr), 0);
+
+  ASSERT_TRUE(settings_apply::needsSettingsSave(applied));
+  ASSERT_TRUE(SETTINGS.saveToFile());
+  EXPECT_EQ(Storage.writeCount, 1);
+  ASSERT_EQ(Storage.writtenPaths.size(), 1u);
+  EXPECT_EQ(Storage.writtenPaths[0], "/.crosspoint/settings.json");
+
+  // The skipped writes lose nothing: the value that did move is on disk.
+  SETTINGS.*(toggle.valuePtr) = 1;
+  ASSERT_TRUE(SETTINGS.loadFromFile());
+  EXPECT_EQ(SETTINGS.*(toggle.valuePtr), 0);
+}
+
+TEST_F(SettingsApplyTest, ABodyThatAppliesNothingLeavesSettingsJsonAlone) {
+  EXPECT_FALSE(settings_apply::needsSettingsSave(0));
+  EXPECT_TRUE(settings_apply::needsSettingsSave(1));
+
+  // An unrecognised key, or an out-of-range enum/value, applies nothing; the
+  // handler must not rewrite settings.json for it.
+  int applied = 0;
+  if (settings_apply::needsSettingsSave(applied)) SETTINGS.saveToFile();
+  EXPECT_EQ(Storage.writeCount, 0);
+  EXPECT_FALSE(Storage.exists("/.crosspoint/settings.json"));
 }
 
 // ---------------------------------------------------------------------------

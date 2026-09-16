@@ -6,12 +6,14 @@ add_executable(XtcFb2ReadersTest
   XtcReaderMathTest.cpp
   Fb2ReaderMathTest.cpp
   Fb2XmlEncodingTest.cpp
+  ReaderProgressGuardTest.cpp
   ${REPO_ROOT}/lib/Xtc/Xtc.cpp
   ${REPO_ROOT}/lib/Xtc/Xtc/XtcParser.cpp
   ${REPO_ROOT}/lib/GfxRenderer/BitmapHelpers.cpp
   ${REPO_ROOT}/lib/Fb2/Fb2/Fb2XmlEncoding.cpp
   ${REPO_ROOT}/src/activities/reader/XtcReaderMath.cpp
   ${REPO_ROOT}/src/activities/reader/Fb2ReaderMath.cpp
+  ${REPO_ROOT}/src/activities/reader/ReaderProgressGuard.cpp
   ${REPO_ROOT}/test/support/PlatformHost.cpp
   ${REPO_ROOT}/lib/expat/xmlparse.c
   ${REPO_ROOT}/lib/expat/xmlrole.c

@@ -8,6 +8,7 @@
 
 #include "EpubReaderMenuActivity.h"
 #include "ReaderActivity.h"
+#include "ReaderProgressGuard.h"
 
 class Fb2ReaderActivity final : public ReaderActivity {
   std::shared_ptr<Fb2> fb2;
@@ -25,8 +26,11 @@ class Fb2ReaderActivity final : public ReaderActivity {
   uint8_t pageLoadRetryCount = 0;
   static constexpr uint8_t MAX_PAGE_LOAD_RETRIES = 3;
 
+  // Skips a progress.bin write when the position has not moved.
+  ReaderProgressGuard progressGuard;
+
   void loadProgress();
-  void saveProgress(int sectionIndex, int currentPage, int pageCount) const;
+  void saveProgress(int sectionIndex, int currentPage, int pageCount);
   void jumpToPercent(int percent);
   void openReaderMenu();
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);

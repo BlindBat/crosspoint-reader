@@ -286,8 +286,10 @@ bool selectRandomSleepFile(const char* dirPath, const SleepRecentKind recentKind
   selectedPath = dirPath;
   selectedPath += "/";
   selectedPath += name.get();
+  // Kept in memory only: enterDeepSleep() persists the ring together with
+  // lastSleepFromReader and showBootScreen in one state.json write once this
+  // screen has been chosen.
   pushRecentSleepIndex(recentKind, randomFileIndex);
-  APP_STATE.saveToFile();
   return true;
 }
 

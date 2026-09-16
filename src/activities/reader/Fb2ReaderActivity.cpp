@@ -14,7 +14,6 @@
 #include "Fb2ReaderChapterSelectionActivity.h"
 #include "Fb2ReaderMath.h"
 #include "MappedInputManager.h"
-#include "ProgressFile.h"
 #include "ReaderUtils.h"
 #include "SdCardFontSystem.h"
 #include "activities/settings/TextSettingsActivity.h"
@@ -60,12 +59,16 @@ void Fb2ReaderActivity::loadProgress() {
     }
     if (progress.hasPageCount) {
       cachedSectionTotalPageCount = progress.pageCount;
+      // progress.bin already holds this position, so an unchanged first render
+      // must not write it straight back. A 4-byte legacy file has no page count
+      // and is left unseeded so the first save upgrades it to the 6-byte form.
+      progressGuard.markSaved(progress.sectionIndex, progress.page, progress.pageCount);
     }
     LOG_DBG("FBR", "Loaded progress: section %d page %d", currentSectionIndex, nextPageNumber);
   }
 }
 
-void Fb2ReaderActivity::saveProgress(const int sectionIndex, const int currentPage, const int pageCount) const {
+void Fb2ReaderActivity::saveProgress(const int sectionIndex, const int currentPage, const int pageCount) {
   uint8_t data[6];
   data[0] = sectionIndex & 0xFF;
   data[1] = (sectionIndex >> 8) & 0xFF;
@@ -73,7 +76,7 @@ void Fb2ReaderActivity::saveProgress(const int sectionIndex, const int currentPa
   data[3] = (currentPage >> 8) & 0xFF;
   data[4] = pageCount & 0xFF;
   data[5] = (pageCount >> 8) & 0xFF;
-  if (!ProgressFile::writeAtomic(fb2->getCachePath(), data, sizeof(data))) {
+  if (!progressGuard.save(fb2->getCachePath(), sectionIndex, currentPage, pageCount, data, sizeof(data))) {
     LOG_ERR("FBR", "Failed to save progress: section %d page %d", sectionIndex, currentPage);
   }
 }
@@ -196,6 +199,8 @@ void Fb2ReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
           section.reset();
           fb2->clearCache();
           fb2->setupCacheDir();
+          // clearCache() removed progress.bin, so this save must not be skipped.
+          progressGuard.forget();
           saveProgress(backupSection, backupPage, backupPageCount);
         }
       }

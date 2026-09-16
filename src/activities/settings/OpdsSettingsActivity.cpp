@@ -80,7 +80,11 @@ bool OpdsSettingsActivity::saveServer() {
       LOG_ERR("OPS", "Failed to add OPDS server");
     }
   } else {
-    // Edit flow: update the same server entry in-place.
+    // Edit flow: update the same server entry in-place. Every field edit lands
+    // here, including the ones a keyboard dismissed without a change handed
+    // back untouched; updateServer() drops the SD write when the record is
+    // identical to the one already on the card, and still writes when the last
+    // save failed, so the retry is never swallowed.
     success = OPDS_STORE.updateServer(static_cast<size_t>(serverIndex), editServer);
     if (!success) {
       LOG_ERR("OPS", "Failed to update OPDS server at index %d", serverIndex);

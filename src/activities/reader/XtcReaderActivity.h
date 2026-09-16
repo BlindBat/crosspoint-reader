@@ -6,10 +6,14 @@
 #include <string>
 
 #include "ReaderActivity.h"
+#include "ReaderProgressGuard.h"
 
 class XtcReaderActivity final : public ReaderActivity {
   std::shared_ptr<Xtc> xtc;
   uint32_t currentPage = 0;
+
+  // Skips a progress.bin write when the page has not moved.
+  ReaderProgressGuard progressGuard;
 
   enum class StatusBarOverlayPosition { Bottom, Top };
   struct StatusBarInfo {
@@ -22,7 +26,7 @@ class XtcReaderActivity final : public ReaderActivity {
   void openChapterSelection();
   void renderStatusBarOverlay(GfxRenderer& renderer, StatusBarOverlayPosition position) const;
   StatusBarInfo getStatusBarInfo() const;
-  void saveProgress() const;
+  void saveProgress();
   void loadProgress();
 
   bool loadBook() override;
