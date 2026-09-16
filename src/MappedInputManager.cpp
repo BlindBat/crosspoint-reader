@@ -9,7 +9,6 @@
 #include <cstdlib>
 
 #include "CrossPointSettings.h"
-#include "components/UITheme.h"
 
 namespace fui = freeink::ui;
 

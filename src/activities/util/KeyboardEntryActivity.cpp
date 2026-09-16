@@ -9,6 +9,7 @@
 
 #include "KeyboardLayoutSet.h"
 #include "MappedInputManager.h"
+#include "Utf8Cursor.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -222,36 +223,13 @@ bool KeyboardEntryActivity::syncSelectionToValue(const int16_t value) {
   return false;
 }
 
-size_t KeyboardEntryActivity::utf8Prev(const std::string& s, size_t pos) {
-  if (pos == 0) return 0;
-  pos--;
-  while (pos > 0 && (static_cast<uint8_t>(s[pos]) & 0xC0) == 0x80) pos--;
-  return pos;
-}
+size_t KeyboardEntryActivity::utf8Prev(const std::string& s, const size_t pos) { return utf8_cursor::prev(s, pos); }
 
-size_t KeyboardEntryActivity::utf8Next(const std::string& s, size_t pos) {
-  if (pos >= s.length()) return s.length();
-  pos++;
-  while (pos < s.length() && (static_cast<uint8_t>(s[pos]) & 0xC0) == 0x80) pos++;
-  return pos;
-}
+size_t KeyboardEntryActivity::utf8Next(const std::string& s, const size_t pos) { return utf8_cursor::next(s, pos); }
 
-void KeyboardEntryActivity::insertUtf8(const char* out) {
-  if (!out || !*out) return;
-  const size_t n = strlen(out);
-  if (maxLength != 0 && text.length() + n > maxLength) return;
-  if (cursorPos > text.length()) cursorPos = text.length();
-  text.insert(cursorPos, out, n);
-  cursorPos += n;
-}
+void KeyboardEntryActivity::insertUtf8(const char* out) { utf8_cursor::insert(text, cursorPos, out, maxLength); }
 
-bool KeyboardEntryActivity::backspaceUtf8() {
-  if (text.empty() || cursorPos == 0) return false;
-  const size_t prev = utf8Prev(text, cursorPos);
-  text.erase(prev, cursorPos - prev);
-  cursorPos = prev;
-  return true;
-}
+bool KeyboardEntryActivity::backspaceUtf8() { return utf8_cursor::backspace(text, cursorPos); }
 
 bool KeyboardEntryActivity::activateValue(const int16_t value, const bool longPress) {
   switch (value) {

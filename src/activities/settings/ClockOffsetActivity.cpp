@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "ClockOffsetCodec.h"
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -20,38 +21,8 @@ namespace {
 constexpr fui::ActionId ACTION_FIELD = 1;
 constexpr fui::ActionId ACTION_STEP = 2;
 
-constexpr uint8_t MAX_POS_HOURS = 14;
-constexpr uint8_t MAX_NEG_HOURS = 12;
-constexpr uint8_t MINUTE_STEPS = 4;  // 0, 15, 30, 45
-constexpr uint8_t MINUTES_PER_QUARTER = 15;
-constexpr uint8_t BIAS_QUARTER_HOURS = 48;  // 0 stored = UTC-12, 48 stored = UTC+0
 constexpr int TOUCH_BUTTON_SIZE = 44;
 constexpr int TOUCH_BUTTON_GAP = 18;
-
-// Convert a (sign, hours, quarter) triple into the biased storage value.
-// Returns a value in [0, 104].
-uint8_t encodeOffset(uint8_t sign, uint8_t hours, uint8_t quarter) {
-  int signedQuarter = static_cast<int>(hours) * 4 + static_cast<int>(quarter);
-  if (sign == 1) signedQuarter = -signedQuarter;
-  int biased = signedQuarter + BIAS_QUARTER_HOURS;
-  if (biased < 0) biased = 0;
-  if (biased > 104) biased = 104;
-  return static_cast<uint8_t>(biased);
-}
-
-// Decompose the biased storage value into (sign, hours, quarter).
-void decodeOffset(uint8_t biased, uint8_t& sign, uint8_t& hours, uint8_t& quarter) {
-  if (biased > 104) biased = BIAS_QUARTER_HOURS;
-  int signedQuarter = static_cast<int>(biased) - BIAS_QUARTER_HOURS;
-  if (signedQuarter < 0) {
-    sign = 1;
-    signedQuarter = -signedQuarter;
-  } else {
-    sign = 0;
-  }
-  hours = static_cast<uint8_t>(signedQuarter / 4);
-  quarter = static_cast<uint8_t>(signedQuarter % 4);
-}
 }  // namespace
 
 ClockOffsetActivity::ClockOffsetActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -74,25 +45,18 @@ void ClockOffsetActivity::onExit() {
 }
 
 void ClockOffsetActivity::loadFromSettings() {
-  decodeOffset(SETTINGS.clockUtcOffsetQ, sign, hours, minutesQuarter);
+  clock_offset::decode(SETTINGS.clockUtcOffsetQ, sign, hours, minutesQuarter);
   clampForSign();
 }
 
 void ClockOffsetActivity::saveToSettings() const {
-  const uint8_t encoded = encodeOffset(sign, hours, minutesQuarter);
+  const uint8_t encoded = clock_offset::encode(sign, hours, minutesQuarter);
   if (encoded == SETTINGS.clockUtcOffsetQ) return;
   SETTINGS.clockUtcOffsetQ = encoded;
   SETTINGS.saveToFile();
 }
 
-void ClockOffsetActivity::clampForSign() {
-  const uint8_t maxHours = (sign == 1) ? MAX_NEG_HOURS : MAX_POS_HOURS;
-  if (hours > maxHours) hours = maxHours;
-  // At the absolute boundary (-12:00 or +14:00) only :00 is valid.
-  if (hours == maxHours && minutesQuarter != 0) {
-    minutesQuarter = 0;
-  }
-}
+void ClockOffsetActivity::clampForSign() { clock_offset::clampForSign(sign, hours, minutesQuarter); }
 
 void ClockOffsetActivity::adjustActiveField(int delta) {
   switch (activeField) {
@@ -102,7 +66,7 @@ void ClockOffsetActivity::adjustActiveField(int delta) {
       break;
     }
     case FIELD_HOURS: {
-      const uint8_t maxHours = (sign == 1) ? MAX_NEG_HOURS : MAX_POS_HOURS;
+      const uint8_t maxHours = clock_offset::maxHoursForSign(sign);
       const int next = (static_cast<int>(hours) + delta + (maxHours + 1)) % (maxHours + 1);
       hours = static_cast<uint8_t>(next);
       clampForSign();
@@ -110,12 +74,13 @@ void ClockOffsetActivity::adjustActiveField(int delta) {
     }
     case FIELD_MINUTES: {
       // At the boundary hour, lock minutes to :00.
-      const uint8_t maxHours = (sign == 1) ? MAX_NEG_HOURS : MAX_POS_HOURS;
+      const uint8_t maxHours = clock_offset::maxHoursForSign(sign);
       if (hours == maxHours) {
         minutesQuarter = 0;
         break;
       }
-      const int next = (static_cast<int>(minutesQuarter) + delta + MINUTE_STEPS) % MINUTE_STEPS;
+      const int next =
+          (static_cast<int>(minutesQuarter) + delta + clock_offset::MINUTE_STEPS) % clock_offset::MINUTE_STEPS;
       minutesQuarter = static_cast<uint8_t>(next);
       break;
     }
@@ -303,7 +268,7 @@ void ClockOffsetActivity::render(RenderLock&&) {
   char hoursStr[8];
   snprintf(hoursStr, sizeof(hoursStr), "%d", hours);
   char minutesStr[8];
-  snprintf(minutesStr, sizeof(minutesStr), "%02d", minutesQuarter * MINUTES_PER_QUARTER);
+  snprintf(minutesStr, sizeof(minutesStr), "%02d", minutesQuarter * clock_offset::MINUTES_PER_QUARTER);
 
   const int labelWidth = widthOf("UTC");
   const int signBoxW = std::max(widthOf("+"), widthOf("-")) + fieldPaddingX * 2;
@@ -357,7 +322,7 @@ void ClockOffsetActivity::render(RenderLock&&) {
   // Live preview of the resulting wall-clock time, so users can verify against a watch.
   if (halClock.isAvailable()) {
     char timeBuf[9];
-    const uint8_t encoded = encodeOffset(sign, hours, minutesQuarter);
+    const uint8_t encoded = clock_offset::encode(sign, hours, minutesQuarter);
     if (halClock.formatTime(timeBuf, sizeof(timeBuf), encoded, SETTINGS.clockFormat == 1)) {
       // 24 bytes did not even hold the label itself once translated: STR_CURRENT_TIME
       // is 26 bytes in Russian, 24 in Arabic and Ukrainian. See ClockSyncActivity.
