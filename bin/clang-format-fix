@@ -16,7 +16,9 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage: bin/clang-format-fix [-g] [-c|--check]
-  -g           only process tracked files currently modified in git status
+  -g           only process files changed in git status: tracked files that
+               are modified, plus new untracked ones (both are about to be
+               committed; --exclude-standard keeps .gitignore out)
   -c, --check  report formatting violations without rewriting any file;
                exits non-zero when at least one file needs formatting
 EOF
@@ -27,7 +29,7 @@ CHECK_MODE=0
 for arg in "$@"; do
   case "${arg}" in
     # -g scopes formatting to tracked files currently modified in git status.
-    -g) GIT_LS_FILES_FLAGS="--modified" ;;
+    -g) GIT_LS_FILES_FLAGS="--modified --others" ;;
     -c|--check) CHECK_MODE=1 ;;
     -h|--help)
       usage
