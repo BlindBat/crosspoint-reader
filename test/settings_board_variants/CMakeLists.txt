@@ -37,6 +37,7 @@ configure_file(${REPO_ROOT}/lib/I18n/I18n.cpp ${I18N_GEN_DIR}/I18n.cpp COPYONLY)
 
 add_executable(SettingsBoardVariantsTest
   SettingsBoardVariantsTest.cpp
+  ${REPO_ROOT}/test/support/AllocCounter.cpp
   ${STORES_DIR}/LinkStubs.cpp
   ${I18N_GEN_DIR}/I18nStrings.cpp
   ${I18N_GEN_DIR}/I18n.cpp
@@ -49,6 +50,7 @@ add_executable(SettingsBoardVariantsTest
 
 target_include_directories(SettingsBoardVariantsTest PRIVATE
   ${STORES_DIR}/stubs
+  ${REPO_ROOT}/test/support
   ${I18N_GEN_DIR}
   ${REPO_ROOT}/src
   ${REPO_ROOT}/lib/Serialization

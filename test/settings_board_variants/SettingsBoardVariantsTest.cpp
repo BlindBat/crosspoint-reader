@@ -6,6 +6,7 @@
 // in SettingsList.h is pinned from both sides. Entries pruned there must be
 // present here, and vice versa.
 
+#include <AllocCounter.h>
 #include <ArduinoJson.h>
 #include <HalStorage.h>
 #include <I18n.h>
@@ -14,7 +15,9 @@
 #include <unistd.h>
 
 #include <cstdlib>
+#include <cstring>
 #include <string>
+#include <vector>
 
 #include "CrossPointSettings.h"
 #include "SettingsList.h"
@@ -219,6 +222,114 @@ TEST_F(TouchBoardSettingsTest, SaveLoadRoundTripKeepsBoardGatedValues) {
   EXPECT_EQ(SETTINGS.shortPwrBtn, CrossPointSettings::PWR_CONFIRM);
   EXPECT_EQ(SETTINGS.longPressMenuFunction, CrossPointSettings::LP_MENU_READER_MENU);
   EXPECT_EQ(SETTINGS.tiltPageTurn, CrossPointSettings::TILT_NVERTED);
+}
+
+// --- the list is shared, not rebuilt, on every call --------------------------
+
+TEST_F(TouchBoardSettingsTest, RepeatedCallsDoNotRebuildTheList) {
+  // CrossPointSettings::toJson()/fromJson() and every web settings request walk
+  // this list; rebuilding it per call copied ~60 SettingInfo (two vectors and
+  // four std::function each) every time.
+  {
+    const auto& warm = getSettingsList();  // first call builds it
+    ASSERT_FALSE(warm.empty());
+  }
+
+  size_t allocations = 0;
+  size_t entries = 0;
+  {
+    alloc_counter::CountingScope scope;
+    for (int i = 0; i < 8; i++) {
+      const auto& list = getSettingsList();
+      entries = list.size();
+    }
+    allocations = scope.count();
+  }
+  EXPECT_GT(entries, 0u);
+  EXPECT_EQ(allocations, 0u) << "getSettingsList() allocated " << allocations << " times across 8 calls";
+}
+
+TEST_F(TouchBoardSettingsTest, EveryCallReturnsTheSameEntriesInTheSameOrder) {
+  // The board pruning above is what makes the list board-specific; a shared
+  // instance must still present exactly the entries a fresh build would.
+  std::vector<std::string> firstKeys;
+  std::vector<int> firstNames;
+  for (const auto& info : getSettingsList()) {
+    firstKeys.emplace_back(info.key != nullptr ? info.key : "");
+    firstNames.push_back(static_cast<int>(info.nameId));
+  }
+
+  std::vector<std::string> secondKeys;
+  std::vector<int> secondNames;
+  for (const auto& info : getSettingsList()) {
+    secondKeys.emplace_back(info.key != nullptr ? info.key : "");
+    secondNames.push_back(static_cast<int>(info.nameId));
+  }
+
+  EXPECT_FALSE(firstKeys.empty());
+  EXPECT_EQ(firstKeys, secondKeys);
+  EXPECT_EQ(firstNames, secondNames);
+}
+
+TEST_F(TouchBoardSettingsTest, RegistrylessOverloadMatchesTheSharedList) {
+  // getSettingsList(registry) must present exactly what the shared no-arg list
+  // does when there is no registry to fold in: the two used to be one function,
+  // and the settings screen reaches the list only through the overload.
+  std::vector<std::string> sharedKeys;
+  std::vector<int> sharedNames;
+  for (const auto& info : getSettingsList()) {
+    sharedKeys.emplace_back(info.key != nullptr ? info.key : "");
+    sharedNames.push_back(static_cast<int>(info.nameId));
+  }
+
+  std::vector<std::string> overloadKeys;
+  std::vector<int> overloadNames;
+  for (const auto& info : getSettingsList(nullptr)) {
+    overloadKeys.emplace_back(info.key != nullptr ? info.key : "");
+    overloadNames.push_back(static_cast<int>(info.nameId));
+  }
+
+  EXPECT_FALSE(sharedKeys.empty());
+  EXPECT_EQ(sharedKeys, overloadKeys);
+  EXPECT_EQ(sharedNames, overloadNames);
+}
+
+TEST_F(TouchBoardSettingsTest, SharedFontSizeEntryStaysLiveAndFamilyIndependent) {
+  // The font-size entry is built once now and handed out with the shared list,
+  // so it must hold nothing that can go stale: its options come from the
+  // built-in point sizes (readerFontPointSizes ignores the SD family name when
+  // there is no registry) and its accessors must read SETTINGS on every call.
+  auto fontSizeEntry = []() -> SettingInfo {
+    for (const auto& info : getSettingsList()) {
+      if (info.key != nullptr && std::string(info.key) == "fontSize") return info;
+    }
+    return SettingInfo{};
+  };
+
+  const SettingInfo entry = fontSizeEntry();
+  ASSERT_GT(entry.enumStringValues.size(), 1u) << "font-size entry missing or left as the empty placeholder";
+  ASSERT_TRUE(static_cast<bool>(entry.valueGetter));
+  ASSERT_TRUE(static_cast<bool>(entry.valueSetter));
+  const std::vector<std::string> labels = entry.enumStringValues;
+  const uint8_t originalPt = SETTINGS.fontPointSize;
+
+  // A write through one copy of the entry is visible through the next one:
+  // the accessors go to SETTINGS, not to a value frozen at build time.
+  const uint8_t lastIndex = static_cast<uint8_t>(labels.size() - 1);
+  entry.valueSetter(0);
+  EXPECT_EQ(fontSizeEntry().valueGetter(), 0);
+  const uint8_t smallestPt = SETTINGS.fontPointSize;
+  entry.valueSetter(lastIndex);
+  EXPECT_EQ(fontSizeEntry().valueGetter(), lastIndex);
+  EXPECT_GT(SETTINGS.fontPointSize, smallestPt);
+
+  // Selecting an SD family must not change what the shared list offers — if it
+  // ever did, caching the entry would serve stale sizes.
+  std::strncpy(SETTINGS.sdFontFamilyName, "SomeSdFamily", sizeof(SETTINGS.sdFontFamilyName) - 1);
+  SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
+  EXPECT_EQ(fontSizeEntry().enumStringValues, labels);
+  SETTINGS.sdFontFamilyName[0] = '\0';
+  SETTINGS.fontPointSize = originalPt;
 }
 
 TEST_F(TouchBoardSettingsTest, FileFromButtonBoardLeavesTouchValuesUntouched) {

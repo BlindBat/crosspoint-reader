@@ -2,7 +2,6 @@
 
 #include <EpdFontFamily.h>
 
-#include <functional>
 #include <memory>
 
 #include "CrossPointSettings.h"

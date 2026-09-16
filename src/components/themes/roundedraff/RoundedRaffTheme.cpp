@@ -57,7 +57,7 @@ void RoundedRaffTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const 
 
 void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                            const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
-                                           bool& bufferRestored, std::function<bool()> storeCoverBuffer) const {
+                                           bool& bufferRestored, StoreCoverBufferFn storeCoverBuffer) const {
   const int tileWidth = rect.width - 2 * RoundedRaffMetrics::values.contentSidePadding;
   const int tileHeight = rect.height;
   const int tileY = rect.y;
@@ -139,8 +139,7 @@ int RoundedRaffTheme::getMenuRowHeight(const GfxRenderer& renderer) const {
 }
 
 void RoundedRaffTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
-                                      const std::function<std::string(int index)>& buttonLabel,
-                                      const std::function<UIIcon(int index)>& rowIcon) const {
+                                      MenuLabelFn buttonLabel, MenuIconFn rowIcon) const {
   (void)rowIcon;
   const int sidePadding = RoundedRaffMetrics::values.contentSidePadding;
   const int rowX = rect.x + sidePadding;

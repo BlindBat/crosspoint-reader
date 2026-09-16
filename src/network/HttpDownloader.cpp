@@ -34,8 +34,18 @@ constexpr int HTTP_TIMEOUT_MS = 60000;
 constexpr size_t READ_CHUNK = 1024;
 constexpr int MAX_REDIRECTS = 5;
 
+// Where a response body is written. A context pointer plus a function pointer
+// taking it rather than a std::function: the target is always a local of the
+// calling frame, so there is nothing to own. Returns false to abort the transfer.
+struct WriteFn {
+  bool (*fn)(void* ctx, const uint8_t* data, size_t len) = nullptr;
+  void* ctx = nullptr;
+
+  bool operator()(const uint8_t* data, size_t len) const { return fn != nullptr && fn(ctx, data, len); }
+};
+
 struct Sink {
-  std::function<bool(const uint8_t*, size_t)> write;  // returns false to abort the transfer
+  WriteFn write;
   HttpDownloader::ProgressCallback progress;
   bool* cancelFlag = nullptr;
   size_t total = 0;
@@ -265,7 +275,9 @@ bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const 
                               const std::string& password) {
   LOG_DBG("HTTP", "Fetching: %s", url.c_str());
   Sink sink;
-  sink.write = [&outContent](const uint8_t* data, size_t len) { return outContent.write(data, len) == len; };
+  sink.write = {
+      [](void* ctx, const uint8_t* data, size_t len) { return static_cast<Stream*>(ctx)->write(data, len) == len; },
+      &outContent};
   return runGetSecure(url, username, password, sink) == OK;
 }
 
@@ -274,10 +286,11 @@ bool HttpDownloader::fetchUrl(const std::string& url, std::string& outContent, c
   LOG_DBG("HTTP", "Fetching: %s", url.c_str());
   outContent.clear();  // start clean; the sink appends, so don't carry prior content
   Sink sink;
-  sink.write = [&outContent](const uint8_t* data, size_t len) {
-    outContent.append(reinterpret_cast<const char*>(data), len);
-    return true;
-  };
+  sink.write = {[](void* ctx, const uint8_t* data, size_t len) {
+                  static_cast<std::string*>(ctx)->append(reinterpret_cast<const char*>(data), len);
+                  return true;
+                },
+                &outContent};
   return runGetSecure(url, username, password, sink) == OK;
 }
 
@@ -285,7 +298,10 @@ bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData
                               const std::string& password) {
   LOG_DBG("HTTP", "Fetching: %s", url.c_str());
   Sink sink;
-  sink.write = onData;
+  // onData stays owned by the caller and outlives the transfer; the sink only reads it.
+  sink.write = {
+      [](void* ctx, const uint8_t* data, size_t len) { return (*static_cast<const DataCallback*>(ctx))(data, len); },
+      const_cast<DataCallback*>(&onData)};
   return runGetSecure(url, username, password, sink) == OK;
 }
 
@@ -307,7 +323,9 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   Sink sink;
   sink.progress = std::move(progress);
   sink.cancelFlag = cancelFlag;
-  sink.write = [&file](const uint8_t* data, size_t len) { return file.write(data, len) == len; };
+  sink.write = {
+      [](void* ctx, const uint8_t* data, size_t len) { return static_cast<HalFile*>(ctx)->write(data, len) == len; },
+      &file};
 
   const DownloadError result = runGetSecure(url, username, password, sink, downgradeRedirectsToHttp);
   // Close before any remove() on the same path; DESTRUCTOR_CLOSES_FILE would

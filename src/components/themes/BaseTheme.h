@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <string>
 #include <vector>
 
@@ -137,6 +136,34 @@ enum UIIcon {
   Usb
 };
 
+// Callbacks a theme calls back into its caller with. A context pointer plus a
+// function pointer taking it, not std::function: each std::function signature
+// costs flash and heap-allocates anything larger than its inline buffer.
+// `ctx` is the caller's object; it must outlive the draw call.
+struct StoreCoverBufferFn {
+  bool (*fn)(void* ctx) = nullptr;
+  void* ctx = nullptr;
+
+  explicit operator bool() const { return fn != nullptr; }
+  bool operator()() const { return fn != nullptr && fn(ctx); }
+};
+
+struct MenuLabelFn {
+  std::string (*fn)(void* ctx, int index) = nullptr;
+  void* ctx = nullptr;
+
+  explicit operator bool() const { return fn != nullptr; }
+  std::string operator()(int index) const { return fn != nullptr ? fn(ctx, index) : std::string(); }
+};
+
+struct MenuIconFn {
+  UIIcon (*fn)(void* ctx, int index) = nullptr;
+  void* ctx = nullptr;
+
+  explicit operator bool() const { return fn != nullptr; }
+  UIIcon operator()(int index) const { return fn != nullptr ? fn(ctx, index) : UIIcon::None; }
+};
+
 // Default theme implementation (Classic Theme)
 // Additional themes can inherit from this and override methods as needed
 
@@ -241,10 +268,9 @@ class BaseTheme {
                              const char* rightLabel = nullptr) const;
   virtual void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                    const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
-                                   bool& bufferRestored, std::function<bool()> storeCoverBuffer) const;
+                                   bool& bufferRestored, StoreCoverBufferFn storeCoverBuffer) const;
   virtual void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
-                              const std::function<std::string(int index)>& buttonLabel,
-                              const std::function<UIIcon(int index)>& rowIcon) const;
+                              MenuLabelFn buttonLabel, MenuIconFn rowIcon) const;
   virtual Rect drawPopup(const GfxRenderer& renderer, const char* message) const;
   virtual void fillPopupProgress(const GfxRenderer& renderer, const Rect& layout, const int progress) const;
   void drawStatusBar(GfxRenderer& renderer, const float bookProgress, const int currentPage, const int pageCount,

@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "CrossPointSettings.h"
@@ -314,17 +315,18 @@ void HomeActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.homeTopPadding - metrics.topPadding},
                  metrics.homeContinueReadingInMenu && !recentBooks.empty() ? recentBooks[0].title.c_str() : nullptr);
 
-  // Record the tile rect so storeCoverBuffer (called from the theme) knows
-  // which sub-region of the framebuffer to snapshot. ~16 KB in Portrait
-  // instead of the 48 KB full framebuffer the previous bind captured.
+  // Record the tile rect so storeCoverBuffer (called back from the theme) knows
+  // which sub-region of the framebuffer to snapshot: ~16 KB in Portrait rather
+  // than the whole 48 KB framebuffer.
   coverRectX = 0;
   coverRectY = metrics.homeTopPadding;
   coverRectW = pageWidth;
   coverRectH = metrics.homeCoverTileHeight;
 
-  GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
-                          recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
-                          std::bind(&HomeActivity::storeCoverBuffer, this));
+  GUI.drawRecentBookCover(
+      renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight}, recentBooks, selectorIndex,
+      coverRendered, coverBufferStored, bufferRestored,
+      StoreCoverBufferFn{[](void* ctx) { return static_cast<HomeActivity*>(ctx)->storeCoverBuffer(); }, this});
 
   // Build menu items dynamically
   std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER),
@@ -349,8 +351,11 @@ void HomeActivity::render(RenderLock&&) {
                          metrics.homeMenuTopOffset + metrics.buttonHintsHeight)},
       static_cast<int>(menuItems.size()),
       metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size(),
-      [&menuItems](int index) { return std::string(menuItems[index]); },
-      [&menuIcons](int index) { return menuIcons[index]; });
+      MenuLabelFn{
+          [](void* ctx, int index) { return std::string((*static_cast<const std::vector<const char*>*>(ctx))[index]); },
+          &menuItems},
+      MenuIconFn{[](void* ctx, int index) { return (*static_cast<const std::vector<UIIcon>*>(ctx))[index]; },
+                 &menuIcons});
 
   const auto labels = mappedInput.mapLabels(recentBooks.empty() ? "" : tr(STR_RESUME), tr(STR_SELECT), tr(STR_DIR_UP),
                                             tr(STR_DIR_DOWN));
