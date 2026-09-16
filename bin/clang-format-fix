@@ -63,7 +63,9 @@ fi
 # Format all files (or only modified files if -g is passed)
 
 # Use 'git ls-files' to get a list of all files tracked by git:
-# --modified: files tracked by git that have been modified (staged or unstaged)
+# --modified: files tracked by git that have been modified (staged or unstaged),
+#   which includes deleted ones — the `-e` filter below drops those, since
+#   clang-format errors out on a path that no longer exists
 # --exclude-standard: ignores files in .gitignore
 # Additionally exclude files in 'lib/EpdFont/builtinFonts/' as they are script-generated.
 # Also exclude files in 'lib/Epub/Epub/hyphenation/generated/' as they are script-generated.
@@ -77,6 +79,7 @@ git ls-files  --exclude-standard ${GIT_LS_FILES_FLAGS} \
     | grep -v -E '^lib/Epub/Epub/hyphenation/generated/' \
     | grep -v -E '^lib/uzlib/' \
     | grep -v -E '^lib/miniz/third_party/' \
+    | while IFS= read -r file; do [[ -e "${file}" ]] && printf '%s\n' "${file}"; done \
     | xargs -r "${CLANG_FORMAT_BIN}" -style=file "${CLANG_FORMAT_MODE_FLAGS[@]}" \
     || FORMAT_STATUS=$?
 # Restore strict pipeline failure handling for the rest of the script.
