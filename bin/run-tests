@@ -28,6 +28,13 @@ Options:
   --full             Also run PlatformIO static analysis after the tests:
                      pio check --fail-on-defect low/medium/high.
   --clean            Delete the build directory first (fresh configure+build).
+
+Environment:
+  CROSSPOINT_TEST_BUILD_DIR   Override the build directory (plain and --asan
+                     builds append nothing; pick distinct values yourself).
+                     Useful when several checkouts or agents build at once.
+  CROSSPOINT_TEST_JOBS        Build parallelism (ninja -j). Defaults to ninja's
+                     own choice; lower it when several builds share the machine.
   -h, --help         Show this help.
 EOF
 }
@@ -170,10 +177,21 @@ if [[ ${ASAN} -eq 1 ]]; then
   BUILD_DIR="${REPO_ROOT}/build/test-asan"
   CONFIGURE_EXTRA+=(-DCROSSPOINT_SANITIZE=ON)
 fi
+if [[ -n "${CROSSPOINT_TEST_BUILD_DIR:-}" ]]; then
+  BUILD_DIR="${CROSSPOINT_TEST_BUILD_DIR}"
+fi
 
 if [[ ${CLEAN} -eq 1 ]]; then
   echo "Removing ${BUILD_DIR}"
   rm -rf "${BUILD_DIR}"
+fi
+
+# A filtered run configures only the selected suite directories (see
+# crosspoint_suite() in test/CMakeLists.txt); an unfiltered run resets the
+# cached list so every suite is configured again.
+SUITE_DIRS_ARG=""
+if [[ -n "${FILTER}" || ${QUICK} -eq 1 ]]; then
+  SUITE_DIRS_ARG="$(IFS=';'; echo "${SELECTED_DIRS[*]}")"
 fi
 
 echo "Configuring (${CMAKE_BIN}) -> ${BUILD_DIR}"
@@ -181,6 +199,7 @@ echo "Configuring (${CMAKE_BIN}) -> ${BUILD_DIR}"
   -DCMAKE_MAKE_PROGRAM="${NINJA_BIN}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE=PRE_TEST \
+  "-DCROSSPOINT_SUITE_DIRS=${SUITE_DIRS_ARG}" \
   ${CONFIGURE_EXTRA[@]+"${CONFIGURE_EXTRA[@]}"}
 
 # --- Build (-k 0: keep going, surface every failing suite in one pass) ---
@@ -190,10 +209,16 @@ if [[ -n "${FILTER}" || ${QUICK} -eq 1 ]]; then
   RUN_ALL=0
 fi
 
+BUILD_JOBS_ARG=()
+if [[ -n "${CROSSPOINT_TEST_JOBS:-}" ]]; then
+  BUILD_JOBS_ARG=(-j "${CROSSPOINT_TEST_JOBS}")
+fi
+
 if [[ ${RUN_ALL} -eq 1 ]]; then
-  "${CMAKE_BIN}" --build "${BUILD_DIR}" -- -k 0
+  "${CMAKE_BIN}" --build "${BUILD_DIR}" -- -k 0 ${BUILD_JOBS_ARG[@]+"${BUILD_JOBS_ARG[@]}"}
 else
-  "${CMAKE_BIN}" --build "${BUILD_DIR}" --target "${SELECTED_TARGETS[@]}" -- -k 0
+  "${CMAKE_BIN}" --build "${BUILD_DIR}" --target "${SELECTED_TARGETS[@]}" -- -k 0 \
+    ${BUILD_JOBS_ARG[@]+"${BUILD_JOBS_ARG[@]}"}
 fi
 
 # --- Run ---
