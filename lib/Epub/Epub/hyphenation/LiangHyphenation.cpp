@@ -63,7 +63,11 @@
  * 2 UTF-8 bytes per German letter + 2 sentinel dots = 128 bytes. MAX_WORD_BYTES=160
  * and MAX_WORD_CHARS=70 give comfortable headroom. Words exceeding these limits
  * are silently skipped (no hyphenation), which is acceptable for correctness.
- * The struct lives on the render-task stack (8 KB) so no permanent DRAM is wasted.
+ * The arrays stay on the stack: liangBreakIndexes runs per word during layout
+ * and test/alloc_guards pins that path to zero per-word heap churn, so a scratch
+ * allocation here is not an option. Instead every index is stored in the
+ * narrowest type that holds its range, which cuts the frame from 1328 to about
+ * 640 bytes on the ESP32-C3 without touching the heap.
  */
 
 namespace {
@@ -78,8 +82,11 @@ static constexpr size_t MAX_WORD_CHARS = 70;   // max codepoints + 2 sentinel do
 
 struct AugmentedWord {
   uint8_t bytes[MAX_WORD_BYTES];
-  size_t charByteOffsets[MAX_WORD_CHARS];
-  int32_t byteToCharIndex[MAX_WORD_BYTES];
+  // Index types are the narrowest that hold their range: a byte offset is
+  // < MAX_WORD_BYTES (160) and a char index is < MAX_WORD_CHARS (70), with -1
+  // marking a mid-codepoint byte. Widening them costs 620 bytes for nothing.
+  uint8_t charByteOffsets[MAX_WORD_CHARS];
+  int8_t byteToCharIndex[MAX_WORD_BYTES];
   size_t byteLen = 0;
   size_t charCount_ = 0;
 
@@ -150,7 +157,7 @@ bool buildAugmentedWord(AugmentedWord& word, const std::vector<CodepointInfo>& c
       word.charCount_ = 0;
       return false;  // word too long
     }
-    word.charByteOffsets[word.charCount_++] = word.byteLen;
+    word.charByteOffsets[word.charCount_++] = static_cast<uint8_t>(word.byteLen);
     if (encodeUtf8(config.toLower(info.value), word) == 0) {
       word.byteLen = 0;
       word.charCount_ = 0;
@@ -164,7 +171,7 @@ bool buildAugmentedWord(AugmentedWord& word, const std::vector<CodepointInfo>& c
     word.charCount_ = 0;
     return false;
   }
-  word.charByteOffsets[word.charCount_++] = word.byteLen;
+  word.charByteOffsets[word.charCount_++] = static_cast<uint8_t>(word.byteLen);
   word.bytes[word.byteLen++] = '.';
 
   // Build byte→char reverse index: -1 for mid-codepoint bytes, char index for start bytes.
@@ -174,7 +181,7 @@ bool buildAugmentedWord(AugmentedWord& word, const std::vector<CodepointInfo>& c
   for (size_t i = 0; i < word.charCount_; ++i) {
     const size_t offset = word.charByteOffsets[i];
     if (offset < word.byteLen) {
-      word.byteToCharIndex[offset] = static_cast<int32_t>(i);
+      word.byteToCharIndex[offset] = static_cast<int8_t>(i);
     }
   }
 
@@ -348,8 +355,7 @@ std::vector<size_t> collectBreakIndexes(const std::vector<CodepointInfo>& cps, c
 // Entry point that runs the full Liang pipeline for a single word.
 std::vector<size_t> liangBreakIndexes(const std::vector<CodepointInfo>& cps,
                                       const SerializedHyphenationPatterns& patterns, const LiangWordConfig& config) {
-  // AugmentedWord uses fixed-size C arrays (no heap allocation) to avoid
-  // fragmenting the heap across hundreds of words during page layout.
+  // ~400 bytes of fixed-size arrays (no heap: this runs per word during layout).
   AugmentedWord augmented;
   if (!buildAugmentedWord(augmented, cps, config)) {
     return {};
@@ -363,7 +369,6 @@ std::vector<size_t> liangBreakIndexes(const std::vector<CodepointInfo>& cps,
   }
 
   // Liang scores: one entry per augmented char (leading/trailing dots included).
-  // Stack-allocated to avoid heap fragmentation (see memory design note above).
   uint8_t scores[MAX_WORD_CHARS];
   for (size_t i = 0; i < augmented.charCount_; ++i) {
     scores[i] = 0;

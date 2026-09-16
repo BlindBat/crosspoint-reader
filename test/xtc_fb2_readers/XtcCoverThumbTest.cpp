@@ -722,3 +722,28 @@ TEST(XtcThumb, TallPageYieldsOncePerEightWrittenRows) {
   ASSERT_TRUE(book.xtc->generateThumbBmp(200));
   EXPECT_EQ(platform_host::yieldCount(), 200u / 8u);
 }
+
+// The cover->thumb copy path's 512-byte buffer lives on the heap, not in
+// generateThumbBmp's frame, where it cost ~780 bytes -- three times the
+// 256-byte stack budget. HalFile::read() samples the deepest stack address the
+// copy loop reaches.
+TEST(XtcThumb, CoverCopyRunsInASmallStackFrame) {
+  if (!halfile_stack_probe::kMeasurementIsReliable) {
+    GTEST_SKIP() << "AddressSanitizer pads every frame on the path; the measurement is not the production frame";
+  }
+
+  // A page smaller than the requested thumbnail takes the "no scaling needed"
+  // path, which streams cover.bmp into thumb.bmp through that buffer.
+  Book book(oneBit(64, 64, [](int x, int) { return (x & 1) != 0; }));
+  ASSERT_TRUE(book.xtc->load());
+  // Generate the cover first so the measured call is just the copy.
+  ASSERT_TRUE(book.xtc->generateCoverBmp());
+
+  const char anchor = 0;
+  halfile_stack_probe::reset();
+  ASSERT_TRUE(book.xtc->generateThumbBmp(200));
+  const size_t depth = halfile_stack_probe::depthFrom(&anchor);
+
+  ASSERT_GT(depth, 0u) << "read() was never reached; the probe measured nothing";
+  EXPECT_LT(depth, 640u);
+}

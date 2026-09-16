@@ -14,9 +14,11 @@
 
 namespace {
 
-// Stack-allocated string buffer to avoid heap reallocations during parsing
-// Provides string-like interface with fixed capacity
-struct StackBuffer {
+// Fixed-capacity string buffer used while parsing, so no heap reallocation
+// happens per accumulated character. Lives inside ParseBuffers (heap), never
+// on the stack: two of these plus the read buffer put the parser frame ~2.6KB
+// over the 256-byte stack budget.
+struct TextBuffer {
   static constexpr size_t CAPACITY = 1024;
   char data[CAPACITY];
   size_t len = 0;
@@ -38,6 +40,13 @@ struct StackBuffer {
 
 // Buffer size for reading CSS files
 constexpr size_t READ_BUFFER_SIZE = 512;
+
+// Every large working buffer loadFromStream() needs, in one heap block.
+struct ParseBuffers {
+  TextBuffer selector;
+  TextBuffer declBuffer;
+  char readBuffer[READ_BUFFER_SIZE];
+};
 
 // Flat rule-store caps. The index is 12KB at MAX_RULES, selector text is
 // bounded to 32KB, and deduplicated style bodies are bounded to about 26KB.
@@ -729,9 +738,16 @@ CssParser::ParseResult CssParser::loadFromStream(HalFile& source) {
 
   size_t totalRead = 0;
 
-  // Use stack-allocated buffers for parsing to avoid heap reallocations
-  StackBuffer selector;
-  StackBuffer declBuffer;
+  // ~2.6KB of parse buffers, allocated once per stylesheet on the heap. On the
+  // stack they alone blew a 2KB FreeRTOS task stack; the parse is a per-book
+  // one-off, so a single allocation here costs nothing measurable.
+  auto buffers = makeUniqueNoThrow<ParseBuffers>();
+  if (!buffers) {
+    LOG_ERR("CSS", "OOM: %u bytes of CSS parse buffers", static_cast<unsigned>(sizeof(ParseBuffers)));
+    return ParseResult::Error;
+  }
+  TextBuffer& selector = buffers->selector;
+  TextBuffer& declBuffer = buffers->declBuffer;
 
   bool inComment = false;
   bool maybeSlash = false;
@@ -914,9 +930,9 @@ CssParser::ParseResult CssParser::loadFromStream(HalFile& source) {
   size_t bomMatched = 0;
   bool bomChecked = false;
 
-  char buffer[READ_BUFFER_SIZE];
+  char* const buffer = buffers->readBuffer;
   while (source.available()) {
-    int bytesRead = source.read(buffer, sizeof(buffer));
+    int bytesRead = source.read(buffer, READ_BUFFER_SIZE);
     if (bytesRead <= 0) break;
 
     totalRead += static_cast<size_t>(bytesRead);

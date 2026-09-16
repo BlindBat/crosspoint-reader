@@ -1,12 +1,14 @@
 # TXT reader: the pure pagination / index.bin / progress.bin unit
 # (lib/Txt/TxtPageIndex) compiled against the host platform seam, plus the
-# real lib/Txt/Txt.cpp (title, cover discovery, cover BMP generation) and
-# FsHelpers against stdio-backed HAL stubs in stubs/.
+# real lib/Txt/Txt.cpp (title, cover discovery, cover BMP generation),
+# FsHelpers and the shared reader progress-write guard against stdio-backed
+# HAL stubs in stubs/.
 add_executable(TxtReaderTest
   TxtReaderTest.cpp
   ${REPO_ROOT}/lib/Txt/TxtPageIndex.cpp
   ${REPO_ROOT}/lib/Txt/Txt.cpp
   ${REPO_ROOT}/lib/FsHelpers/FsHelpers.cpp
+  ${REPO_ROOT}/src/activities/reader/ReaderProgressGuard.cpp
   ${REPO_ROOT}/test/support/PlatformHost.cpp
   ${REPO_ROOT}/test/support/AllocCounter.cpp
 )
@@ -19,6 +21,7 @@ target_include_directories(TxtReaderTest PRIVATE
   ${REPO_ROOT}/lib/FsHelpers
   ${REPO_ROOT}/lib/Memory
   ${REPO_ROOT}/lib/Platform
+  ${REPO_ROOT}/src/activities/reader
   ${REPO_ROOT}/test/support
 )
 

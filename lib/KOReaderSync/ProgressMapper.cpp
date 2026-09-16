@@ -2,6 +2,7 @@
 
 #include <GfxRenderer.h>
 #include <Logging.h>
+#include <Memory.h>
 
 #include <algorithm>
 #include <climits>
@@ -1000,20 +1001,40 @@ CrossPointPosition ProgressMapper::toCrossPoint(const std::shared_ptr<Epub>& epu
               result.hasLiIndex ? static_cast<int>(result.liIndex) : 0, anchorId ? anchorId : "none");
     };
 
-    ParagraphStreamer strict(xpathSteps, xpathStepCount, xpathChar, xpathTextNode);
-    if (streamSpine(epub, result.spineIndex, strict) && strict.found()) {
-      applyResolvedXPath(strict);
-    } else {
+    // ParagraphStreamer carries ~320 bytes of ancestry and anchor buffers, so it
+    // lives on the heap; two of them on the stack put this frame over 1KB. The
+    // strict pass is released before the relaxed retry allocates, so at most one
+    // streamer is resident at a time.
+    auto strict = makeUniqueNoThrow<ParagraphStreamer>(xpathSteps, xpathStepCount, xpathChar, xpathTextNode);
+    if (!strict) {
+      LOG_ERR("PM", "OOM: %u bytes of xpath streamer", static_cast<unsigned>(sizeof(ParagraphStreamer)));
+      return result;
+    }
+    const bool strictResolved = streamSpine(epub, result.spineIndex, *strict) && strict->found();
+    if (strictResolved) {
+      applyResolvedXPath(*strict);
+    }
+    strict.reset();
+    if (!strictResolved) {
       // Some KOReader producers omit an unindexed wrapper from the ancestry
       // (the compatibility case covered by PR #2777). Retry only after the
       // structurally exact path fails, allowing the first step at any body depth.
-      ParagraphStreamer relaxed(xpathSteps, xpathStepCount, xpathChar, xpathTextNode, true);
-      if (streamSpine(epub, result.spineIndex, relaxed) && relaxed.found()) {
-        applyResolvedXPath(relaxed);
+      auto relaxed = makeUniqueNoThrow<ParagraphStreamer>(xpathSteps, xpathStepCount, xpathChar, xpathTextNode, true);
+      if (!relaxed) {
+        LOG_ERR("PM", "OOM: %u bytes of xpath streamer", static_cast<unsigned>(sizeof(ParagraphStreamer)));
+        return result;
+      }
+      if (streamSpine(epub, result.spineIndex, *relaxed) && relaxed->found()) {
+        applyResolvedXPath(*relaxed);
       }
     }
   } else if (useBodyText) {
-    ParagraphStreamer s(true, xpathChar, xpathTextNode);
+    auto sp = makeUniqueNoThrow<ParagraphStreamer>(true, xpathChar, xpathTextNode);
+    if (!sp) {
+      LOG_ERR("PM", "OOM: %u bytes of xpath streamer", static_cast<unsigned>(sizeof(ParagraphStreamer)));
+      return result;
+    }
+    ParagraphStreamer& s = *sp;
     if (streamSpine(epub, result.spineIndex, s) && s.found()) {
       result.visibleTextOffset =
           static_cast<uint32_t>(std::min<size_t>(s.getTargetVisChars(), static_cast<size_t>(UINT32_MAX)));
@@ -1021,7 +1042,12 @@ CrossPointPosition ProgressMapper::toCrossPoint(const std::shared_ptr<Epub>& epu
       LOG_DBG("PM", "XPath body/text()[%d]+%d -> offset=%u", xpathTextNode, xpathChar, result.visibleTextOffset);
     }
   } else if (xpathP > 0) {
-    ParagraphStreamer s(xpathP, xpathChar, xpathTextNode);
+    auto sp = makeUniqueNoThrow<ParagraphStreamer>(xpathP, xpathChar, xpathTextNode);
+    if (!sp) {
+      LOG_ERR("PM", "OOM: %u bytes of xpath streamer", static_cast<unsigned>(sizeof(ParagraphStreamer)));
+      return result;
+    }
+    ParagraphStreamer& s = *sp;
     if (streamSpine(epub, result.spineIndex, s) && s.found()) {
       result.visibleTextOffset =
           static_cast<uint32_t>(std::min<size_t>(s.getTargetVisChars(), static_cast<size_t>(UINT32_MAX)));
@@ -1125,9 +1151,13 @@ std::string ProgressMapper::generateXPath(const std::shared_ptr<Epub>& epub, int
   const auto href = epub->getSpineItem(spineIndex).href;
   if (href.empty() || !epub->getItemSize(href, &spineSize) || spineSize == 0) return base;
 
-  ParagraphStreamer s(static_cast<size_t>(spineSize * std::min(intra, 1.0f)));
-  if (!streamSpine(epub, spineIndex, s)) return base;
+  auto s = makeUniqueNoThrow<ParagraphStreamer>(static_cast<size_t>(spineSize * std::min(intra, 1.0f)));
+  if (!s) {
+    LOG_ERR("PM", "OOM: %u bytes of xpath streamer", static_cast<unsigned>(sizeof(ParagraphStreamer)));
+    return base;
+  }
+  if (!streamSpine(epub, spineIndex, *s)) return base;
 
-  const int p = s.paragraphCount();
+  const int p = s->paragraphCount();
   return (p > 0) ? base + "/p[" + std::to_string(p) + "]" : base;
 }

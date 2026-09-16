@@ -16,6 +16,7 @@ target_include_directories(SdCardFontTest PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/stubs
   ${REPO_ROOT}/lib/EpdFont
   ${REPO_ROOT}/lib/Utf8
+  ${REPO_ROOT}/lib/Memory
 )
 
 set(CPFONT_RESOURCES_DIR ${CMAKE_CURRENT_BINARY_DIR}/resources)

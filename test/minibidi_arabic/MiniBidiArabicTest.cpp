@@ -252,3 +252,52 @@ TEST(TransparentMark, LettersAndLatinMarksAreNot) {
   EXPECT_FALSE(BidiUtils::isTransparentMark(0x0661));  // Arabic-Indic digit
   EXPECT_FALSE(BidiUtils::isTransparentMark('a'));
 }
+
+/* ── do_bidi working set ─────────────────────────────────────────────── */
+
+// do_bidi()'s working arrays (resolved types, embedding levels, the removed-
+// character mask, the directional-status stack and the N0 bracket stack, ~1.3KB
+// together) moved out of its stack frame into one heap block allocated only
+// once the P2/P3 scan proves the line needs reordering. These cases drive every
+// one of those arrays, so a mis-wired pointer would show up as wrong output.
+
+// Brackets in an RTL run are mirrored by rule L4 after the run is reversed, so
+// the pair still reads as correctly nested. Exercises the N0 bracket stack.
+TEST(BidiWorkingSet, BracketsInAnRtlRunStayNested) {
+  EXPECT_EQ(shapeVisual({0x05D0, '(', 0x05D1, ')', 0x05D2}), (CP{0x05D2, '(', 0x05D1, ')', 0x05D0}));
+}
+
+// European digits inside an RTL paragraph keep their own left-to-right order
+// while the surrounding letters reverse. Exercises the resolved-type and
+// embedding-level arrays.
+TEST(BidiWorkingSet, DigitsKeepLtrOrderInsideAnRtlRun) {
+  EXPECT_EQ(shapeVisual({0x05D0, '1', '2', 0x05D1}), (CP{0x05D1, '1', '2', 0x05D0}));
+}
+
+// A line at the BIDI_MAX_LINE limit still reverses exactly, with the bracket
+// pair at its end mirrored in place. This is the high-water mark for every
+// working array at once.
+TEST(BidiWorkingSet, FullLengthLineReversesExactly) {
+  constexpr int kLineLength = 128;  // BIDI_MAX_LINE
+  CP logical;
+  logical.reserve(kLineLength);
+  for (int i = 0; i < kLineLength - 2; ++i) {
+    logical.push_back(0x05D0 + (i % 22));  // Hebrew alef..tav
+  }
+  logical.push_back('(');
+  logical.push_back(')');
+
+  CP expected(logical.rbegin(), logical.rend());
+  // The reversed pair is mirrored back by rule L4.
+  expected[0] = '(';
+  expected[1] = ')';
+
+  EXPECT_EQ(shapeVisual(logical), expected);
+}
+
+// Trailing whitespace is reset to the paragraph level by rule L1, so it stays
+// on the visual right of an RTL line instead of being pulled to the front.
+// Exercises the removed-character mask and the L1 pass.
+TEST(BidiWorkingSet, TrailingWhitespaceStaysAtTheParagraphLevel) {
+  EXPECT_EQ(shapeVisual({0x05D0, 0x05D1, ' ', ' '}), (CP{' ', ' ', 0x05D1, 0x05D0}));
+}

@@ -75,14 +75,21 @@ IfoFacts readIfoFacts(const std::string& ifoPath) {
   IfoFacts facts;
   HalFile ifo;
   if (!Storage.openFileForRead("DICT", ifoPath, ifo)) return facts;
-  char buf[2048];
-  const int n = ifo.read(buf, sizeof(buf) - 1);
+  // 2KB scan window, on the heap: eight times the 256-byte stack budget, and
+  // this runs once per dictionary open, so the allocation never repeats.
+  constexpr size_t IFO_SCAN_BYTES = 2048;
+  auto buf = makeUniqueNoThrowForOverwrite<char[]>(IFO_SCAN_BYTES);
+  if (!buf) {
+    LOG_ERR("DICT", "OOM: %u bytes of .ifo scan buffer", static_cast<unsigned>(IFO_SCAN_BYTES));
+    return facts;
+  }
+  const int n = ifo.read(buf.get(), IFO_SCAN_BYTES - 1);
   if (n <= 0) return facts;
   buf[n] = '\0';
-  const char* line = strstr(buf, "idxoffsetbits");
+  const char* line = strstr(buf.get(), "idxoffsetbits");
   const char* eq = line ? strchr(line, '=') : nullptr;
   facts.offsets64 = eq && strtol(eq + 1, nullptr, 10) == 64;
-  line = strstr(buf, "sametypesequence");
+  line = strstr(buf.get(), "sametypesequence");
   eq = line ? strchr(line, '=') : nullptr;
   if (eq) {
     // Only the single-field sequence "h" is treated as HTML; multi-type

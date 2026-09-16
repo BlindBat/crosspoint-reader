@@ -18,6 +18,7 @@ target_include_directories(WebDavPathsTest PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/stubs
   ${REPO_ROOT}/src
   ${REPO_ROOT}/lib/FsHelpers
+  ${REPO_ROOT}/lib/Memory
 )
 
 target_link_libraries(WebDavPathsTest PRIVATE

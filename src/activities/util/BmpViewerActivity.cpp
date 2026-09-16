@@ -19,6 +19,8 @@ constexpr char CUSTOM_SLEEP_ROOT_BMP[] = "/sleep.bmp";
 constexpr char TRANSPARENT_SLEEP_ROOT_BMP[] = "/sleep-overlay.bmp";
 constexpr char TRANSPARENT_SLEEP_ROOT_PNG[] = "/sleep-overlay.png";
 constexpr size_t COPY_BUFFER_SIZE = 2048;
+// Directory-entry name scratch (SdFat long filenames).
+constexpr size_t MAX_ENTRY_NAME_BYTES = 500;
 }  // namespace
 
 BmpViewerActivity::BmpViewerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string path)
@@ -40,12 +42,19 @@ void BmpViewerActivity::loadSiblingImages() {
     return;
   }
 
-  char name[500];
+  // Long-filename scratch, allocated once for the whole scan rather than as ~500
+  // bytes of stack frame.
+  auto name = makeUniqueNoThrowForOverwrite<char[]>(MAX_ENTRY_NAME_BYTES);
+  if (!name) {
+    LOG_ERR("BMP", "OOM: %u bytes of name buffer", static_cast<unsigned>(MAX_ENTRY_NAME_BYTES));
+    dir.close();
+    return;
+  }
   for (auto file = dir.openNextFile(); file; file = dir.openNextFile()) {
     if (!file.isDirectory()) {
-      file.getName(name, sizeof(name));
+      file.getName(name.get(), MAX_ENTRY_NAME_BYTES);
       if (name[0] != '.') {
-        std::string fname(name);
+        std::string fname(name.get());
         if (FsHelpers::hasBmpExtension(fname) || FsHelpers::hasPngExtension(fname)) {
           siblingImages.push_back(fname);
         }

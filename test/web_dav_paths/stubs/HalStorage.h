@@ -10,12 +10,53 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <string>
 #include <vector>
 
 #include "WString.h"
+
+// Stack-depth probe. HalFile::read() and HalFile::getName() record the deepest
+// stack address they are ever called at, so a test can bound the stack frame of
+// the production code driving the read or directory-listing loop.
+namespace halfile_stack_probe {
+
+#ifndef __has_feature
+#define __has_feature(x) 0
+#endif
+
+// AddressSanitizer inserts a redzone around every local in every frame on the
+// path, so a measured depth reflects instrumentation rather than the production
+// frame. Budget assertions skip themselves under it.
+#if defined(__SANITIZE_ADDRESS__) || __has_feature(address_sanitizer)
+inline constexpr bool kMeasurementIsReliable = false;
+#else
+inline constexpr bool kMeasurementIsReliable = true;
+#endif
+
+inline uintptr_t& deepest() {
+  static uintptr_t value = 0;
+  return value;
+}
+
+inline void reset() { deepest() = 0; }
+
+inline void sample() {
+  const char here = 0;
+  const auto addr = reinterpret_cast<uintptr_t>(&here);
+  if (deepest() == 0 || addr < deepest()) deepest() = addr;
+}
+
+// Bytes of stack consumed between `anchor` (a local in the calling test) and the
+// deepest sampled point. 0 when nothing was sampled.
+inline size_t depthFrom(const void* anchor) {
+  if (deepest() == 0) return 0;
+  return static_cast<size_t>(reinterpret_cast<uintptr_t>(anchor) - deepest());
+}
+
+}  // namespace halfile_stack_probe
 
 class HalStorage;
 
@@ -51,6 +92,7 @@ class HalFile {
   bool isDirectory() const { return dir_ != nullptr; }
 
   size_t getName(char* name, size_t len) {
+    halfile_stack_probe::sample();
     if (len == 0) return 0;
     const size_t n = name_.copy(name, len - 1);
     name[n] = '\0';
@@ -72,7 +114,10 @@ class HalFile {
     return static_cast<int>(size()) - static_cast<int>(pos);
   }
 
-  int read(void* buf, size_t count) { return file_ ? static_cast<int>(std::fread(buf, 1, count, file_)) : 0; }
+  int read(void* buf, size_t count) {
+    halfile_stack_probe::sample();
+    return file_ ? static_cast<int>(std::fread(buf, 1, count, file_)) : 0;
+  }
   size_t write(const void* buf, size_t count) { return file_ ? std::fwrite(buf, 1, count, file_) : 0; }
   size_t write(const uint8_t* buf, size_t count) { return write(static_cast<const void*>(buf), count); }
   size_t write(uint8_t b) { return write(&b, 1); }

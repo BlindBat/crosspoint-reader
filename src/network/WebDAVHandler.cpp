@@ -3,6 +3,7 @@
 #include <FsHelpers.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Memory.h>
 
 #include <cstdlib>
 
@@ -17,6 +18,10 @@ constexpr const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};
 // ESP32 doesn't have real-time clock set by default, so we use a fixed epoch date
 // as a fallback. The date is not critical for WebDAV Class 1 operations.
 const char* FIXED_DATE = "Thu, 01 Jan 2024 00:00:00 GMT";
+
+// Directory-entry name scratch (SdFat long filenames) and the COPY streaming buffer.
+constexpr size_t MAX_ENTRY_NAME_BYTES = 500;
+constexpr size_t COPY_BUFFER_BYTES = 4096;
 
 // True when the RAW (still percent-encoded) text would decode to a NUL byte.
 // Every consumer past the decode is NUL-terminated -- normalisePath reads the decoded
@@ -266,10 +271,19 @@ void WebDAVHandler::handlePropfind(WebServer& s) {
   // If depth > 0 and it's a directory, list children
   if (depth > 0) {
     HalFile file = root.openNextFile();
-    char name[500];
+    // Long-filename scratch, allocated once for the whole listing. On the stack
+    // it was nearly 500 bytes of frame on a task that also runs the TLS stack.
+    auto name = makeUniqueNoThrowForOverwrite<char[]>(MAX_ENTRY_NAME_BYTES);
+    if (!name) {
+      LOG_ERR("DAV", "OOM: %u bytes of name buffer", static_cast<unsigned>(MAX_ENTRY_NAME_BYTES));
+      root.close();
+      s.sendContent("</D:multistatus>\n");
+      s.sendContent("");
+      return;
+    }
     while (file) {
-      file.getName(name, sizeof(name));
-      String fileName(name);
+      file.getName(name.get(), MAX_ENTRY_NAME_BYTES);
+      String fileName(name.get());
 
       // Skip hidden/protected items
       bool shouldHide = fileName.startsWith(".");
@@ -668,14 +682,23 @@ void WebDAVHandler::handleCopy(WebServer& s) {
     return;
   }
 
-  // Streaming copy with 4KB buffer on stack
-  uint8_t buf[4096];
+  // Streaming copy through a 4KB heap buffer. On the stack it made handleCopy the
+  // largest frame in the firmware (4224 bytes) on the web-server task.
+  auto buf = makeUniqueNoThrowForOverwrite<uint8_t[]>(COPY_BUFFER_BYTES);
+  if (!buf) {
+    LOG_ERR("DAV", "OOM: %u bytes of copy buffer", static_cast<unsigned>(COPY_BUFFER_BYTES));
+    srcFile.close();
+    dstFile.close();
+    Storage.remove(dstPath.c_str());
+    s.send(500, "text/plain", "Copy failed - out of memory");
+    return;
+  }
   bool copyOk = true;
   while (srcFile.available()) {
     resetTaskWatchdogIfSubscribed();
-    int bytesRead = srcFile.read(buf, sizeof(buf));
+    int bytesRead = srcFile.read(buf.get(), COPY_BUFFER_BYTES);
     if (bytesRead <= 0) break;
-    size_t written = dstFile.write(buf, bytesRead);
+    size_t written = dstFile.write(buf.get(), bytesRead);
     if (written != (size_t)bytesRead) {
       copyOk = false;
       break;

@@ -21,6 +21,11 @@ constexpr size_t kStyleEnumPrefixBytes = 5;
 constexpr size_t kStyleLengthFieldCount = 11;
 constexpr size_t kStyleLengthBytes = sizeof(decltype(CssLength::value)) + sizeof(uint8_t);
 
+// Stack budget for loadFromStream(), measured from the test's frame down to the
+// deepest point inside HalFile::read(). Generous enough to absorb the sanitizer
+// build's frame padding, far below the ~2.6KB of buffers this used to hold.
+constexpr size_t kMaxLoadFromStreamStackBytes = 1024;
+
 class CssParserTest : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -452,6 +457,43 @@ TEST_F(CssParserTest, CacheHydrationRejectsNonFiniteStyleLengths) {
     EXPECT_EQ(reader.loadFromCache(), CssParser::CacheLoadResult::Invalid);
     EXPECT_TRUE(reader.empty());
   }
+}
+
+// The parser's working buffers (two 1KB selector/declaration accumulators and a
+// 512-byte read buffer) live on the heap, not in loadFromStream's frame: with
+// them on the stack this call alone consumed ~2.9KB on the ESP32-C3, more than a
+// whole FreeRTOS task stack. HalFile::read() samples the deepest stack address
+// the read loop reaches, which bounds the frame from the caller's side.
+TEST_F(CssParserTest, LoadFromStreamRunsInASmallStackFrame) {
+  if (!halfile_stack_probe::kMeasurementIsReliable) {
+    GTEST_SKIP() << "AddressSanitizer pads every frame on the path; the measurement is not the production frame";
+  }
+
+  // Enough rules, and a long enough selector, to exercise every accumulator.
+  std::string css;
+  css.reserve(64 * 1024);
+  for (int i = 0; i < 200; ++i) {
+    css += ".sel" + std::to_string(i) + " span em strong { margin-top: 2em; font-weight: bold; text-align: center; }\n";
+  }
+
+  const fs::path sourcePath = directory_ / "frame.css";
+  {
+    std::ofstream output(sourcePath, std::ios::binary);
+    output.write(css.data(), static_cast<std::streamsize>(css.size()));
+  }
+
+  CssParser parser(cachePath());
+  HalFile source;
+  ASSERT_TRUE(HalStorage::getInstance().openFileForRead("TST", sourcePath.string(), source));
+
+  const char anchor = 0;
+  halfile_stack_probe::reset();
+  const CssParser::ParseResult result = parser.loadFromStream(source);
+  const size_t depth = halfile_stack_probe::depthFrom(&anchor);
+
+  EXPECT_EQ(result, CssParser::ParseResult::Complete);
+  EXPECT_GT(depth, 0u) << "read() was never reached; the probe measured nothing";
+  EXPECT_LT(depth, kMaxLoadFromStreamStackBytes);
 }
 
 }  // namespace

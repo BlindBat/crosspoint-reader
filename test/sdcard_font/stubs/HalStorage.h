@@ -19,12 +19,53 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <utility>
 #include <vector>
+
+// Stack-depth probe. HalFile::read() records the deepest stack address it is
+// ever called at, so a test can bound the stack frame of the production code
+// driving the read loop.
+namespace halfile_stack_probe {
+
+#ifndef __has_feature
+#define __has_feature(x) 0
+#endif
+
+// AddressSanitizer inserts a redzone around every local in every frame on the
+// path, so a measured depth reflects instrumentation rather than the production
+// frame. Budget assertions skip themselves under it.
+#if defined(__SANITIZE_ADDRESS__) || __has_feature(address_sanitizer)
+inline constexpr bool kMeasurementIsReliable = false;
+#else
+inline constexpr bool kMeasurementIsReliable = true;
+#endif
+
+inline uintptr_t& deepest() {
+  static uintptr_t value = 0;
+  return value;
+}
+
+inline void reset() { deepest() = 0; }
+
+inline void sample() {
+  const char here = 0;
+  const auto addr = reinterpret_cast<uintptr_t>(&here);
+  if (deepest() == 0 || addr < deepest()) deepest() = addr;
+}
+
+// Bytes of stack consumed between `anchor` (a local in the calling test) and the
+// deepest point reached inside read(). 0 when read() was never called.
+inline size_t depthFrom(const void* anchor) {
+  if (deepest() == 0) return 0;
+  return static_cast<size_t>(reinterpret_cast<uintptr_t>(anchor) - deepest());
+}
+
+}  // namespace halfile_stack_probe
 
 namespace halstub {
 // Prepended to every path the production code passes in. Empty = passthrough.
@@ -88,6 +129,7 @@ class HalFile {
   }
 
   int read(void* buffer, size_t count) {
+    halfile_stack_probe::sample();
     if (!file_) return -1;
     return static_cast<int>(std::fread(buffer, 1, count, file_));
   }

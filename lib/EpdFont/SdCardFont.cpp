@@ -2,6 +2,7 @@
 
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <Utf8.h>
 
 #include <algorithm>
@@ -17,6 +18,15 @@ static_assert(sizeof(EpdKernClassEntry) == 3, "EpdKernClassEntry must be 3 bytes
 static_assert(sizeof(EpdLigaturePair) == 8, "EpdLigaturePair must be 8 bytes to match .cpfont file layout");
 
 namespace {
+
+// Per-page kern class maps used by buildMiniKernMatrix(). Kern class ids are
+// uint8_t, so each map is 256 entries: old id -> new id and back.
+struct MiniKernClassMaps {
+  uint8_t leftRenumber[256];
+  uint8_t rightRenumber[256];
+  uint8_t newToOldLeft[256];
+  uint8_t newToOldRight[256];
+};
 
 // FNV-1a hash for content-based font ID generation
 constexpr uint32_t FNV_OFFSET = 2166136261u;
@@ -366,30 +376,39 @@ bool SdCardFont::buildMiniKernMatrix(PerStyle& s, const uint32_t* codepoints, ui
     return true;  // font has no kern classes — nothing to build
   }
 
-  // Step 1: mark used left/right classes via a 256-wide bitmap (class IDs are uint8_t).
-  bool usedLeft[256] = {};
-  bool usedRight[256] = {};
+  // 1KB of class maps, on the heap: as locals they made this function's frame
+  // 1648 bytes, six times the 256-byte budget. One allocation per page turn,
+  // next to the SD open and one seek+read per used kern class that follow.
+  auto maps = makeUniqueNoThrow<MiniKernClassMaps>();
+  if (!maps) {
+    LOG_ERR("SDCF", "OOM: %u bytes of mini kern class maps", static_cast<unsigned>(sizeof(MiniKernClassMaps)));
+    freeStyleMiniKern(s);
+    return false;
+  }
+  uint8_t* const leftRenumber = maps->leftRenumber;
+  uint8_t* const rightRenumber = maps->rightRenumber;
+  uint8_t* const newToOldLeft = maps->newToOldLeft;
+  uint8_t* const newToOldRight = maps->newToOldRight;
+
+  // Step 1: mark used left/right classes. The renumber maps double as the
+  // used-class marks (1 = used); step 2 overwrites each mark with its new id.
   for (uint32_t i = 0; i < cpCount; i++) {
     uint8_t lc = miniLookupKernClass(s.kernLeftClasses, s.header.kernLeftEntryCount, codepoints[i]);
-    if (lc) usedLeft[lc] = true;
+    if (lc) leftRenumber[lc] = 1;
     uint8_t rc = miniLookupKernClass(s.kernRightClasses, s.header.kernRightEntryCount, codepoints[i]);
-    if (rc) usedRight[rc] = true;
+    if (rc) rightRenumber[rc] = 1;
   }
 
   // Step 2: build renumber maps (oldClassId -> newClassId, 1-based) and
   // reverse maps (newClassId -> oldClassId) for the SD read step.
-  uint8_t leftRenumber[256] = {};
-  uint8_t rightRenumber[256] = {};
-  uint8_t newToOldLeft[256] = {};
-  uint8_t newToOldRight[256] = {};
   uint8_t numLeft = 0, numRight = 0;
   for (int i = 1; i < 256; i++) {
-    if (usedLeft[i]) {
+    if (leftRenumber[i]) {
       numLeft++;
       leftRenumber[i] = numLeft;
       newToOldLeft[numLeft] = static_cast<uint8_t>(i);
     }
-    if (usedRight[i]) {
+    if (rightRenumber[i]) {
       numRight++;
       rightRenumber[i] = numRight;
       newToOldRight[numRight] = static_cast<uint8_t>(i);

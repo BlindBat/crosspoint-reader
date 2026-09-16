@@ -524,8 +524,15 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
     return false;
   }
 
-  // Initialize decode context
-  PngDecodeContext ctx = {};
+  // Initialize decode context. ~2.9KB (2KB IDAT read buffer + 768-byte palette),
+  // so it lives on the heap: as a local it alone overflowed a 2KB task stack.
+  // Freed when ctxHolder leaves scope, which also runs InflateStream's destructor.
+  auto ctxHolder = makeUniqueNoThrow<PngDecodeContext>();
+  if (!ctxHolder) {
+    LOG_ERR("PNG", "OOM: %u bytes of decode context", static_cast<unsigned>(sizeof(PngDecodeContext)));
+    return false;
+  }
+  PngDecodeContext& ctx = *ctxHolder;
   ctx.file = &pngFile;
   ctx.width = width;
   ctx.height = height;

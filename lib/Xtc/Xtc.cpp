@@ -336,10 +336,15 @@ bool Xtc::generateThumbBmp(int height) const {
       HalFile src, dst;
       if (Storage.openFileForRead("XTC", getCoverBmpPath(), src)) {
         if (Storage.openFileForWrite("XTC", getThumbBmpPath(height), dst)) {
-          uint8_t buffer[512];
+          constexpr size_t COPY_BUFFER_BYTES = 512;
+          auto buffer = makeUniqueNoThrowForOverwrite<uint8_t[]>(COPY_BUFFER_BYTES);
+          if (!buffer) {
+            LOG_ERR("XTC", "OOM: %u bytes of thumb copy buffer", static_cast<unsigned>(COPY_BUFFER_BYTES));
+            return false;
+          }
           while (src.available()) {
-            size_t bytesRead = src.read(buffer, sizeof(buffer));
-            dst.write(buffer, bytesRead);
+            size_t bytesRead = src.read(buffer.get(), COPY_BUFFER_BYTES);
+            dst.write(buffer.get(), bytesRead);
           }
         }
       }

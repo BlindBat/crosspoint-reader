@@ -420,6 +420,29 @@ TEST_F(SdCardFontKernLigTest, KerningIsServedFromThePerPageMiniMatrix) {
   EXPECT_EQ(epd->getKerning('V', 'A'), 0);
 }
 
+// buildMiniKernMatrix keeps its 1KB of class renumber maps on the heap instead
+// of in its frame, where they cost ~1.65KB -- six times the 256-byte stack
+// budget, on the render task that turns the page. HalFile::read() samples the
+// deepest stack address the whole prewarm (kern matrix rows included) reaches.
+TEST_F(SdCardFontKernLigTest, PrewarmRunsInASmallStackFrame) {
+  if (!halfile_stack_probe::kMeasurementIsReliable) {
+    GTEST_SKIP() << "AddressSanitizer pads every frame on the path; the measurement is not the production frame";
+  }
+
+  SdCardFont font;
+  ASSERT_TRUE(font.load(res("valid_basic.cpfont").c_str()));
+
+  const char anchor = 0;
+  halfile_stack_probe::reset();
+  ASSERT_EQ(font.prewarm("AV."), 0);
+  const size_t depth = halfile_stack_probe::depthFrom(&anchor);
+
+  // The mini matrix must still be correct, not just cheap.
+  EXPECT_EQ(font.getEpdFont(0)->getKerning('A', 'V'), -16);
+  ASSERT_GT(depth, 0u) << "read() was never reached; the probe measured nothing";
+  EXPECT_LT(depth, 1024u);
+}
+
 TEST_F(SdCardFontKernLigTest, KernFreePrewarmCanBeToppedUpWithoutRebuild) {
   SdCardFont font;
   ASSERT_TRUE(font.load(res("valid_basic.cpfont").c_str()));

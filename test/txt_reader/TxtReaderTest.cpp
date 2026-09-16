@@ -8,10 +8,15 @@
 // Part 2 compiles the real lib/Txt/Txt.cpp against stdio-backed HAL stubs in a
 // temporary directory: title stripping, cache path, load/readContent, cover
 // discovery order and cover.bmp generation (BMP copy, JPEG convert, PNG reject).
+//
+// Part 3 drives the production ReaderProgressGuard (the write guard the TXT,
+// XTC and FB2 readers call from saveProgress()) against the same stubs, with
+// the stub counting every file opened for writing.
 
 #include <HalStorage.h>
 #include <JpegToBmpConverter.h>
 #include <PlatformHost.h>
+#include <ReaderProgressGuard.h>
 #include <Txt.h>
 #include <TxtPageIndex.h>
 #include <gtest/gtest.h>
@@ -1318,6 +1323,138 @@ TEST_F(TxtFixture, ExistingCoverBmpShortCircuits) {
   EXPECT_TRUE(txt.generateCoverBmp());
   EXPECT_EQ(readFile(txt.getCoverBmpPath()), "OLD");
   EXPECT_EQ(JpegToBmpConverterStubState::instance().streamCalls, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Part 3: ReaderProgressGuard (src/activities/reader) -- redundant progress
+// writes, counted through the stub.
+// ---------------------------------------------------------------------------
+
+class ProgressGuardFixture : public TxtFixture {
+ protected:
+  std::string cachePath = "/.crosspoint/txt_guard";
+
+  void SetUp() override {
+    TxtFixture::SetUp();
+    ASSERT_TRUE(Storage.mkdir(cachePath.c_str()));
+    Storage.resetCounters();
+  }
+
+  void TearDown() override {
+    Storage.resetCounters();
+    TxtFixture::TearDown();
+  }
+
+  // Exactly what TxtReaderActivity::saveProgress() does.
+  bool saveTxtProgress(ReaderProgressGuard& guard, const int page) const {
+    uint8_t data[PROGRESS_SIZE];
+    encodeProgress(page, data);
+    return guard.save(cachePath, page, data, sizeof(data));
+  }
+
+  int savedPage() const {
+    HalFile in;
+    EXPECT_TRUE(Storage.openFileForRead("TRS", cachePath + "/progress.bin", in));
+    uint8_t data[PROGRESS_SIZE] = {};
+    EXPECT_EQ(in.read(data, sizeof(data)), static_cast<int>(sizeof(data)));
+    return decodeProgress(data, 10000);
+  }
+};
+
+TEST_F(ProgressGuardFixture, RepaintingTheSamePageWritesNothingAfterTheFirstSave) {
+  ReaderProgressGuard guard;
+  EXPECT_TRUE(saveTxtProgress(guard, 7));
+  EXPECT_EQ(Storage.writeCount, 1);  // one temp file, renamed into place
+  EXPECT_EQ(Storage.writtenPaths[0], cachePath + "/progress.bin.tmp");
+  EXPECT_EQ(savedPage(), 7);
+
+  // renderBook() runs on every repaint, not only on a page turn.
+  for (int repaint = 0; repaint < 5; repaint++) {
+    EXPECT_TRUE(saveTxtProgress(guard, 7));
+  }
+  EXPECT_EQ(Storage.writeCount, 1);
+  EXPECT_EQ(savedPage(), 7);
+}
+
+TEST_F(ProgressGuardFixture, EveryPageTurnStillWrites) {
+  ReaderProgressGuard guard;
+  for (int page = 0; page < 4; page++) {
+    EXPECT_TRUE(saveTxtProgress(guard, page));
+    EXPECT_TRUE(saveTxtProgress(guard, page));  // repaint of the same page
+  }
+  EXPECT_EQ(Storage.writeCount, 4);
+  EXPECT_EQ(savedPage(), 3);
+
+  // Paging back is a move too.
+  EXPECT_TRUE(saveTxtProgress(guard, 2));
+  EXPECT_EQ(Storage.writeCount, 5);
+  EXPECT_EQ(savedPage(), 2);
+}
+
+TEST_F(ProgressGuardFixture, MarkSavedAfterLoadSuppressesTheOpeningRewrite) {
+  // loadProgress() read page 3 out of progress.bin; the file already says 3.
+  uint8_t data[PROGRESS_SIZE];
+  encodeProgress(3, data);
+  writeFile(cachePath + "/progress.bin", std::string(reinterpret_cast<const char*>(data), PROGRESS_SIZE));
+  Storage.resetCounters();
+
+  ReaderProgressGuard guard;
+  guard.markSaved(3);
+  EXPECT_TRUE(saveTxtProgress(guard, 3));
+  EXPECT_EQ(Storage.writeCount, 0);
+  EXPECT_EQ(savedPage(), 3);
+
+  EXPECT_TRUE(saveTxtProgress(guard, 4));
+  EXPECT_EQ(Storage.writeCount, 1);
+  EXPECT_EQ(savedPage(), 4);
+}
+
+TEST_F(ProgressGuardFixture, ForgetReenablesTheWriteAfterACacheClear) {
+  ReaderProgressGuard guard;
+  EXPECT_TRUE(saveTxtProgress(guard, 5));
+  EXPECT_EQ(Storage.writeCount, 1);
+
+  // The reader menu's "delete cache" removes progress.bin and re-saves the
+  // position it backed up; the guard must not treat that as unchanged.
+  ASSERT_TRUE(Storage.remove((cachePath + "/progress.bin").c_str()));
+  guard.forget();
+  EXPECT_TRUE(saveTxtProgress(guard, 5));
+  EXPECT_EQ(Storage.writeCount, 2);
+  EXPECT_EQ(savedPage(), 5);
+}
+
+TEST_F(ProgressGuardFixture, AFailedWriteIsRetriedOnTheNextRepaint) {
+  ReaderProgressGuard guard;
+  uint8_t data[PROGRESS_SIZE];
+  encodeProgress(6, data);
+  // No cache directory: writeAtomic cannot open the temp file.
+  EXPECT_FALSE(guard.save("/.crosspoint/does_not_exist", 6, data, sizeof(data)));
+  EXPECT_FALSE(guard.save("/.crosspoint/does_not_exist", 6, data, sizeof(data)));
+
+  // The guard never recorded the failed position, so the real path still writes.
+  EXPECT_TRUE(saveTxtProgress(guard, 6));
+  EXPECT_EQ(savedPage(), 6);
+}
+
+// generateCoverBmp()'s 1KB copy buffer lives on the heap, not in its frame,
+// where it cost ~1.1KB -- four times the 256-byte stack budget. HalFile::read()
+// samples the deepest stack address the copy loop reaches.
+TEST_F(TxtFixture, CoverCopyRunsInASmallStackFrame) {
+  if (!halfile_stack_probe::kMeasurementIsReliable) {
+    GTEST_SKIP() << "AddressSanitizer pads every frame on the path; the measurement is not the production frame";
+  }
+
+  writeFile("/books/a.txt", "x");
+  writeFile("/books/a.bmp", std::string(8192, 'B'));
+  Txt txt("/books/a.txt", "/.crosspoint");
+
+  const char anchor = 0;
+  halfile_stack_probe::reset();
+  ASSERT_TRUE(txt.generateCoverBmp());
+  const size_t depth = halfile_stack_probe::depthFrom(&anchor);
+
+  ASSERT_GT(depth, 0u) << "read() was never reached; the probe measured nothing";
+  EXPECT_LT(depth, 640u);
 }
 
 }  // namespace

@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <Utf8.h>
 
 #include <cstdlib>
@@ -249,6 +250,17 @@ int32_t FontDecompressor::findGlyphIndex(const EpdFontData* fontData, uint32_t c
   return -1;
 }
 
+namespace {
+// Working tables for one prewarmCache() pass. MAX_GROUP_SLOTS mirrors the
+// hard cap the group-collection loop enforces.
+constexpr uint8_t MAX_GROUP_SLOTS = 128;
+struct PrewarmScratch {
+  uint32_t neededGlyphs[FontDecompressor::MAX_PAGE_GLYPHS];
+  uint16_t neededGroups[MAX_GROUP_SLOTS];
+  uint32_t groupAlignedTracker[MAX_GROUP_SLOTS];  // running byte-aligned offset per needed group
+};
+}  // namespace
+
 int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8Text) {
   if (!fontData || !fontData->groups || !utf8Text) return 0;
 
@@ -259,8 +271,19 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
   }
   PageSlot& slot = pageSlots[pageSlotCount];
 
+  // ~2.8KB of prewarm working tables. They are heap-allocated, not stack: the
+  // three arrays together are larger than a whole 2KB FreeRTOS task stack.
+  // prewarmCache() already allocates the page buffer and the lookup table per
+  // call and then decompresses whole font groups, so one more allocation is
+  // noise next to the work it guards.
+  auto scratch = makeUniqueNoThrow<PrewarmScratch>();
+  if (!scratch) {
+    LOG_ERR("FDC", "OOM: %u bytes of prewarm scratch", static_cast<unsigned>(sizeof(PrewarmScratch)));
+    return -1;
+  }
+  uint32_t* const neededGlyphs = scratch->neededGlyphs;
+
   // Step 1: Collect unique glyph indices needed for this page
-  uint32_t neededGlyphs[MAX_PAGE_GLYPHS];
   uint16_t glyphCount = 0;
   bool glyphCapWarned = false;
 
@@ -332,7 +355,7 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
 
   // Step 2: Compute total buffer size and collect unique groups
   uint32_t totalBytes = 0;
-  uint16_t neededGroups[128];
+  uint16_t* const neededGroups = scratch->neededGroups;
   uint8_t groupCount = 0;
   bool groupCapWarned = false;
 
@@ -347,10 +370,11 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
       }
     }
     if (!found) {
-      if (groupCount < 128) {
+      if (groupCount < MAX_GROUP_SLOTS) {
         neededGroups[groupCount++] = gi;
       } else if (!groupCapWarned) {
-        LOG_DBG("FDC", "Group cap (128) reached during prewarm; some groups will use hot-group fallback");
+        LOG_DBG("FDC", "Group cap (%u) reached during prewarm; some groups will use hot-group fallback",
+                static_cast<unsigned>(MAX_GROUP_SLOTS));
         groupCapWarned = true;
       }
     }
@@ -393,7 +417,7 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
 
   // Step 3b: Pre-scan to compute each needed glyph's byte-aligned offset within its group.
   // This avoids recomputing aligned offsets per group during extraction in step 4.
-  uint32_t groupAlignedTracker[128] = {};  // running byte-aligned offset for each needed group
+  uint32_t* const groupAlignedTracker = scratch->groupAlignedTracker;  // byte-aligned offset per needed group
 
   if (fontData->glyphToGroup) {
     // Frequency-grouped: single O(totalGlyphs) pass through glyphToGroup

@@ -9,9 +9,51 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <vector>
+
+// Stack-depth probe. HalFile::read() records the deepest stack address it is
+// ever called at, so a test can bound the stack frame of the production code
+// driving the read loop.
+namespace halfile_stack_probe {
+
+#ifndef __has_feature
+#define __has_feature(x) 0
+#endif
+
+// AddressSanitizer inserts a redzone around every local in every frame on the
+// path, so a measured depth reflects instrumentation rather than the production
+// frame. Budget assertions skip themselves under it.
+#if defined(__SANITIZE_ADDRESS__) || __has_feature(address_sanitizer)
+inline constexpr bool kMeasurementIsReliable = false;
+#else
+inline constexpr bool kMeasurementIsReliable = true;
+#endif
+
+inline uintptr_t& deepest() {
+  static uintptr_t value = 0;
+  return value;
+}
+
+inline void reset() { deepest() = 0; }
+
+inline void sample() {
+  const char here = 0;
+  const auto addr = reinterpret_cast<uintptr_t>(&here);
+  if (deepest() == 0 || addr < deepest()) deepest() = addr;
+}
+
+// Bytes of stack consumed between `anchor` (a local in the calling test) and the
+// deepest point reached inside read(). 0 when read() was never called.
+inline size_t depthFrom(const void* anchor) {
+  if (deepest() == 0) return 0;
+  return static_cast<size_t>(reinterpret_cast<uintptr_t>(anchor) - deepest());
+}
+
+}  // namespace halfile_stack_probe
 
 class HalFile {
  public:
@@ -26,8 +68,14 @@ class HalFile {
     return file_ != nullptr;
   }
   int available() { return file_ ? static_cast<int>(fileSize64() - position()) : 0; }
-  size_t read(void* buffer, size_t count) { return file_ ? std::fread(buffer, 1, count, file_) : 0; }
+  size_t read(void* buffer, size_t count) {
+    halfile_stack_probe::sample();
+    return file_ ? std::fread(buffer, 1, count, file_) : 0;
+  }
   size_t write(const void* buffer, size_t count) { return file_ ? std::fwrite(buffer, 1, count, file_) : 0; }
+  void flush() {
+    if (file_) std::fflush(file_);
+  }
   bool seek(size_t pos) { return seek64(pos); }
   bool seek64(uint64_t pos) {
     if (!file_ || pos > fileSize64()) return false;
@@ -66,10 +114,26 @@ class HalStorage {
   bool openFileForRead(const char* module, const std::string& path, HalFile& file) {
     return openFileForRead(module, path.c_str(), file);
   }
-  bool openFileForWrite(const char*, const char* path, HalFile& file) { return file.open(path, "wb"); }
+  bool openFileForWrite(const char*, const char* path, HalFile& file) {
+    writeCount++;
+    writtenPaths.emplace_back(path);
+    return file.open(path, "wb");
+  }
   bool openFileForWrite(const char* module, const std::string& path, HalFile& file) {
     return openFileForWrite(module, path.c_str(), file);
   }
+  bool rename(const char* from, const char* to) { return ::rename(from, to) == 0; }
+
+  // Counts every file opened for writing so tests can pin the redundant-write
+  // guards (AGENTS.md "SD Persistence Throttling").
+  int writeCount = 0;
+  std::vector<std::string> writtenPaths;
+
+  void resetCounters() {
+    writeCount = 0;
+    writtenPaths.clear();
+  }
+
   bool exists(const char* path) const {
     struct stat st{};
     return ::stat(path, &st) == 0;

@@ -498,4 +498,52 @@ TEST_F(WebDavPathsTest, OverlongUriIsHandledWithoutTruncationSideEffects) {
   expectStorageSawOnlyNormalizedPaths();
 }
 
+// The COPY streaming buffer (4KB) lives on the heap, not in handleCopy's frame,
+// where it made handleCopy the largest stack frame in the firmware (4224 bytes
+// on the ESP32-C3) on the web-server task. HalFile::read() samples the deepest
+// stack address the copy loop reaches.
+TEST_F(WebDavPathsTest, CopyRunsInASmallStackFrame) {
+  if (!halfile_stack_probe::kMeasurementIsReliable) {
+    GTEST_SKIP() << "AddressSanitizer pads every frame on the path; the measurement is not the production frame";
+  }
+
+  writeFileAt(root + "/big.bin", std::string(32 * 1024, 'x'));
+  auto server = makeRequest(HTTP_COPY, "/big.bin");
+  server.requestHeaders["Destination"] = String("/big-copy.bin");
+
+  const char anchor = 0;
+  halfile_stack_probe::reset();
+  const int status = run(server);
+  const size_t depth = halfile_stack_probe::depthFrom(&anchor);
+
+  EXPECT_EQ(status, 201);
+  EXPECT_EQ(readFileAt(root + "/big-copy.bin").size(), 32u * 1024u);
+  ASSERT_GT(depth, 0u) << "read() was never reached; the probe measured nothing";
+  EXPECT_LT(depth, 1024u);
+}
+
+// PROPFIND's 500-byte directory-entry name scratch is allocated once for the
+// listing instead of living in handlePropfind's frame (672 bytes on the
+// ESP32-C3). HalFile::getName() samples the deepest stack address the listing
+// loop reaches. The budget is not 256 bytes: what is left is the handler's
+// String/std::string temporaries, which are not buffers this task moves.
+TEST_F(WebDavPathsTest, PropfindRunsInASmallStackFrame) {
+  if (!halfile_stack_probe::kMeasurementIsReliable) {
+    GTEST_SKIP() << "AddressSanitizer pads every frame on the path; the measurement is not the production frame";
+  }
+
+  auto server = makeRequest(HTTP_PROPFIND, "/");
+  server.requestHeaders["Depth"] = String("1");
+
+  const char anchor = 0;
+  halfile_stack_probe::reset();
+  const int status = run(server);
+  const size_t depth = halfile_stack_probe::depthFrom(&anchor);
+
+  EXPECT_EQ(status, 207);
+  EXPECT_NE(server.bodySent.find("<D:href>/notes.txt</D:href>"), std::string::npos);
+  ASSERT_GT(depth, 0u) << "getName() was never reached; the probe measured nothing";
+  EXPECT_LT(depth, 960u);
+}
+
 }  // namespace

@@ -11,6 +11,8 @@
 #include "lib/Epub/Epub/hyphenation/HyphenationCommon.h"
 #include "lib/Epub/Epub/hyphenation/LanguageHyphenator.h"
 #include "lib/Epub/Epub/hyphenation/LanguageRegistry.h"
+#include "lib/Epub/Epub/hyphenation/LiangHyphenation.h"
+#include "lib/Epub/Epub/hyphenation/generated/hyph-en.trie.h"
 
 #ifndef HYPHENATION_RESOURCES_DIR
 #error "HYPHENATION_RESOURCES_DIR must be defined by the build system"
@@ -232,3 +234,62 @@ TEST(HyphenationEval, Spanish) { runLanguageEval("spanish", "es", "spanish_hyphe
 TEST(HyphenationEval, Italian) { runLanguageEval("italian", "it", "italian_hyphenation_tests.txt", 98.99); }
 TEST(HyphenationEval, Polish) { runLanguageEval("polish", "pl", "polish_hyphenation_tests.txt", 98.92); }
 TEST(HyphenationEval, Swedish) { runLanguageEval("swedish", "sv", "swedish_hyphenation_tests.txt", 94.01); }
+
+// liangBreakIndexes() stores every index in the narrowest type that holds its
+// range, cutting its frame from 1328 to about 640 bytes on the ESP32-C3 with no
+// heap churn (test/alloc_guards pins this path to zero per-word
+// allocations, so a scratch block is not an option). The config's isLetter hook
+// is called from inside the call, so it samples how deep the stack actually goes.
+namespace {
+
+// Stack budget for liangBreakIndexes(), measured from the caller's frame down to
+// the deepest point inside the isLetter callback. Not 256 bytes: the fixed word
+// arrays must stay on the stack (see above), so the budget pins the narrowed
+// working set instead. The host's 8-byte size_t makes this larger than the
+// ~530-byte ESP32-C3 frame.
+constexpr size_t kMaxLiangStackBytes = 1100;
+
+#ifndef __has_feature
+#define __has_feature(x) 0
+#endif
+
+// AddressSanitizer inserts a redzone around every local in every frame on the
+// path, so a measured depth reflects instrumentation rather than the production
+// frame. The budget assertion skips itself under it.
+#if defined(__SANITIZE_ADDRESS__) || __has_feature(address_sanitizer)
+constexpr bool kStackMeasurementIsReliable = false;
+#else
+constexpr bool kStackMeasurementIsReliable = true;
+#endif
+
+uintptr_t g_deepestLiangStack = 0;
+
+bool probingIsLatinLetter(uint32_t cp) {
+  const char here = 0;
+  const auto addr = reinterpret_cast<uintptr_t>(&here);
+  if (g_deepestLiangStack == 0 || addr < g_deepestLiangStack) g_deepestLiangStack = addr;
+  return isLatinLetter(cp);
+}
+
+}  // namespace
+
+TEST(HyphenationStackBudget, LiangBreakIndexesRunsInASmallStackFrame) {
+  if (!kStackMeasurementIsReliable) {
+    GTEST_SKIP() << "AddressSanitizer pads every frame on the path; the measurement is not the production frame";
+  }
+
+  // A long word drives every working array to its high-water mark.
+  const std::vector<CodepointInfo> cps = collectCodepoints("unconstitutionally");
+  ASSERT_FALSE(cps.empty());
+
+  const LiangWordConfig config(probingIsLatinLetter, toLowerLatin, 3, 3);
+
+  const char anchor = 0;
+  g_deepestLiangStack = 0;
+  const std::vector<size_t> breaks = liangBreakIndexes(cps, en_patterns, config);
+  ASSERT_NE(g_deepestLiangStack, 0u) << "isLetter was never called; the probe measured nothing";
+  const size_t depth = static_cast<size_t>(reinterpret_cast<uintptr_t>(&anchor) - g_deepestLiangStack);
+
+  EXPECT_FALSE(breaks.empty()) << "the probing config must still hyphenate normally";
+  EXPECT_LT(depth, kMaxLiangStackBytes);
+}

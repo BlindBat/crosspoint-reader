@@ -514,4 +514,73 @@ TEST(PngDecode, GrayLegalDepth16OnPaletteColorTypeIsRejected) {
   EXPECT_TRUE(out.bytes.empty());
 }
 
+// The 2KB IDAT read buffer and 768-byte palette (PngDecodeContext, ~2.9KB) live
+// on the heap, not in pngFileToBmpStreamInternal's frame, where they were larger
+// than a whole 2KB FreeRTOS task stack. The output Print is called from inside
+// the decode, so it samples how deep the stack actually goes.
+class StackProbePrint : public Print {
+ public:
+  size_t write(uint8_t b) override {
+    sample();
+    bytes.push_back(b);
+    return 1;
+  }
+  size_t write(const uint8_t* data, size_t length) override {
+    sample();
+    bytes.insert(bytes.end(), data, data + length);
+    return length;
+  }
+
+  size_t depthFrom(const void* anchor) const {
+    if (deepest_ == 0) return 0;
+    return static_cast<size_t>(reinterpret_cast<uintptr_t>(anchor) - deepest_);
+  }
+
+  std::vector<uint8_t> bytes;
+
+ private:
+  void sample() {
+    const char here = 0;
+    const auto addr = reinterpret_cast<uintptr_t>(&here);
+    if (deepest_ == 0 || addr < deepest_) deepest_ = addr;
+  }
+
+  uintptr_t deepest_ = 0;
+};
+
+// Stack budget for the PNG decode, measured from the test's frame down to the
+// deepest point inside the output Print. Generous enough for the sanitizer
+// build's frame padding, far below the ~2.9KB context this used to hold.
+constexpr size_t kMaxPngDecodeStackBytes = 1200;
+
+#ifndef __has_feature
+#define __has_feature(x) 0
+#endif
+
+// AddressSanitizer inserts a redzone around every local in every frame on the
+// path, so a measured depth reflects instrumentation rather than the production
+// frame. The budget assertion skips itself under it.
+#if defined(__SANITIZE_ADDRESS__) || __has_feature(address_sanitizer)
+constexpr bool kStackMeasurementIsReliable = false;
+#else
+constexpr bool kStackMeasurementIsReliable = true;
+#endif
+
+TEST(PngDecode, DecodeRunsInASmallStackFrame) {
+  if (!kStackMeasurementIsReliable) {
+    GTEST_SKIP() << "AddressSanitizer pads every frame on the path; the measurement is not the production frame";
+  }
+
+  StackProbePrint out;
+  HalFile file;
+  ASSERT_TRUE(file.open(res("gray8_ramp_16x16.png").c_str(), "rb"));
+
+  const char anchor = 0;
+  ASSERT_TRUE(PngToBmpConverter::pngFileToBmpStreamWithSize(file, out, 16, 16));
+  const size_t depth = out.depthFrom(&anchor);
+
+  ASSERT_GT(depth, 0u) << "the output Print was never written to; the probe measured nothing";
+  EXPECT_LT(depth, kMaxPngDecodeStackBytes);
+}
+
 }  // namespace

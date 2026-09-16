@@ -16,6 +16,7 @@ add_executable(ProgressMapperTest
 target_include_directories(ProgressMapperTest PRIVATE
   ${REPO_ROOT}/test/kosync_common/stubs
   ${REPO_ROOT}/lib/KOReaderSync
+  ${REPO_ROOT}/lib/Memory
   ${REPO_ROOT}/lib/Epub
   ${REPO_ROOT}/lib/Utf8
   ${REPO_ROOT}/lib/XmlParserUtils
