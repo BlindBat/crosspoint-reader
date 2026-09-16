@@ -7,6 +7,9 @@
 #include <Txt.h>
 #include <Xtc.h>
 
+#include <cstring>
+#include <iterator>
+
 bool isBookCacheDirectoryName(const char* name) {
   if (!name) {
     return false;

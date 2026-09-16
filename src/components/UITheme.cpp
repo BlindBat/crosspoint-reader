@@ -1,15 +1,16 @@
 #include "UITheme.h"
 
-#include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <Logging.h>
 
 #include <algorithm>
 #include <memory>
+#include <utility>
 
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
+#include "components/UIThemeUtils.h"
 #include "components/themes/BaseTheme.h"
 #include "components/themes/lyra/Lyra3CoversTheme.h"
 #include "components/themes/lyra/LyraTheme.h"
@@ -103,29 +104,10 @@ Rect UITheme::getScreenSafeArea(const GfxRenderer& renderer, bool hasFrontButton
 }
 
 std::string UITheme::getCoverThumbPath(std::string coverBmpPath, int coverHeight) {
-  size_t pos = coverBmpPath.find("[HEIGHT]", 0);
-  if (pos != std::string::npos) {
-    coverBmpPath.replace(pos, 8, std::to_string(coverHeight));
-  }
-  return coverBmpPath;
+  return UIThemeUtils::getCoverThumbPath(std::move(coverBmpPath), coverHeight);
 }
 
-UIIcon UITheme::getFileIcon(const std::string& filename) {
-  if (filename.back() == '/') {
-    return Folder;
-  }
-  if (FsHelpers::hasEpubExtension(filename) || FsHelpers::hasFb2Extension(filename) ||
-      FsHelpers::hasXtcExtension(filename)) {
-    return Book;
-  }
-  if (FsHelpers::hasTxtExtension(filename) || FsHelpers::hasMarkdownExtension(filename)) {
-    return Text;
-  }
-  if (FsHelpers::hasBmpExtension(filename) || FsHelpers::hasPngExtension(filename)) {
-    return Image;
-  }
-  return File;
-}
+UIIcon UITheme::getFileIcon(const std::string& filename) { return UIThemeUtils::getFileIcon(filename); }
 
 int UITheme::getStatusBarHeight() {
   const ThemeMetrics metrics = UITheme::getInstance().getMetrics();
