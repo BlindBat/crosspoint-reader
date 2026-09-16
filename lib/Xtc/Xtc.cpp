@@ -10,6 +10,7 @@
 #include <Bitmap.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <PlatformSeam.h>
 
 #include <cstdlib>
@@ -27,7 +28,11 @@ bool Xtc::load() {
   LOG_DBG("XTC", "Loading XTC: %s", filepath.c_str());
 
   // Initialize parser
-  parser.reset(new xtc::XtcParser());
+  parser = makeUniqueNoThrow<xtc::XtcParser>();
+  if (!parser) {
+    LOG_ERR("XTC", "OOM: parser");
+    return false;
+  }
 
   // Open XTC file
   xtc::XtcError err = parser->open(filepath.c_str());

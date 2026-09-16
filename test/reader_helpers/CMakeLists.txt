@@ -69,6 +69,7 @@ target_include_directories(ReaderHelpersTest PRIVATE
   ${REPO_ROOT}/lib/Serialization
   ${REPO_ROOT}/lib/Epub
   ${REPO_ROOT}/lib/Utf8
+  ${REPO_ROOT}/lib/Memory
   ${REPO_ROOT}/freeink-sdk/libs/ui/FreeInkUI/include
   ${qrcode_SOURCE_DIR}/src
 )

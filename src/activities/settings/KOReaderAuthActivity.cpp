@@ -3,6 +3,7 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <WiFi.h>
 
 #include "KOReaderCredentialStore.h"
@@ -64,7 +65,7 @@ void KOReaderAuthActivity::onEnter() {
   }
 
   // Launch WiFi selection
-  startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
+  startActivityForResult(makeUniqueNoThrow<WifiSelectionActivity>(renderer, mappedInput),
                          [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
 }
 

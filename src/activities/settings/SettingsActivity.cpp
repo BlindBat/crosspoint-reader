@@ -324,39 +324,39 @@ void SettingsActivity::toggleCurrentSetting() {
 
     switch (setting.action) {
       case SettingAction::RemapFrontButtons:
-        startActivityForResult(std::make_unique<ButtonRemapActivity>(renderer, mappedInput), resultHandler);
+        startActivityForResult(makeUniqueNoThrow<ButtonRemapActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::CustomiseStatusBar:
-        startActivityForResult(std::make_unique<StatusBarSettingsActivity>(renderer, mappedInput), resultHandler);
+        startActivityForResult(makeUniqueNoThrow<StatusBarSettingsActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::KOReaderSync:
-        startActivityForResult(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInput), resultHandler);
+        startActivityForResult(makeUniqueNoThrow<KOReaderSettingsActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::OPDSBrowser:
-        startActivityForResult(std::make_unique<OpdsServerListActivity>(renderer, mappedInput), resultHandler);
+        startActivityForResult(makeUniqueNoThrow<OpdsServerListActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::Network:
-        startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, false), resultHandler);
+        startActivityForResult(makeUniqueNoThrow<WifiSelectionActivity>(renderer, mappedInput, false), resultHandler);
         break;
       case SettingAction::ClearCache:
-        startActivityForResult(std::make_unique<ClearCacheActivity>(renderer, mappedInput), resultHandler);
+        startActivityForResult(makeUniqueNoThrow<ClearCacheActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::CheckForUpdates:
-        startActivityForResult(std::make_unique<OtaUpdateActivity>(renderer, mappedInput), resultHandler);
+        startActivityForResult(makeUniqueNoThrow<OtaUpdateActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::SdFirmwareUpdate:
-        startActivityForResult(std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInput), resultHandler);
+        startActivityForResult(makeUniqueNoThrow<SdFirmwareUpdateActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::DownloadFonts:
-        startActivityForResult(std::make_unique<FontDownloadActivity>(renderer, mappedInput),
+        startActivityForResult(makeUniqueNoThrow<FontDownloadActivity>(renderer, mappedInput),
                                [this](const ActivityResult&) {
                                  SETTINGS.saveToFile();
                                  rebuildSettingsLists();
                                });
         break;
       case SettingAction::TextSettings:
-        startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
-                                                                      TextSettingsActivity::Tab::Family),
+        startActivityForResult(makeUniqueNoThrow<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
+                                                                       TextSettingsActivity::Tab::Family),
                                [this](const ActivityResult&) {
                                  // TextSettingsActivity saves on each change; no save needed here.
                                  rebuildSettingsLists();
@@ -366,7 +366,7 @@ void SettingsActivity::toggleCurrentSetting() {
         // Row labels are translated once in rebuildRowItems() and don't
         // re-run on Pop (see ActivityManager::loop()), so a language switch
         // needs an explicit rebuild here rather than the generic resultHandler.
-        startActivityForResult(std::make_unique<LanguageSelectActivity>(renderer, mappedInput),
+        startActivityForResult(makeUniqueNoThrow<LanguageSelectActivity>(renderer, mappedInput),
                                [this](const ActivityResult&) {
                                  SETTINGS.saveToFile();
                                  rebuildSettingsLists();
@@ -403,7 +403,7 @@ void SettingsActivity::syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChan
 
 void SettingsActivity::openSleepTimeoutPicker() {
   startActivityForResult(
-      std::make_unique<IntervalSelectionActivity>(
+      makeUniqueNoThrow<IntervalSelectionActivity>(
           renderer, mappedInput, "SleepTimeoutInterval", StrId::STR_TIME_TO_SLEEP, SETTINGS.sleepTimeoutMinutes,
           CrossPointSettings::MIN_SLEEP_TIMEOUT_MINUTES, CrossPointSettings::MAX_SLEEP_TIMEOUT_MINUTES, 1, 5,
           StrId::STR_SLEEP_TIMER_VALUE_FORMAT, false, StrId::STR_SLEEP_NEVER),

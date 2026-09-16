@@ -2,6 +2,7 @@
 
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <Memory.h>
 
 #include <memory>
 #include <string>
@@ -41,8 +42,8 @@ void KOReaderSettingsActivity::activateIndex(const int index) {
   app.clearTapFlash();
   if (index == 0) {
     // Username
-    startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_KOREADER_USERNAME),
-                                                                   KOREADER_STORE.getUsername(), 64, InputType::Text),
+    startActivityForResult(makeUniqueNoThrow<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_KOREADER_USERNAME),
+                                                                    KOREADER_STORE.getUsername(), 64, InputType::Text),
                            [this](const ActivityResult& result) {
                              if (!result.isCancelled) {
                                const auto& kb = std::get<KeyboardResult>(result.data);
@@ -52,8 +53,8 @@ void KOReaderSettingsActivity::activateIndex(const int index) {
                            });
   } else if (index == 1) {
     // Password
-    startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_KOREADER_PASSWORD),
-                                                                   KOREADER_STORE.getPassword(), 64, InputType::Text),
+    startActivityForResult(makeUniqueNoThrow<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_KOREADER_PASSWORD),
+                                                                    KOREADER_STORE.getPassword(), 64, InputType::Text),
                            [this](const ActivityResult& result) {
                              if (!result.isCancelled) {
                                const auto& kb = std::get<KeyboardResult>(result.data);
@@ -64,8 +65,8 @@ void KOReaderSettingsActivity::activateIndex(const int index) {
   } else if (index == 2) {
     // Sync Server URL
     const std::string prefillUrl = KOReaderServerUrl::prefillForEntry(KOREADER_STORE.getServerUrl());
-    startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SYNC_SERVER_URL),
-                                                                   prefillUrl, 128, InputType::Url),
+    startActivityForResult(makeUniqueNoThrow<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SYNC_SERVER_URL),
+                                                                    prefillUrl, 128, InputType::Url),
                            [this](const ActivityResult& result) {
                              if (!result.isCancelled) {
                                const auto& kb = std::get<KeyboardResult>(result.data);
@@ -100,7 +101,7 @@ void KOReaderSettingsActivity::activateIndex(const int index) {
       return;
     }
     startActivityForResult(
-        std::make_unique<KOReaderAuthActivity>(renderer, mappedInput, KOReaderAuthActivity::Mode::SIGN_UP),
+        makeUniqueNoThrow<KOReaderAuthActivity>(renderer, mappedInput, KOReaderAuthActivity::Mode::SIGN_UP),
         [](const ActivityResult&) {});
   } else if (index == 7) {
     // Authenticate
@@ -108,7 +109,8 @@ void KOReaderSettingsActivity::activateIndex(const int index) {
       // Can't authenticate without credentials - just show message briefly
       return;
     }
-    startActivityForResult(std::make_unique<KOReaderAuthActivity>(renderer, mappedInput), [](const ActivityResult&) {});
+    startActivityForResult(makeUniqueNoThrow<KOReaderAuthActivity>(renderer, mappedInput),
+                           [](const ActivityResult&) {});
   }
 }
 

@@ -1,7 +1,10 @@
 #include "Bitmap.h"
 
+#include <Logging.h>
+
 #include <cstdlib>
 #include <cstring>
+#include <new>
 
 // ============================================================================
 // IMAGE PROCESSING OPTIONS
@@ -167,10 +170,22 @@ BmpReaderError Bitmap::parseHeaders() {
   //  - High-color + dithering disabled → simple quantization (no error diffusion)
   const bool highColor = !nativePalette;
   if (highColor && dithering) {
+    // Dithering is an enhancement: if its error rows do not fit, fall back to
+    // plain quantisation (both pointers null) instead of aborting the decode.
     if (USE_ATKINSON) {
-      atkinsonDitherer = new AtkinsonDitherer(width);
+      atkinsonDitherer = new (std::nothrow) AtkinsonDitherer(width);
+      if (atkinsonDitherer != nullptr && !atkinsonDitherer->valid()) {
+        delete atkinsonDitherer;
+        atkinsonDitherer = nullptr;
+      }
+      if (atkinsonDitherer == nullptr) LOG_ERR("BMP", "OOM: dithering disabled for this image");
     } else {
-      fsDitherer = new FloydSteinbergDitherer(width);
+      fsDitherer = new (std::nothrow) FloydSteinbergDitherer(width);
+      if (fsDitherer != nullptr && !fsDitherer->valid()) {
+        delete fsDitherer;
+        fsDitherer = nullptr;
+      }
+      if (fsDitherer == nullptr) LOG_ERR("BMP", "OOM: dithering disabled for this image");
     }
   }
 

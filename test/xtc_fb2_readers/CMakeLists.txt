@@ -23,6 +23,7 @@ target_include_directories(XtcFb2ReadersTest PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${REPO_ROOT}/test/support
   ${REPO_ROOT}/lib/Platform
+  ${REPO_ROOT}/lib/Memory
   ${REPO_ROOT}/lib/Xtc
   ${REPO_ROOT}/lib/GfxRenderer
   ${REPO_ROOT}/lib/Fb2

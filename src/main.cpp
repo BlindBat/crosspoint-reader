@@ -14,6 +14,7 @@
 #include <HalTiltSensor.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <SPI.h>
 #include <WiFi.h>
 #include <XteinkDetect.h>
@@ -530,7 +531,7 @@ void setup() {
   if (recoveryFirmwareMode) {
     // Skip normal home/reader routing: jump straight into the SD firmware picker.
     activityManager.replaceActivity(
-        std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInputManager, /*recoveryMode=*/true));
+        makeUniqueNoThrow<SdFirmwareUpdateActivity>(renderer, mappedInputManager, /*recoveryMode=*/true));
   } else if (rebootedFromPanic) {
     // If we rebooted from a panic, go to crash report screen to show the panic info
     activityManager.goToCrashReport();

@@ -150,8 +150,8 @@ void DictionaryWordSelectActivity::performLookup() {
   if (found) {
     popup = Popup::None;
     startActivityForResult(
-        std::make_unique<DictionaryDefinitionActivity>(renderer, mappedInput, std::move(headword),
-                                                       std::move(definition), dict.definitionsAreHtml()),
+        makeUniqueNoThrow<DictionaryDefinitionActivity>(renderer, mappedInput, std::move(headword),
+                                                        std::move(definition), dict.definitionsAreHtml()),
         [this](const ActivityResult&) { requestUpdate(); });
     return;
   }

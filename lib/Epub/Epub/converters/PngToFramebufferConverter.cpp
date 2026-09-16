@@ -50,7 +50,13 @@ struct PngContext {
 // File I/O callbacks use pFile->fHandle to access the HalFile*,
 // avoiding the need for global file state.
 void* pngOpenWithHandle(const char* filename, int32_t* size) {
-  HalFile* f = new HalFile();
+  // Raw, not a unique_ptr: the decoder C API owns this handle and hands it back
+  // to the close callback below.
+  HalFile* f = new (std::nothrow) HalFile();
+  if (f == nullptr) {
+    LOG_ERR("PNG", "OOM: file handle");
+    return nullptr;
+  }
   if (!Storage.openFileForRead("PNG", std::string(filename), *f)) {
     delete f;
     return nullptr;

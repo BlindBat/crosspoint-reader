@@ -104,9 +104,9 @@ void Fb2ReaderActivity::openReaderMenu() {
   const int totalPages = section ? section->pageCount : 0;
   const int progressPercent = fb2_reader::roundedPercent(bookProgressPercent());
   startActivityForResult(
-      std::make_unique<EpubReaderMenuActivity>(renderer, mappedInput, fb2->getTitle(), currentPage, totalPages,
-                                               progressPercent, SETTINGS.orientation, /*hasFootnotes=*/false,
-                                               /*hasBookmarks=*/false),
+      makeUniqueNoThrow<EpubReaderMenuActivity>(renderer, mappedInput, fb2->getTitle(), currentPage, totalPages,
+                                                progressPercent, SETTINGS.orientation, /*hasFootnotes=*/false,
+                                                /*hasBookmarks=*/false),
       [this](const ActivityResult& result) {
         const auto& menu = std::get<MenuResult>(result.data);
         if (SETTINGS.orientation != menu.orientation || appliedOrientation != menu.orientation) {
@@ -134,7 +134,7 @@ void Fb2ReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
         section.reset();
       }
       startActivityForResult(
-          std::make_unique<Fb2ReaderChapterSelectionActivity>(renderer, mappedInput, fb2, sectionIdx),
+          makeUniqueNoThrow<Fb2ReaderChapterSelectionActivity>(renderer, mappedInput, fb2, sectionIdx),
           [this](const ActivityResult& result) {
             if (result.isCancelled) {
               openReaderMenu();
@@ -151,8 +151,8 @@ void Fb2ReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
       break;
     }
     case EpubReaderMenuActivity::MenuAction::TEXT_SETTINGS: {
-      startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
-                                                                    TextSettingsActivity::Tab::Family),
+      startActivityForResult(makeUniqueNoThrow<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
+                                                                     TextSettingsActivity::Tab::Family),
                              [this](const ActivityResult&) {
                                // The section cache validates against the render spec, so
                                // renderBook() re-paginates with the new settings.
@@ -172,7 +172,7 @@ void Fb2ReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
     case EpubReaderMenuActivity::MenuAction::GO_TO_PERCENT: {
       const int initialPercent = fb2_reader::roundedPercent(bookProgressPercent());
       startActivityForResult(
-          std::make_unique<EpubReaderPercentSelectionActivity>(renderer, mappedInput, initialPercent),
+          makeUniqueNoThrow<EpubReaderPercentSelectionActivity>(renderer, mappedInput, initialPercent),
           [this](const ActivityResult& result) {
             if (result.isCancelled) {
               openReaderMenu();

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <new>
 
 struct BmpHeader;
 
@@ -24,10 +25,14 @@ void createBmpHeader(BmpHeader* bmpHeader, int width, int height, BmpRowOrder ro
 class Atkinson1BitDitherer {
  public:
   explicit Atkinson1BitDitherer(int width) : width(width) {
-    errorRow0 = new int16_t[width + 4]();  // Current row
-    errorRow1 = new int16_t[width + 4]();  // Next row
-    errorRow2 = new int16_t[width + 4]();  // Row after next
+    errorRow0 = new (std::nothrow) int16_t[width + 4]();  // Current row
+    errorRow1 = new (std::nothrow) int16_t[width + 4]();  // Next row
+    errorRow2 = new (std::nothrow) int16_t[width + 4]();  // Row after next
   }
+
+  // False when an error-row allocation failed; the caller falls back to plain
+  // quantisation rather than dereferencing a null row.
+  bool valid() const { return allocated(); }
 
   ~Atkinson1BitDitherer() {
     delete[] errorRow0;
@@ -94,6 +99,8 @@ class Atkinson1BitDitherer {
   int16_t* errorRow0;
   int16_t* errorRow1;
   int16_t* errorRow2;
+
+  bool allocated() const { return errorRow0 != nullptr && errorRow1 != nullptr && errorRow2 != nullptr; }
 };
 
 // Atkinson dithering - distributes only 6/8 (75%) of error for cleaner results
@@ -105,10 +112,14 @@ class Atkinson1BitDitherer {
 class AtkinsonDitherer {
  public:
   explicit AtkinsonDitherer(int width) : width(width) {
-    errorRow0 = new int16_t[width + 4]();  // Current row
-    errorRow1 = new int16_t[width + 4]();  // Next row
-    errorRow2 = new int16_t[width + 4]();  // Row after next
+    errorRow0 = new (std::nothrow) int16_t[width + 4]();  // Current row
+    errorRow1 = new (std::nothrow) int16_t[width + 4]();  // Next row
+    errorRow2 = new (std::nothrow) int16_t[width + 4]();  // Row after next
   }
+
+  // False when an error-row allocation failed; the caller falls back to plain
+  // quantisation rather than dereferencing a null row.
+  bool valid() const { return allocated(); }
 
   ~AtkinsonDitherer() {
     delete[] errorRow0;
@@ -193,6 +204,8 @@ class AtkinsonDitherer {
   int16_t* errorRow0;
   int16_t* errorRow1;
   int16_t* errorRow2;
+
+  bool allocated() const { return errorRow0 != nullptr && errorRow1 != nullptr && errorRow2 != nullptr; }
 };
 
 // Floyd-Steinberg error diffusion dithering with serpentine scanning
@@ -206,9 +219,13 @@ class AtkinsonDitherer {
 class FloydSteinbergDitherer {
  public:
   explicit FloydSteinbergDitherer(int width) : width(width), rowCount(0) {
-    errorCurRow = new int16_t[width + 2]();  // +2 for boundary handling
-    errorNextRow = new int16_t[width + 2]();
+    errorCurRow = new (std::nothrow) int16_t[width + 2]();  // +2 for boundary handling
+    errorNextRow = new (std::nothrow) int16_t[width + 2]();
   }
+
+  // False when an error-row allocation failed; the caller falls back to plain
+  // quantisation rather than dereferencing a null row.
+  bool valid() const { return allocated(); }
 
   ~FloydSteinbergDitherer() {
     delete[] errorCurRow;
@@ -318,5 +335,6 @@ class FloydSteinbergDitherer {
   int width;
   int rowCount;
   int16_t* errorCurRow;
+  bool allocated() const { return errorCurRow != nullptr && errorNextRow != nullptr; }
   int16_t* errorNextRow;
 };

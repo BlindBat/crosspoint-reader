@@ -5,9 +5,11 @@
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <Memory.h>
 #include <WiFi.h>
 
 #include <cstddef>
+#include <new>
 
 #include "MappedInputManager.h"
 #include "NetworkModeSelectionActivity.h"
@@ -79,7 +81,7 @@ void CrossPointWebServerActivity::onEnter() {
 
   // Launch network mode selection subactivity
   LOG_DBG("WEBACT", "Launching NetworkModeSelectionActivity...");
-  startActivityForResult(std::make_unique<NetworkModeSelectionActivity>(renderer, mappedInput),
+  startActivityForResult(makeUniqueNoThrow<NetworkModeSelectionActivity>(renderer, mappedInput),
                          [this](const ActivityResult& result) {
                            if (result.isCancelled) {
                              onGoHome();
@@ -137,10 +139,10 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
 
   if (mode == NetworkMode::CONNECT_CALIBRE) {
     startActivityForResult(
-        std::make_unique<CalibreConnectActivity>(renderer, mappedInput), [this](const ActivityResult& result) {
+        makeUniqueNoThrow<CalibreConnectActivity>(renderer, mappedInput), [this](const ActivityResult& result) {
           state = WebServerActivityState::MODE_SELECTION;
 
-          startActivityForResult(std::make_unique<NetworkModeSelectionActivity>(renderer, mappedInput),
+          startActivityForResult(makeUniqueNoThrow<NetworkModeSelectionActivity>(renderer, mappedInput),
                                  [this](const ActivityResult& result) {
                                    if (result.isCancelled) {
                                      onGoHome();
@@ -159,7 +161,7 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
 
     state = WebServerActivityState::WIFI_SELECTION;
     LOG_DBG("WEBACT", "Launching WifiSelectionActivity...");
-    startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
+    startActivityForResult(makeUniqueNoThrow<WifiSelectionActivity>(renderer, mappedInput),
                            [this](const ActivityResult& result) {
                              if (!result.isCancelled) {
                                const auto& wifi = std::get<WifiResult>(result.data);
@@ -192,7 +194,7 @@ void CrossPointWebServerActivity::onWifiSelectionComplete(const bool connected) 
     // User cancelled - go back to mode selection
     state = WebServerActivityState::MODE_SELECTION;
 
-    startActivityForResult(std::make_unique<NetworkModeSelectionActivity>(renderer, mappedInput),
+    startActivityForResult(makeUniqueNoThrow<NetworkModeSelectionActivity>(renderer, mappedInput),
                            [this](const ActivityResult& result) {
                              if (result.isCancelled) {
                                onGoHome();
@@ -245,10 +247,14 @@ void CrossPointWebServerActivity::startAccessPoint() {
   // Start DNS server for captive portal behavior
   // This redirects all DNS queries to our IP, making any domain typed resolve to us
   stopDnsServer();
-  dnsServer = new DNSServer();
-  dnsServer->setErrorReplyCode(DNSReplyCode::NoError);
-  dnsServer->start(DNS_PORT, "*", apIP);
-  LOG_DBG("WEBACT", "DNS server started for captive portal");
+  dnsServer = new (std::nothrow) DNSServer();  // raw: stopDnsServer() owns the delete
+  if (dnsServer == nullptr) {
+    LOG_ERR("WEBACT", "OOM: DNS server; the captive portal will not redirect");
+  } else {
+    dnsServer->setErrorReplyCode(DNSReplyCode::NoError);
+    dnsServer->start(DNS_PORT, "*", apIP);
+    LOG_DBG("WEBACT", "DNS server started for captive portal");
+  }
 
   LOG_DBG("WEBACT", "Free heap after AP start: %d bytes", ESP.getFreeHeap());
 
@@ -268,7 +274,11 @@ void CrossPointWebServerActivity::startWebServer() {
   }
 
   // Create the web server instance
-  webServer.reset(new CrossPointWebServer());
+  webServer = makeUniqueNoThrow<CrossPointWebServer>();
+  if (!webServer) {
+    LOG_ERR("WEB", "OOM: web server");
+    return;
+  }
   webServer->begin();
 
   if (webServer->isRunning()) {

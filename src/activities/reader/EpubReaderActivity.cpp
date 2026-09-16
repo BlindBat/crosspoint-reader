@@ -248,7 +248,12 @@ void EpubReaderActivity::openReaderMenu() {
     focusedTool = 0;
     panelHoldJumped = false;
     panelCursorShown = !mappedInput.hasTouch();
-    if (!toolbarUi) toolbarUi = std::make_unique<ReaderToolbarUi>(renderer);
+    if (!toolbarUi) toolbarUi = makeUniqueNoThrow<ReaderToolbarUi>(renderer);
+    if (!toolbarUi) {
+      LOG_ERR("ERS", "OOM: reader toolbar; falling back to the list menu");
+      openReaderMenu();
+      return;
+    }
     toolbarUi->begin();
     discardOverlayPage();
     requestUpdate();
@@ -263,7 +268,7 @@ void EpubReaderActivity::openReaderMenu() {
     bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress) * 100.0f;
   }
   const int bookProgressPercent = clampPercent(static_cast<int>(bookProgress + 0.5f));
-  startActivityForResult(std::make_unique<EpubReaderMenuActivity>(
+  startActivityForResult(makeUniqueNoThrow<EpubReaderMenuActivity>(
                              renderer, mappedInput, epub->getTitle(), currentPage, totalPages, bookProgressPercent,
                              SETTINGS.orientation, !currentPageFootnotes.empty(), !cachedBookmarks.empty()),
                          [this](const ActivityResult& result) {
@@ -309,8 +314,8 @@ void EpubReaderActivity::openDictionaryWordSelect() {
   orientedMarginTop += SETTINGS.screenMargin;
   orientedMarginLeft += SETTINGS.screenMargin;
 
-  startActivityForResult(std::make_unique<DictionaryWordSelectActivity>(renderer, mappedInput, std::move(page),
-                                                                        orientedMarginLeft, orientedMarginTop),
+  startActivityForResult(makeUniqueNoThrow<DictionaryWordSelectActivity>(renderer, mappedInput, std::move(page),
+                                                                         orientedMarginLeft, orientedMarginTop),
                          [this](const ActivityResult&) { requestUpdate(); });
 }
 
@@ -577,14 +582,15 @@ void EpubReaderActivity::loop() {
     } else if (currentPageFootnotes.size() == 1) {
       navigateToHref(currentPageFootnotes[0].href, true);
     } else if (currentPageFootnotes.size() > 1) {
-      startActivityForResult(std::make_unique<EpubReaderFootnotesActivity>(renderer, mappedInput, currentPageFootnotes),
-                             [this](const ActivityResult& result) {
-                               if (!result.isCancelled) {
-                                 const auto& footnoteResult = std::get<FootnoteResult>(result.data);
-                                 navigateToHref(footnoteResult.href, true);
-                               }
-                               requestUpdate();
-                             });
+      startActivityForResult(
+          makeUniqueNoThrow<EpubReaderFootnotesActivity>(renderer, mappedInput, currentPageFootnotes),
+          [this](const ActivityResult& result) {
+            if (!result.isCancelled) {
+              const auto& footnoteResult = std::get<FootnoteResult>(result.data);
+              navigateToHref(footnoteResult.href, true);
+            }
+            requestUpdate();
+          });
     }
     return;
   }
@@ -773,7 +779,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
         section.reset();
       }
       startActivityForResult(
-          std::make_unique<EpubReaderChapterSelectionActivity>(renderer, mappedInput, epub, spineIdx),
+          makeUniqueNoThrow<EpubReaderChapterSelectionActivity>(renderer, mappedInput, epub, spineIdx),
           [this](const ActivityResult& result) {
             if (result.isCancelled) {
               openReaderMenu();
@@ -791,21 +797,22 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     }
     case EpubReaderMenuActivity::MenuAction::FOOTNOTES: {
-      startActivityForResult(std::make_unique<EpubReaderFootnotesActivity>(renderer, mappedInput, currentPageFootnotes),
-                             [this](const ActivityResult& result) {
-                               if (result.isCancelled) {
-                                 openReaderMenu();
-                                 return;
-                               }
-                               const auto& footnoteResult = std::get<FootnoteResult>(result.data);
-                               navigateToHref(footnoteResult.href, true);
-                               requestUpdate();
-                             });
+      startActivityForResult(
+          makeUniqueNoThrow<EpubReaderFootnotesActivity>(renderer, mappedInput, currentPageFootnotes),
+          [this](const ActivityResult& result) {
+            if (result.isCancelled) {
+              openReaderMenu();
+              return;
+            }
+            const auto& footnoteResult = std::get<FootnoteResult>(result.data);
+            navigateToHref(footnoteResult.href, true);
+            requestUpdate();
+          });
       break;
     }
     case EpubReaderMenuActivity::MenuAction::TEXT_SETTINGS: {
-      startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
-                                                                    TextSettingsActivity::Tab::Family),
+      startActivityForResult(makeUniqueNoThrow<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
+                                                                     TextSettingsActivity::Tab::Family),
                              [this](const ActivityResult&) {
                                {
                                  RenderLock lock;
@@ -836,7 +843,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       }
       const int initialPercent = clampPercent(static_cast<int>(bookProgress + 0.5f));
       startActivityForResult(
-          std::make_unique<EpubReaderPercentSelectionActivity>(renderer, mappedInput, initialPercent),
+          makeUniqueNoThrow<EpubReaderPercentSelectionActivity>(renderer, mappedInput, initialPercent),
           [this](const ActivityResult& result) {
             if (result.isCancelled) {
               openReaderMenu();
@@ -854,7 +861,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       if (section && section->currentPage >= 0 && section->currentPage < section->pageCount) {
         std::string fullText = section->getTextFromSectionFile();
         if (!fullText.empty()) {
-          startActivityForResult(std::make_unique<QrDisplayActivity>(renderer, mappedInput, fullText),
+          startActivityForResult(makeUniqueNoThrow<QrDisplayActivity>(renderer, mappedInput, fullText),
                                  [this](const ActivityResult&) { openReaderMenu(); });
           break;
         }
@@ -898,7 +905,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
     }
     case EpubReaderMenuActivity::MenuAction::BOOKMARKS: {
       startActivityForResult(
-          std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, epub, epub->getPath()),
+          makeUniqueNoThrow<EpubReaderBookmarksActivity>(renderer, mappedInput, epub, epub->getPath()),
           progressChangeResultHandler);
       break;
     }
@@ -962,7 +969,7 @@ bool EpubReaderActivity::launchKOReaderSync() {
   }
   LOG_DBG("KOSync", "Epub released (heap after: %u)", (unsigned)ESP.getFreeHeap());
 
-  activityManager.replaceActivity(std::make_unique<KOReaderSyncActivity>(
+  activityManager.replaceActivity(makeUniqueNoThrow<KOReaderSyncActivity>(
       renderer, mappedInput, savedEpubPath, currentSpineIndex, currentPage, totalPages, std::move(localKoPos),
       std::move(localChapterName), paragraphIndex));
   return true;
@@ -1850,8 +1857,12 @@ void EpubReaderActivity::discardOverlayPage() {
 
 void EpubReaderActivity::openOverlay(Overlay target) {
   const Overlay previous = overlay;
+  if (!toolbarUi) toolbarUi = makeUniqueNoThrow<ReaderToolbarUi>(renderer);
+  if (!toolbarUi) {
+    LOG_ERR("ERS", "OOM: reader toolbar; overlay not opened");
+    return;
+  }
   overlay = target;
-  if (!toolbarUi) toolbarUi = std::make_unique<ReaderToolbarUi>(renderer);
   if (previous == Overlay::None) toolbarUi->begin();
   // Buttons show a cursor from the start; touch boards only once a button moves it.
   panelCursorShown = !mappedInput.hasTouch();
@@ -2122,8 +2133,8 @@ void EpubReaderActivity::handleOverlayInput() {
         overlay = Overlay::None;
         overlayPopup.dismiss();
         discardOverlayPage();
-        startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
-                                                                      TextSettingsActivity::Tab::Family),
+        startActivityForResult(makeUniqueNoThrow<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
+                                                                       TextSettingsActivity::Tab::Family),
                                [this](const ActivityResult&) {
                                  applyReaderTextSettings();
                                  overlay = Overlay::Text;  // back to the Text panel

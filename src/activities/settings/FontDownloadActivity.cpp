@@ -6,6 +6,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <WiFi.h>
 #include <esp_rom_crc.h>
 
@@ -71,7 +72,7 @@ void FontDownloadActivity::onBackButton() {
 void FontDownloadActivity::onEnter() {
   UiListActivity::onEnter();
   WiFi.mode(WIFI_STA);
-  startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
+  startActivityForResult(makeUniqueNoThrow<WifiSelectionActivity>(renderer, mappedInput),
                          [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
 }
 
@@ -524,7 +525,7 @@ void FontDownloadActivity::promptDeleteSelectedFamily() {
   std::string heading = tr(STR_DELETE);
   const auto& family = families_[pendingDeleteFamilyIndex];
   std::string body = family.name;
-  startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading, body),
+  startActivityForResult(makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, heading, body),
                          [this](const ActivityResult& result) { onDeleteConfirmationResult(result); });
 }
 
