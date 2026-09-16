@@ -8,6 +8,24 @@ Creates EPUBs with annotated JPEG and PNG images to verify:
 - Image centering
 - Cache performance
 - Page serialization
+
+These EPUBs are for manual on-device and simulator checks; no host test suite
+consumes them and no build step regenerates them. The generated files are
+committed under test/epubs/, so a regeneration that changes them is a
+deliberate, reviewable change.
+
+External requirements:
+- Python 3 with Pillow (``pip install Pillow``) for image generation.
+- A TrueType font for the image annotations. The script tries the DejaVu Sans
+  path used on Debian/Ubuntu and falls back to Pillow's built-in bitmap font,
+  so annotations render everywhere but look different across machines.
+
+Output: ``test/epubs/`` (tracked in git), sized for a 480x800 portrait screen.
+Overwrites the image EPUBs it owns; other files in that directory come from
+their own generators (e.g. test/epubs/generate_font_prewarm_benchmark.py).
+
+Usage:
+    python scripts/generate_test_epub.py
 """
 
 import os
