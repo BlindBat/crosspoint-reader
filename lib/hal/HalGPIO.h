@@ -3,7 +3,9 @@
 #include <Arduino.h>
 #include <InputManager.h>
 
-// Display SPI pins (custom pins for XteinkX4, not hardware SPI defaults)
+// ESP32-C3 (Xteink X4/X3) pin map: custom pins, not the hardware SPI defaults.
+// HalGPIO::begin() programs these only on the C3 build (FREEINK_MCU_C3); the S3
+// boards describe their own pins through the active BoardConfig profile.
 #define EPD_SCLK 8   // SPI Clock
 #define EPD_MOSI 10  // SPI MOSI (Master Out Slave In)
 #define EPD_CS 21    // Chip Select

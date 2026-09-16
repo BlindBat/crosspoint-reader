@@ -11,11 +11,19 @@
  *  1) onEnter -> push FileBrowserActivity in PickFirmware mode (only .bin files visible).
  *  2) On result: validate the .bin (header magic, size fits OTA partition).
  *  3) Push ConfirmationActivity ("Update firmware?").
- *  4) On confirm: stream the file into the OTA partition via the Arduino Update API,
- *     drawing a progress bar; on success ESP.restart().
+ *  4) On confirm: stream the file into the OTA partition with
+ *     firmware_flash::flashFromSdPath(), drawing a progress bar; on success
+ *     ESP.restart().
+ *
+ * Step 2 resolves the next-update partition through esp_ota_get_next_update_partition()
+ * and runs the same firmware_flash::validateImageFile() checks the flasher applies,
+ * so a truncated, foreign-chip or wrong-board image is refused before any erase.
  *
  * Used both from Settings -> System -> "SD Card Firmware Update", and as the only
- * activity launched in boot recovery mode (left side button + power on X3).
+ * activity launched in boot recovery mode (power-on with a side button held: Down
+ * on X4 Pro and X4 Classic, whose Up key is a boot strap, Up elsewhere; Paper Mono
+ * has no recovery entry). In recovery mode cancelling re-opens the picker, so there
+ * is no way out into a half-initialised UI.
  */
 class SdFirmwareUpdateActivity : public Activity {
  public:

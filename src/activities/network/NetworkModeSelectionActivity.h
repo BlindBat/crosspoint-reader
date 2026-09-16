@@ -11,6 +11,8 @@ enum class NetworkMode { JOIN_NETWORK, CONNECT_CALIBRE, CREATE_HOTSPOT, USB_DRIV
  * - "Join a Network" - Connect to an existing WiFi network (STA mode)
  * - "Connect to Calibre" - Use Calibre wireless device transfers
  * - "Create Hotspot" - Create an Access Point that others can connect to (AP mode)
+ * - "USB Drive" - Expose the SD card over USB mass storage; only on boards with
+ *   FREEINK_CAP_USB_MSC, which is why MENU_ITEM_COUNT is board-dependent.
  *
  * The onModeSelected callback is called with the user's choice.
  * The onCancel callback is called if the user presses back.

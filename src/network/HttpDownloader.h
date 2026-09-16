@@ -6,9 +6,16 @@
 #include <string>
 
 /**
- * HTTP client utility for fetching content and downloading files. Built on
- * esp_http_client: https is verified against the CA bundle, plain http is
- * used for local servers (transport is chosen from the URL scheme).
+ * HTTP client utility for fetching content and downloading files. The
+ * transport follows the URL scheme; which TLS stack runs depends on the build.
+ *
+ * Shipped builds set FREEINK_NET_WOLFSSL, so every request goes through
+ * freeink::SecureHttpClient (TLS 1.3, tolerant of servers the mbedTLS path
+ * stalls on) with setInsecure(): the server certificate is NOT verified.
+ * Redirects are followed by hand there, and downloadToFile() can be asked to
+ * drop a redirect target to plain http to avoid a second TLS record buffer.
+ * Without that flag the esp_http_client path runs instead and does verify
+ * https against the bundled CA roots.
  */
 class HttpDownloader {
  public:

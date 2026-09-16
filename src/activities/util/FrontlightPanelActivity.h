@@ -5,14 +5,19 @@
 #include "components/UiAppHost.h"
 #include "util/ButtonNavigator.h"
 
-// Top-anchored control center opened by a top-edge down-swipe, a status-bar tap,
-// or a button bound to "Control Center" (iOS Control Center style): a grabber,
-// the frontlight brightness/warmth sliders (on boards with a light), and a grid
-// of quick-setting tiles — night mode, ghost-cleanup refresh, reading
-// orientation, and reader touch controls on/off. The
-// frontlight controls are always there: they are what the panel is for. Pure
-// 1-bit: no dithered fills, selection reads as a filled tile. The grabber sits
-// along the panel's bottom edge, the edge the sheet is dragged from.
+// Top-anchored control center (iOS Control Center style): a grabber, the
+// frontlight brightness/warmth sliders, and a grid of quick-setting tiles —
+// night mode, ghost-cleanup refresh, reading orientation, and reader touch
+// controls on/off. The frontlight controls are always drawn: they are what the
+// panel is for, and the panel does not itself check for a light.
+//
+// ActivityManager opens it on a top-edge down-swipe, which
+// MappedInputManager::wasLightPanelGesture() gates on Frontlight.present(), or
+// on a status-bar tap from Home, the file browser, Settings or the network-mode
+// screen, which is gated only on touch.
+//
+// Pure 1-bit: no dithered fills, selection reads as a filled tile. The grabber
+// sits along the panel's bottom edge, the edge the sheet is dragged from.
 class FrontlightPanelActivity final : public Activity, private UiAppHost {
   ButtonNavigator buttonNavigator;
 

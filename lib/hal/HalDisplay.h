@@ -13,7 +13,7 @@ class HalDisplay {
   // Refresh modes
   enum RefreshMode {
     FULL_REFRESH,  // Full refresh with complete waveform
-    HALF_REFRESH,  // Half refresh (1720ms) - balanced quality and speed
+    HALF_REFRESH,  // Half refresh - balanced quality and speed
     FAST_REFRESH   // Fast refresh using custom LUT
   };
 
