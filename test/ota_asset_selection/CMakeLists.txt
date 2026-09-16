@@ -3,14 +3,17 @@
 # on top of ReleaseJsonParser (covered by its own suite).
 #
 # The binary is built as an X4PRO board (firmware-x4pro.bin path);
-# X4VariantTest.cpp additionally compiles the production sources a second
-# time as the combined X4/X3 build inside a namespace to pin the plain
-# firmware.bin special case. CROSSPOINT_VERSION resolves to a runtime
+# X4VariantTest.cpp, StickyVariantTest.cpp and PapermonoVariantTest.cpp each
+# compile the production sources again inside a namespace under a different
+# FREEINK_DEVICE_* flag, pinning the plain firmware.bin special case for the
+# combined X4/X3 image and the board-suffixed asset names for the S3 boards. CROSSPOINT_VERSION resolves to a runtime
 # variable so isUpdateNewer() can be tested across current-version values.
 
 add_executable(OtaAssetSelectionTest
   OtaAssetSelectionTest.cpp
   X4VariantTest.cpp
+  StickyVariantTest.cpp
+  PapermonoVariantTest.cpp
   FakeHttp.cpp
   ${REPO_ROOT}/src/network/OtaUpdater.cpp
   ${REPO_ROOT}/src/network/FirmwareBoardTag.cpp

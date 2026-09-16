@@ -7,9 +7,8 @@
 //
 // NOTE on asset naming: upstream develop switched the release assets to
 // crosspoint-<tag>-<device>.bin ("fix: update OTA to recognize the new
-// format", #3493 / 46d91253). This branch (v1.6 master lineage) still selects
-// firmware.bin / firmware-<board>.bin — the tests below pin THIS branch's
-// behavior and mark the divergence where it shows.
+// format", #3493 / 46d91253). This branch accepts BOTH layouts: the legacy
+// firmware.bin / firmware-<board>.bin and the tagged crosspoint-<tag>-<device>.bin.
 
 #include <gtest/gtest.h>
 
@@ -195,16 +194,47 @@ TEST_F(OtaTest, GenericC3AssetIsNotAFallbackForX4pro) {
   EXPECT_EQ(updater.checkForUpdate(), OtaUpdater::NO_UPDATE);
 }
 
-TEST_F(OtaTest, NewCrosspointAssetNamingNotRecognizedOnThisBranch) {
-  // Upstream develop (#3493) renamed assets to crosspoint-<tag>-<device>.bin
-  // and taught OtaUpdater to build that name from the parsed tag. This branch
-  // predates the fix, so a new-format release yields NO_UPDATE — fixed
-  // upstream; pin the divergence.
+TEST_F(OtaTest, NewCrosspointAssetNamingIsRecognized) {
+  // Upstream #3493 layout: crosspoint-<tag>-<device>.bin, device = board tag
+  // for the S3 boards. The tag is only known once tag_name has been parsed.
   OtaUpdater updater;
   FakeHttp::instance().setBody(
       makeReleaseJson("1.7.0", {{"crosspoint-1.7.0-x4pro.bin", "https://cdn.example/new-x4pro.bin", 2222},
                                 {"crosspoint-1.7.0-x3-x4.bin", "https://cdn.example/new-c3.bin", 1111}}));
+  ASSERT_EQ(updater.checkForUpdate(), OtaUpdater::OK);
+  EXPECT_EQ(updater.getLatestVersion(), "1.7.0");
+  EXPECT_EQ(updater.getOtaSize(), 2222u);
+}
+
+TEST_F(OtaTest, NewNamingUsesExactTagIncludingVPrefix) {
+  OtaUpdater updater;
+  FakeHttp::instance().setBody(
+      makeReleaseJson("v1.7.0", {{"crosspoint-v1.7.0-x4pro.bin", "https://cdn.example/new-x4pro.bin", 2222},
+                                 {"crosspoint-1.7.0-x4pro.bin", "https://cdn.example/wrong.bin", 3333}}));
+  ASSERT_EQ(updater.checkForUpdate(), OtaUpdater::OK);
+  EXPECT_EQ(updater.getOtaSize(), 2222u);
+}
+
+TEST_F(OtaTest, NewNamingRejectsOtherDevices) {
+  OtaUpdater updater;
+  FakeHttp::instance().setBody(
+      makeReleaseJson("1.7.0", {{"crosspoint-1.7.0-x3-x4.bin", "https://cdn.example/new-c3.bin", 1111},
+                                {"crosspoint-1.7.0-sticky.bin", "https://cdn.example/sticky.bin", 3333},
+                                {"crosspoint-1.7.0-x4pro.bin.sha256", "https://cdn.example/sum", 64}}));
   EXPECT_EQ(updater.checkForUpdate(), OtaUpdater::NO_UPDATE);
+}
+
+TEST_F(OtaTest, NewNamingIsChunkSizeInvariant) {
+  const std::string body =
+      makeReleaseJson("1.7.0", {{"crosspoint-1.7.0-x4pro.bin", "https://cdn.example/new-x4pro.bin", 2222}});
+  for (const size_t chunk : {size_t{1}, size_t{2}, size_t{7}, size_t{64}, body.size()}) {
+    OtaUpdater updater;
+    FakeHttp::instance().reset();
+    FakeHttp::instance().chunkSize = chunk;
+    FakeHttp::instance().setBody(body);
+    ASSERT_EQ(updater.checkForUpdate(), OtaUpdater::OK) << "chunk " << chunk;
+    EXPECT_EQ(updater.getOtaSize(), 2222u) << "chunk " << chunk;
+  }
 }
 
 TEST_F(OtaTest, AssetNameMatchIsCaseSensitive) {

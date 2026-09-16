@@ -31,17 +31,37 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   // OOM there aborts. fetchUrl handles the verified-https GET, redirects, and
   // User-Agent (see HttpDownloader).
   ReleaseJsonParser releaseParser;
-  // Each board updates from its own release asset: plain firmware.bin for the
-  // C3 X4/X3 binary (pre-existing releases), firmware-<board>.bin otherwise.
+  // Two release layouts are in use. Older releases ship plain firmware.bin for
+  // the C3 X4/X3 binary and firmware-<board>.bin for the S3 boards; current
+  // upstream releases ship crosspoint-<tag>-<device>.bin, where the combined
+  // C3 image is "x3-x4" and every other device suffix equals its board tag.
+  // The tagged name needs tag_name, which GitHub emits before "assets", so the
+  // body is fed byte-wise until the tag arrives and the name can be set.
   const bool isX4 = board_tag::boardNameLen() == 2 && memcmp(board_tag::boardName(), "x4", 2) == 0;
   char assetName[48] = "firmware.bin";
+  char assetSuffix[24] = "-x3-x4";
   if (!isX4) {
     snprintf(assetName, sizeof(assetName), "firmware-%.*s.bin", static_cast<int>(board_tag::boardNameLen()),
              board_tag::boardName());
+    snprintf(assetSuffix, sizeof(assetSuffix), "-%.*s", static_cast<int>(board_tag::boardNameLen()),
+             board_tag::boardName());
   }
   releaseParser.setFirmwareAssetName(assetName);
-  const bool ok = HttpDownloader::fetchUrl(latestReleaseUrl, [&releaseParser](const uint8_t* data, size_t len) {
-    releaseParser.feed(reinterpret_cast<const char*>(data), len);
+  char taggedAssetName[48] = {};
+  bool taggedNameSet = false;
+  const bool ok = HttpDownloader::fetchUrl(latestReleaseUrl, [&](const uint8_t* data, size_t len) {
+    size_t offset = 0;
+    while (!taggedNameSet && offset < len) {
+      releaseParser.feed(reinterpret_cast<const char*>(data + offset), 1);
+      offset++;
+      if (releaseParser.foundTag()) {
+        snprintf(taggedAssetName, sizeof(taggedAssetName), "crosspoint-%s%s.bin", releaseParser.getTagName(),
+                 assetSuffix);
+        releaseParser.setAlternateFirmwareAssetName(taggedAssetName);
+        taggedNameSet = true;
+      }
+    }
+    if (offset < len) releaseParser.feed(reinterpret_cast<const char*>(data + offset), len - offset);
     return true;
   });
   if (!ok) {
@@ -58,7 +78,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   }
 
   if (!releaseParser.foundFirmware()) {
-    LOG_INF("OTA", "No %s asset in latest release", assetName);
+    LOG_INF("OTA", "No %s or %s asset in latest release", assetName, taggedAssetName);
     return NO_UPDATE;
   }
 
