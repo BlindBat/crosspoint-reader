@@ -279,8 +279,8 @@ TEST(TocNavParser, NoCachePointerStillParsesWithoutCrashing) {
 // --- NCX ------------------------------------------------------------------
 
 TEST(TocNcxParser, ParsesNestedNavPointsWithDepthAndAnchors) {
-  const std::string navMap = navPoint("One", "ch1.xhtml", navPoint("One.One", "ch1.xhtml#s1")) +
-                             navPoint("Two", "text/ch2.xhtml");
+  const std::string navMap =
+      navPoint("One", "ch1.xhtml", navPoint("One.One", "ch1.xhtml#s1")) + navPoint("Two", "text/ch2.xhtml");
   const NavResult r = parseNcx(ncxDoc(navMap));
   EXPECT_TRUE(r.ok);
   ASSERT_EQ(3u, r.cache.toc.size());
@@ -326,8 +326,8 @@ TEST(TocNcxParser, NavPointWithoutContentOrLabelIsDropped) {
 }
 
 TEST(TocNcxParser, DepthResetsAfterNestedNavPointsClose) {
-  const std::string navMap = navPoint("A", "a.xhtml", navPoint("A1", "a1.xhtml", navPoint("A11", "a11.xhtml"))) +
-                             navPoint("B", "b.xhtml");
+  const std::string navMap =
+      navPoint("A", "a.xhtml", navPoint("A1", "a1.xhtml", navPoint("A11", "a11.xhtml"))) + navPoint("B", "b.xhtml");
   const NavResult r = parseNcx(ncxDoc(navMap));
   ASSERT_EQ(4u, r.cache.toc.size());
   EXPECT_EQ(3, r.cache.toc[2].level);
@@ -445,8 +445,8 @@ TEST(TocNcxParser, HugeAttributeCountOnContentIsHandled) {
   for (int i = 0; i < 3000; ++i) {
     atts += " a" + std::to_string(i) + "=\"v\"";
   }
-  const std::string navMap = "<navPoint><navLabel><text>Many</text></navLabel><content" + atts +
-                             " src=\"many.xhtml\"/></navPoint>";
+  const std::string navMap =
+      "<navPoint><navLabel><text>Many</text></navLabel><content" + atts + " src=\"many.xhtml\"/></navPoint>";
   const NavResult r = parseNcx(ncxDoc(navMap), 1024);
   EXPECT_TRUE(r.ok);
   ASSERT_EQ(1u, r.cache.toc.size());

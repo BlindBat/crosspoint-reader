@@ -39,9 +39,7 @@ class FontInstallerTest : public ::testing::Test {
     ESP = EspHostStub{};
   }
 
-  bool hostExists(const std::string& devicePath) const {
-    return std::filesystem::exists(fontfx::hostPath(devicePath));
-  }
+  bool hostExists(const std::string& devicePath) const { return std::filesystem::exists(fontfx::hostPath(devicePath)); }
 
   SdCardFontRegistry registry;
 };

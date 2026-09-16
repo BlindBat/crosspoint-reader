@@ -32,9 +32,9 @@ struct BmpSpec {
   uint16_t bpp = 1;
   uint32_t compression = 0;
   uint32_t sizeImage = 0;
-  uint32_t clrUsed = 0;         // as written into the header
-  uint32_t paletteEntries = 2;  // how many entries actually get written
-  std::vector<uint8_t> palette;   // BGRA quads; default black/white when empty
+  uint32_t clrUsed = 0;            // as written into the header
+  uint32_t paletteEntries = 2;     // how many entries actually get written
+  std::vector<uint8_t> palette;    // BGRA quads; default black/white when empty
   std::vector<uint8_t> pixelData;  // padded rows, bottom-up unless height < 0
   int truncateTo = -1;             // >= 0: cut the serialised file to this length
 };
@@ -270,8 +270,8 @@ TEST_F(BitmapTest, ZeroColoursUsedDefaultsToTwoToThePowerOfBpp) {
   uint8_t out[4] = {};
   uint8_t row[4] = {};
   ASSERT_EQ(bmp.readNextRow(out, row), BmpReaderError::Ok);
-  EXPECT_EQ(out[0] >> 6, 3);           // white
-  EXPECT_EQ((out[0] >> 4) & 0x3, 0);   // black
+  EXPECT_EQ(out[0] >> 6, 3);          // white
+  EXPECT_EQ((out[0] >> 4) & 0x3, 0);  // black
 }
 
 // ---------------------------------------------------------------------------
@@ -497,11 +497,21 @@ TEST_F(BitmapTest, NoRowsAtAllWhenThePixelSectionIsEmpty) {
 
 TEST_F(BitmapTest, ErrorCodesAllHaveDistinctNonEmptyNames) {
   const BmpReaderError all[] = {
-      BmpReaderError::Ok,           BmpReaderError::FileInvalid,          BmpReaderError::SeekStartFailed,
-      BmpReaderError::NotBMP,       BmpReaderError::DIBTooSmall,          BmpReaderError::BadPlanes,
-      BmpReaderError::UnsupportedBpp, BmpReaderError::UnsupportedCompression, BmpReaderError::BadDimensions,
-      BmpReaderError::ImageTooLarge, BmpReaderError::PaletteTooLarge,     BmpReaderError::SeekPixelDataFailed,
-      BmpReaderError::BufferTooSmall, BmpReaderError::OomRowBuffer,       BmpReaderError::ShortReadRow,
+      BmpReaderError::Ok,
+      BmpReaderError::FileInvalid,
+      BmpReaderError::SeekStartFailed,
+      BmpReaderError::NotBMP,
+      BmpReaderError::DIBTooSmall,
+      BmpReaderError::BadPlanes,
+      BmpReaderError::UnsupportedBpp,
+      BmpReaderError::UnsupportedCompression,
+      BmpReaderError::BadDimensions,
+      BmpReaderError::ImageTooLarge,
+      BmpReaderError::PaletteTooLarge,
+      BmpReaderError::SeekPixelDataFailed,
+      BmpReaderError::BufferTooSmall,
+      BmpReaderError::OomRowBuffer,
+      BmpReaderError::ShortReadRow,
   };
   std::vector<std::string> names;
   for (const auto err : all) {

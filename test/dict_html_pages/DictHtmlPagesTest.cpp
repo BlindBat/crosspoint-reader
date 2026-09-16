@@ -46,9 +46,7 @@ class DictHtmlPagesTest : public ::testing::Test {
     fs::remove_all(root, ec);
   }
 
-  bool build(const std::string& definition) {
-    return buildDictionaryHtmlPages(renderer, definition, 400, 700, pages);
-  }
+  bool build(const std::string& definition) { return buildDictionaryHtmlPages(renderer, definition, 400, 700, pages); }
 
   // Normalise through the real writer and return the staged document.
   std::string normalized(const std::string& definition) {
@@ -84,7 +82,9 @@ TEST_F(DictHtmlPagesTest, EmptyDefinitionIsJustTheWrapper) {
 }
 
 TEST_F(DictHtmlPagesTest, PlainTextAndUtf8PassThrough) {
-  const std::string text = "h\xC3\xA9llo \xE2\x80\x94 \xC2\xAB" "x\xC2\xBB \xE4\xB8\xAD";
+  const std::string text =
+      "h\xC3\xA9llo \xE2\x80\x94 \xC2\xAB"
+      "x\xC2\xBB \xE4\xB8\xAD";
   EXPECT_EQ(body(text), text);
 }
 
@@ -381,11 +381,11 @@ TEST_F(DictHtmlPagesTest, EmbeddedNulIsStagedVerbatim) {
 TEST_F(DictHtmlPagesTest, InvalidUtf8BytesPassThrough) {
   // Normalisation is byte-oriented: broken sequences are neither repaired nor
   // dropped (expat rejects the document later and plain text is used).
-  EXPECT_EQ(body("\x80\xBF"), "\x80\xBF");                      // lone continuation bytes
-  EXPECT_EQ(body("\xFF\xFE"), "\xFF\xFE");                      // never-valid lead bytes
-  EXPECT_EQ(body("a\xE2\x80"), "a\xE2\x80");                    // truncated 3-byte sequence
-  EXPECT_EQ(body("<b>\xC3(</b>"), "<b>\xC3(</b>");              // truncated inside a tag
-  EXPECT_EQ(body("\xED\xA0\x80"), "\xED\xA0\x80");              // surrogate half
+  EXPECT_EQ(body("\x80\xBF"), "\x80\xBF");          // lone continuation bytes
+  EXPECT_EQ(body("\xFF\xFE"), "\xFF\xFE");          // never-valid lead bytes
+  EXPECT_EQ(body("a\xE2\x80"), "a\xE2\x80");        // truncated 3-byte sequence
+  EXPECT_EQ(body("<b>\xC3(</b>"), "<b>\xC3(</b>");  // truncated inside a tag
+  EXPECT_EQ(body("\xED\xA0\x80"), "\xED\xA0\x80");  // surrogate half
 }
 
 TEST_F(DictHtmlPagesTest, HighBytesAreNotTreatedAsTagNames) {

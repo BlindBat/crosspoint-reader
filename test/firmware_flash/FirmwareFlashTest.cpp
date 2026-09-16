@@ -793,8 +793,7 @@ TEST_F(FirmwareFlashTest, FlashAlreadyValidatedSkipsIntegrityPass) {
   EXPECT_EQ(firmware_flash::flashFromSdPath(path.c_str(), nullptr, nullptr, /*alreadyValidated=*/false),
             Result::BAD_CHECKSUM);
   EXPECT_TRUE(espstub::ops.empty());
-  EXPECT_EQ(firmware_flash::flashFromSdPath(path.c_str(), nullptr, nullptr, /*alreadyValidated=*/true),
-            Result::OK);
+  EXPECT_EQ(firmware_flash::flashFromSdPath(path.c_str(), nullptr, nullptr, /*alreadyValidated=*/true), Result::OK);
   EXPECT_EQ(espstub::writeCalls, 18u + 1u);
 }
 

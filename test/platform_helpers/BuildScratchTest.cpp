@@ -1,11 +1,10 @@
 // lib/Memory/BuildScratch: exclusive lend/claim/release/reclaim of the
 // framebuffer bytes during a build phase.
 
-#include <gtest/gtest.h>
-
 #include <BuildScratch.h>
 #include <HostControls.h>
 #include <Logging.h>
+#include <gtest/gtest.h>
 
 #include <cstdint>
 #include <string>

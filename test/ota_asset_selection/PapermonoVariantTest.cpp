@@ -47,7 +47,8 @@ class PapermonoVariantTest : public ::testing::Test {
 
 TEST_F(PapermonoVariantTest, BinaryIsTaggedPapermono) {
   EXPECT_STREQ(papermonobuild::board_tag::TAG, "CROSSPOINT-BOARD-V1:papermono;");
-  EXPECT_EQ(std::string(papermonobuild::board_tag::boardName(), papermonobuild::board_tag::boardNameLen()), "papermono");
+  EXPECT_EQ(std::string(papermonobuild::board_tag::boardName(), papermonobuild::board_tag::boardNameLen()),
+            "papermono");
 }
 
 TEST_F(PapermonoVariantTest, SelectsLegacyBoardSuffixedAsset) {

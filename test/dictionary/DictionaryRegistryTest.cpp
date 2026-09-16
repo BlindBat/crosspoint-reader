@@ -69,9 +69,7 @@ class DictionaryRegistryTest : public ::testing::Test {
 // discover(): roots and folder filtering
 // ---------------------------------------------------------------------------
 
-TEST_F(DictionaryRegistryTest, NoRootsGivesEmptyList) {
-  EXPECT_TRUE(discovered().empty());
-}
+TEST_F(DictionaryRegistryTest, NoRootsGivesEmptyList) { EXPECT_TRUE(discovered().empty()); }
 
 TEST_F(DictionaryRegistryTest, DiscoverClearsPreviousContents) {
   std::vector<DictionaryEntry> out;

@@ -106,9 +106,7 @@ class FamilySet {
   FakeFont boldItalic_{400, 0x53, BOLD_ITALIC_TAG};
 };
 
-uint8_t tagOf(const EpdFontFamily& family, const EpdFontFamily::Style style) {
-  return family.getData(style)->advanceY;
-}
+uint8_t tagOf(const EpdFontFamily& family, const EpdFontFamily::Style style) { return family.getData(style)->advanceY; }
 
 // --- SD-backed fixtures ---
 

@@ -65,9 +65,7 @@ class GfxRenderer {
     trace.push_back(resyncPanelBaseline ? "restore" : "restore-noresync");
   }
   void cleanupGrayscaleWithFrameBuffer() const { trace.push_back("cleanup"); }
-  void clearScreen(const uint8_t color = 0xFF) const {
-    trace.push_back(color == 0x00 ? "clear:00" : "clear:other");
-  }
+  void clearScreen(const uint8_t color = 0xFF) const { trace.push_back(color == 0x00 ? "clear:00" : "clear:other"); }
   void setRenderMode(const RenderMode mode) {
     renderMode = mode;
     trace.push_back(mode == BW ? "mode:bw" : (mode == GRAYSCALE_LSB ? "mode:lsb" : "mode:msb"));

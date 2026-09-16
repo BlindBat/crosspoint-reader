@@ -124,10 +124,10 @@ class HalStorage {
   }
 
   // --- test controls -------------------------------------------------------
-  std::string root;                  // filesystem prefix for every mapped path
-  bool failNextOpen = false;         // next open for write/read fails
-  size_t writeCap = SIZE_MAX;        // bytes the next opened-for-write file accepts
-  std::string lastWritePath;         // unmapped device path of the last write open
+  std::string root;            // filesystem prefix for every mapped path
+  bool failNextOpen = false;   // next open for write/read fails
+  size_t writeCap = SIZE_MAX;  // bytes the next opened-for-write file accepts
+  std::string lastWritePath;   // unmapped device path of the last write open
   int writeOpens = 0;
 
   void reset() {

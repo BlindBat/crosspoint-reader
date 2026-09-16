@@ -407,8 +407,7 @@ TEST_F(ReaderHelpersTest, SaveProgressWritesTenBytesWithOffset) {
   Storage.mkdir("/.crosspoint/epub_2");
   const Epub epub("/.crosspoint/epub_2");
   ASSERT_TRUE(EpubReaderUtils::saveProgress(epub, 1, 2, 3, 0xAABBCCDDu));
-  EXPECT_EQ(readHost("/.crosspoint/epub_2/progress.bin"),
-            std::string("\x01\x00\x02\x00\x03\x00\xDD\xCC\xBB\xAA", 10));
+  EXPECT_EQ(readHost("/.crosspoint/epub_2/progress.bin"), std::string("\x01\x00\x02\x00\x03\x00\xDD\xCC\xBB\xAA", 10));
 }
 
 TEST_F(ReaderHelpersTest, SaveProgressAcceptsUpperBoundary) {
@@ -918,7 +917,7 @@ TEST_F(ReaderHelpersTest, MenuRowsDefaultOrderWithoutOptionalRows) {
   std::vector<ReaderMenu::MenuItem> items;
   ReaderMenu::buildMenuItems(items, false, false, false);
   const std::vector<MenuAction> expected = {
-      MenuAction::SELECT_CHAPTER, MenuAction::TOGGLE_BOOKMARK, MenuAction::TEXT_SETTINGS, MenuAction::NIGHT_MODE,
+      MenuAction::SELECT_CHAPTER, MenuAction::TOGGLE_BOOKMARK, MenuAction::TEXT_SETTINGS,  MenuAction::NIGHT_MODE,
       MenuAction::DICTIONARY,     MenuAction::ROTATE_SCREEN,   MenuAction::AUTO_PAGE_TURN, MenuAction::GO_TO_PERCENT,
       MenuAction::SCREENSHOT,     MenuAction::DISPLAY_QR,      MenuAction::GO_HOME,        MenuAction::SYNC,
       MenuAction::DELETE_CACHE,
@@ -1090,15 +1089,15 @@ TEST_F(ReaderHelpersTest, QrVersionThresholdsFollowPayloadLength) {
   // Lengths stay inside what ricmoo/QRCode's stack buffers can hold at the
   // version QrUtils picks: its thresholds overshoot on the low versions
   // (see QrVersionSelectionStaysBelowEncoderCapacity).
-  EXPECT_EQ(pxFor(1), 24);     // version 4 (33 modules)
-  EXPECT_EQ(pxFor(99), 24);    // still version 4 at the 114-byte threshold's safe edge
-  EXPECT_EQ(pxFor(115), 14);   // version 10 (57 modules)
+  EXPECT_EQ(pxFor(1), 24);    // version 4 (33 modules)
+  EXPECT_EQ(pxFor(99), 24);   // still version 4 at the 114-byte threshold's safe edge
+  EXPECT_EQ(pxFor(115), 14);  // version 10 (57 modules)
   EXPECT_EQ(pxFor(343), 14);
-  EXPECT_EQ(pxFor(396), 8);    // version 20 (97 modules)
-  EXPECT_EQ(pxFor(1066), 8);   // last length before the version 30 threshold
-  EXPECT_EQ(pxFor(1067), 5);   // version 30 (137 modules)
-  EXPECT_EQ(pxFor(2110), 5);   // last length before the version 40 threshold
-  EXPECT_EQ(pxFor(2111), 4);   // version 40 (177 modules)
+  EXPECT_EQ(pxFor(396), 8);   // version 20 (97 modules)
+  EXPECT_EQ(pxFor(1066), 8);  // last length before the version 30 threshold
+  EXPECT_EQ(pxFor(1067), 5);  // version 30 (137 modules)
+  EXPECT_EQ(pxFor(2110), 5);  // last length before the version 40 threshold
+  EXPECT_EQ(pxFor(2111), 4);  // version 40 (177 modules)
 }
 
 TEST_F(ReaderHelpersTest, QrVersionForLengthPinsEveryThreshold) {

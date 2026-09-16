@@ -46,9 +46,8 @@ class ChapterHtmlSlimParser {
 
   explicit ChapterHtmlSlimParser(std::shared_ptr<Epub>, const std::string& filepath, GfxRenderer&, int, float, bool,
                                  uint8_t, uint16_t, uint16_t, bool, bool, const CompletePageFn& completePageFn, bool,
-                                 const std::string&, const std::string&, uint8_t = 0,
-                                 std::vector<std::string> = {}, const std::function<void()>& = nullptr,
-                                 const CssParser* = nullptr)
+                                 const std::string&, const std::string&, uint8_t = 0, std::vector<std::string> = {},
+                                 const std::function<void()>& = nullptr, const CssParser* = nullptr)
       : filepath(filepath), completePageFn(completePageFn) {
     dhtstub::parsersConstructed++;
   }

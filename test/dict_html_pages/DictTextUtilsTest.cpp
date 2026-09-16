@@ -150,9 +150,7 @@ TEST(WrapTextTest, EmptyAndWhitespaceOnlyGiveNoLines) {
   EXPECT_TRUE(wrap("\n\n\n", 100).empty());  // all blank lines are trailing
 }
 
-TEST(WrapTextTest, ShortTextIsOneLine) {
-  EXPECT_EQ(wrap("hello world", 1000), (std::vector<Span>{{0, 11}}));
-}
+TEST(WrapTextTest, ShortTextIsOneLine) { EXPECT_EQ(wrap("hello world", 1000), (std::vector<Span>{{0, 11}})); }
 
 TEST(WrapTextTest, GreedyWrapAtMaxWidth) {
   // "aaa bbb" = 30 + 10 + 30 = 70 fits exactly; "ccc" would make 110.
@@ -213,7 +211,9 @@ TEST(WrapTextTest, SplitRespectsUtf8Boundaries) {
 TEST(WrapTextTest, OverWideSingleGlyphStillMakesProgress) {
   // Every span is 100px on a 50px line: each codepoint gets its own line and
   // multi-byte sequences are never cut.
-  const std::string t = "\xC3\xA9" "a";
+  const std::string t =
+      "\xC3\xA9"
+      "a";
   EXPECT_EQ(wrap(t, 50, 10, &measureConstant), (std::vector<Span>{{0, 2}, {2, 1}}));
 }
 
@@ -289,13 +289,13 @@ TEST(ClosestInRowTest, TheHighestRowIndexIsUsable) {
 TEST(WrapTextTest, ZeroMaxWidthStillMakesProgressOneCodepointPerLine) {
   const std::string t = "ab";
   EXPECT_EQ(wrap(t, 0), (std::vector<Span>{{0, 1}, {1, 1}}));
-  const std::string u = "\xC3\xA9" "z";
+  const std::string u =
+      "\xC3\xA9"
+      "z";
   EXPECT_EQ(wrap(u, 0), (std::vector<Span>{{0, 2}, {2, 1}}));  // sequence never cut
 }
 
-TEST(WrapTextTest, NulOnlyInputGivesNoLines) {
-  EXPECT_TRUE(wrap(std::string("\0\0\0", 3), 100).empty());
-}
+TEST(WrapTextTest, NulOnlyInputGivesNoLines) { EXPECT_TRUE(wrap(std::string("\0\0\0", 3), 100).empty()); }
 
 TEST(WrapTextTest, WideSpaceWidthForcesOneTokenPerLine) {
   const std::string t = "aa bb cc";

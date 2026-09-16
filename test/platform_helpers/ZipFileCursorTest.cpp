@@ -3,9 +3,8 @@
 // built byte-by-byte here (stored entries, plus raw-deflate "stored block"
 // entries so the inflate path runs without a compressor).
 
-#include <gtest/gtest.h>
-
 #include <ZipFile.h>
+#include <gtest/gtest.h>
 
 #include <cstdint>
 #include <cstring>

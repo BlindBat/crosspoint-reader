@@ -10,9 +10,7 @@
 
 namespace {
 
-std::vector<xtc::ChapterInfo> chapters() {
-  return {{"One", 0, 4}, {"Two", 5, 9}, {"", 10, 12}};
-}
+std::vector<xtc::ChapterInfo> chapters() { return {{"One", 0, 4}, {"Two", 5, 9}, {"", 10, 12}}; }
 
 }  // namespace
 

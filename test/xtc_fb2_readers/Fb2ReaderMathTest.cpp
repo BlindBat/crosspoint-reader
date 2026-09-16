@@ -16,9 +16,7 @@ struct Sizes {
   size_t bookSize;
 
   static size_t at(const void* ctx, int index) { return static_cast<const Sizes*>(ctx)->cumulative[index]; }
-  fb2_reader::SectionSizes view() const {
-    return {this, &Sizes::at, static_cast<int>(cumulative.size()), bookSize};
-  }
+  fb2_reader::SectionSizes view() const { return {this, &Sizes::at, static_cast<int>(cumulative.size()), bookSize}; }
 };
 
 }  // namespace

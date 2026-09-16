@@ -1,13 +1,12 @@
 // src/util/ScreenshotUtil: the screenshot path built from the on-screen
 // reader's state, and the 1-bit BMP dump of the framebuffer (FR-187).
 
-#include <gtest/gtest.h>
-
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <HostControls.h>
 #include <Logging.h>
 #include <ScreenshotUtil.h>
+#include <gtest/gtest.h>
 
 #include <cstdint>
 #include <cstring>

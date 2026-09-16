@@ -18,9 +18,8 @@ namespace romconsole {
 #include <Logging.cpp>  // NOLINT(bugprone-suspicious-include)
 }  // namespace romconsole
 
-#include <gtest/gtest.h>
-
 #include <HostControls.h>
+#include <gtest/gtest.h>
 
 #include <string>
 

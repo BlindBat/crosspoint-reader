@@ -1,13 +1,12 @@
 // lib/hal/HalClock: cached RTC polling, UTC offset / 12h formatting and the
 // NTP sync gate, over a scripted SDK Rtc.
 
-#include <gtest/gtest.h>
-
 #include <HalClock.h>
 #include <HostControls.h>
 #include <Rtc.h>
 #include <WiFi.h>
 #include <esp_sntp.h>
+#include <gtest/gtest.h>
 
 #include <cstring>
 #include <ctime>

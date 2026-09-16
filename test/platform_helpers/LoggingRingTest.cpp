@@ -1,10 +1,9 @@
 // lib/Logging: "[ms] [LVL] [ORIGIN] message" formatting and the 16-line RTC
 // ring buffer guarded by a magic word (FR-185).
 
-#include <gtest/gtest.h>
-
 #include <HostControls.h>
 #include <Logging.h>
+#include <gtest/gtest.h>
 
 #include <cstring>
 #include <string>
@@ -79,8 +78,11 @@ TEST_F(LoggingRingTest, LongMessageIsTruncatedToEntryCapacity) {
 }
 
 TEST_F(LoggingRingTest, ControlCharactersPassThroughUnmodified) {
-  LOG_ERR("T", "a\x01" "b\x1b[0m");
-  EXPECT_EQ(getLastLogs(), std::string("[0] [ERR] [T] a\x01" "b\x1b[0m\n"));
+  LOG_ERR("T",
+          "a\x01"
+          "b\x1b[0m");
+  EXPECT_EQ(getLastLogs(), std::string("[0] [ERR] [T] a\x01"
+                                       "b\x1b[0m\n"));
 }
 
 TEST_F(LoggingRingTest, ClearLastLogsEmptiesRingAndStampsMagic) {

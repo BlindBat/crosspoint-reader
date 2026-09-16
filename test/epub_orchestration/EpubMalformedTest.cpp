@@ -68,15 +68,15 @@ TEST_F(EpubFixture, LoadFailsWhenContainerXmlIsEmpty) {
 }
 
 TEST_F(EpubFixture, LoadFailsWhenTheRootfileMediaTypeIsWrong) {
-  auto epub = make(writeEpub("badmedia.epub",
-                             epubWithContainer(epubtest::containerXml("OEBPS/content.opf", "text/plain"))));
+  auto epub =
+      make(writeEpub("badmedia.epub", epubWithContainer(epubtest::containerXml("OEBPS/content.opf", "text/plain"))));
   EXPECT_FALSE(epub->load());
 }
 
 TEST_F(EpubFixture, LoadFailsWhenTheContainerDeclaresNoRootfile) {
-  auto epub = make(writeEpub(
-      "norootfile.epub",
-      epubWithContainer("<?xml version=\"1.0\"?><container version=\"1.0\"><rootfiles/></container>")));
+  auto epub =
+      make(writeEpub("norootfile.epub",
+                     epubWithContainer("<?xml version=\"1.0\"?><container version=\"1.0\"><rootfiles/></container>")));
   EXPECT_FALSE(epub->load());
 }
 
@@ -99,8 +99,9 @@ TEST_F(EpubFixture, HostileNestingInContainerXmlIsToleratedWithoutCrashing) {
   std::string container = "<?xml version=\"1.0\"?>\n<container version=\"1.0\">\n";
   constexpr int depth = 3000;
   for (int i = 0; i < depth; i++) container += "<n>";
-  container += "<rootfiles><rootfile full-path=\"OEBPS/content.opf\" "
-               "media-type=\"application/oebps-package+xml\"/></rootfiles>";
+  container +=
+      "<rootfiles><rootfile full-path=\"OEBPS/content.opf\" "
+      "media-type=\"application/oebps-package+xml\"/></rootfiles>";
   for (int i = 0; i < depth; i++) container += "</n>";
   container += "\n</container>\n";
 

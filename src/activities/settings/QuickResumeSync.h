@@ -16,8 +16,8 @@ namespace quick_resume {
 // timeoutAutoEnabled: the toggle is On only because the sleep screen is Quick
 //   Resume.
 inline void syncTimeoutForSleepScreen(const uint8_t sleepScreen, uint8_t& quickResumeSleepScreen,
-                                      bool& preserveTimeoutOn, bool& timeoutAutoEnabled,
-                                      const bool sleepScreenChanged, const bool quickResumeTimeoutChanged) {
+                                      bool& preserveTimeoutOn, bool& timeoutAutoEnabled, const bool sleepScreenChanged,
+                                      const bool quickResumeTimeoutChanged) {
   if (quickResumeTimeoutChanged) {
     preserveTimeoutOn =
         quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;

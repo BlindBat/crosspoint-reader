@@ -16,12 +16,9 @@ using epubtest::ZipBuilder;
 std::unique_ptr<Epub> makeHrefBook(const std::string& cacheRoot, const std::string& epubPath) {
   OpfSpec opf;
   opf.manifest = {
-      {"c1", "chap1.xhtml", "application/xhtml+xml", ""},
-      {"c2", "text/chap2.xhtml", "application/xhtml+xml", ""},
-      {"c3", "chap%201.xhtml", "application/xhtml+xml", ""},
-      {"c4", "odd%23name.xhtml", "application/xhtml+xml", ""},
-      {"c5", "a/dup.xhtml", "application/xhtml+xml", ""},
-      {"c6", "b/dup.xhtml", "application/xhtml+xml", ""},
+      {"c1", "chap1.xhtml", "application/xhtml+xml", ""},    {"c2", "text/chap2.xhtml", "application/xhtml+xml", ""},
+      {"c3", "chap%201.xhtml", "application/xhtml+xml", ""}, {"c4", "odd%23name.xhtml", "application/xhtml+xml", ""},
+      {"c5", "a/dup.xhtml", "application/xhtml+xml", ""},    {"c6", "b/dup.xhtml", "application/xhtml+xml", ""},
   };
   opf.spine = {"c1", "c2", "c3", "c4", "c5", "c6"};
 

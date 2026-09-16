@@ -3,12 +3,11 @@
 // (FR-028). Every fixture is built byte-by-byte here so truncation and
 // lying size fields can be exercised (Constitution VI).
 
-#include <gtest/gtest.h>
-
 #include <HalStorage.h>
 #include <HostControls.h>
 #include <Logging.h>
 #include <SleepImageUtils.h>
+#include <gtest/gtest.h>
 
 #include <cstdint>
 #include <string>

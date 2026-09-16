@@ -1,11 +1,10 @@
 // lib/hal/HalSystem: reset-reason classification, panic capture hooks and the
 // crash report written on the next boot (FR-017).
 
-#include <gtest/gtest.h>
-
 #include <HalSystem.h>
 #include <HostControls.h>
 #include <Logging.h>
+#include <gtest/gtest.h>
 
 #include <cstring>
 #include <string>
@@ -174,11 +173,17 @@ TEST_F(HalSystemTest, FullPanicInfoContainsVersionReasonMessageLogsAndStack) {
 }
 
 TEST_F(HalSystemTest, FullPanicInfoNamesEveryResetReason) {
-  const std::vector<std::pair<esp_reset_reason_t, const char*>> names = {
-      {ESP_RST_PANIC, "PANIC (exception/abort)"}, {ESP_RST_CPU_LOCKUP, "CPU_LOCKUP"}, {ESP_RST_INT_WDT, "INT_WDT"},
-      {ESP_RST_TASK_WDT, "TASK_WDT"},             {ESP_RST_WDT, "WDT (other)"},       {ESP_RST_BROWNOUT, "BROWNOUT"},
-      {ESP_RST_POWERON, "POWERON"},               {ESP_RST_SW, "SW"},                 {ESP_RST_DEEPSLEEP, "DEEPSLEEP"},
-      {ESP_RST_EXT, "OTHER"},                     {ESP_RST_UNKNOWN, "OTHER"}};
+  const std::vector<std::pair<esp_reset_reason_t, const char*>> names = {{ESP_RST_PANIC, "PANIC (exception/abort)"},
+                                                                         {ESP_RST_CPU_LOCKUP, "CPU_LOCKUP"},
+                                                                         {ESP_RST_INT_WDT, "INT_WDT"},
+                                                                         {ESP_RST_TASK_WDT, "TASK_WDT"},
+                                                                         {ESP_RST_WDT, "WDT (other)"},
+                                                                         {ESP_RST_BROWNOUT, "BROWNOUT"},
+                                                                         {ESP_RST_POWERON, "POWERON"},
+                                                                         {ESP_RST_SW, "SW"},
+                                                                         {ESP_RST_DEEPSLEEP, "DEEPSLEEP"},
+                                                                         {ESP_RST_EXT, "OTHER"},
+                                                                         {ESP_RST_UNKNOWN, "OTHER"}};
   for (const auto& [reason, name] : names) {
     host::setResetReason(reason);
     EXPECT_NE(HalSystem::getPanicInfo(true).find(std::string("Reset reason: ") + name + "\n"), std::string::npos)

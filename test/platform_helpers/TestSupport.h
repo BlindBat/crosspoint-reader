@@ -3,12 +3,11 @@
 // Shared helpers for the platform helper suite: a per-test temp directory
 // that HalStorage remaps device paths into, and small byte builders.
 
+#include <HalStorage.h>
+#include <HostControls.h>
 #include <gtest/gtest.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#include <HalStorage.h>
-#include <HostControls.h>
 
 #include <cstdint>
 #include <cstdio>

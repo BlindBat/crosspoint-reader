@@ -351,8 +351,9 @@ TEST(Utf8Cursor, InsertAtCursorAdvancesPastText) {
   std::string text = "ac";
   size_t cursor = 1;
   EXPECT_TRUE(utf8_cursor::insert(text, cursor, "\xC3\xA9", 0));
-  EXPECT_EQ(text, "a\xC3\xA9"
-                  "c");
+  EXPECT_EQ(text,
+            "a\xC3\xA9"
+            "c");
   EXPECT_EQ(cursor, 3u);
 }
 
@@ -625,9 +626,12 @@ TEST_F(SettingsGettersTest, RefreshFrequencyTable) {
   const struct {
     uint8_t value;
     int pages;
-  } rows[] = {{CrossPointSettings::REFRESH_1, 1},   {CrossPointSettings::REFRESH_5, 5},
-              {CrossPointSettings::REFRESH_10, 10}, {CrossPointSettings::REFRESH_15, 15},
-              {CrossPointSettings::REFRESH_30, 30}, {CrossPointSettings::REFRESH_NEVER, INT_MAX},
+  } rows[] = {{CrossPointSettings::REFRESH_1, 1},
+              {CrossPointSettings::REFRESH_5, 5},
+              {CrossPointSettings::REFRESH_10, 10},
+              {CrossPointSettings::REFRESH_15, 15},
+              {CrossPointSettings::REFRESH_30, 30},
+              {CrossPointSettings::REFRESH_NEVER, INT_MAX},
               {99, 15}};
   for (const auto& row : rows) {
     SETTINGS.refreshFrequency = row.value;
@@ -787,10 +791,10 @@ class MappedInputTest : public ::testing::Test {
   // Which logical buttons report wasPressed() for a single hardware press.
   bool onlyPressed(const uint8_t hw, const std::initializer_list<Button> expected) {
     pressOnly(hw);
-    static constexpr Button all[] = {Button::Back,       Button::Confirm,     Button::Left,       Button::Right,
-                                     Button::Up,         Button::Down,        Button::Power,      Button::PageBack,
-                                     Button::PageForward, Button::NavNext,    Button::NavPrevious, Button::ScreenLeft,
-                                     Button::ScreenRight, Button::ScreenUp,   Button::ScreenDown};
+    static constexpr Button all[] = {Button::Back,        Button::Confirm,  Button::Left,        Button::Right,
+                                     Button::Up,          Button::Down,     Button::Power,       Button::PageBack,
+                                     Button::PageForward, Button::NavNext,  Button::NavPrevious, Button::ScreenLeft,
+                                     Button::ScreenRight, Button::ScreenUp, Button::ScreenDown};
     for (const Button b : all) {
       bool want = false;
       for (const Button e : expected) want = want || e == b;
@@ -1143,8 +1147,8 @@ TEST_F(MappedInputTest, RowTouchHitTestsBandGeometry) {
   int row = -1;
   EXPECT_EQ(input.rowTouch(row, 100, 40, 5), MappedInputManager::RowTouch::Tap);
   EXPECT_EQ(row, 2);
-  EXPECT_EQ(input.rowTouch(row, 100, 40, 2), MappedInputManager::RowTouch::None);  // past rowCount
-  EXPECT_EQ(input.rowTouch(row, 250, 40, 5), MappedInputManager::RowTouch::None);  // above the band
+  EXPECT_EQ(input.rowTouch(row, 100, 40, 2), MappedInputManager::RowTouch::None);          // past rowCount
+  EXPECT_EQ(input.rowTouch(row, 250, 40, 5), MappedInputManager::RowTouch::None);          // above the band
   EXPECT_EQ(input.rowTouch(row, 100, 40, 5, 0, 200), MappedInputManager::RowTouch::None);  // x >= xEnd
   // y - top = 100 lands 20 px into its 40 px step: a 20 px row band rejects it, a 21 px one hits.
   EXPECT_EQ(input.rowTouch(row, 100, 40, 5, 0, INT32_MAX, 20), MappedInputManager::RowTouch::None);
@@ -1200,9 +1204,9 @@ TEST_F(MappedInputTest, ColTouchHitTestsBandGeometry) {
   int col = -1;
   EXPECT_EQ(input.colTouch(col, 40, 100, 5, 0, INT32_MAX), MappedInputManager::RowTouch::Tap);
   EXPECT_EQ(col, 2);
-  EXPECT_EQ(input.colTouch(col, 40, 100, 2, 0, INT32_MAX), MappedInputManager::RowTouch::None);  // past colCount
-  EXPECT_EQ(input.colTouch(col, 300, 100, 5, 0, INT32_MAX), MappedInputManager::RowTouch::None);  // left of the band
-  EXPECT_EQ(input.colTouch(col, 40, 100, 5, 0, 200), MappedInputManager::RowTouch::None);         // y >= yEnd
+  EXPECT_EQ(input.colTouch(col, 40, 100, 2, 0, INT32_MAX), MappedInputManager::RowTouch::None);    // past colCount
+  EXPECT_EQ(input.colTouch(col, 300, 100, 5, 0, INT32_MAX), MappedInputManager::RowTouch::None);   // left of the band
+  EXPECT_EQ(input.colTouch(col, 40, 100, 5, 0, 200), MappedInputManager::RowTouch::None);          // y >= yEnd
   EXPECT_EQ(input.colTouch(col, 40, 100, 5, 201, INT32_MAX), MappedInputManager::RowTouch::None);  // y < yStart
   // x - left = 210 lands 10 px into its 100 px step: a 10 px column rejects it, an 11 px one hits.
   EXPECT_EQ(input.colTouch(col, 30, 100, 5, 0, INT32_MAX, 10), MappedInputManager::RowTouch::None);

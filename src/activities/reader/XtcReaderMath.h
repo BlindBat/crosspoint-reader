@@ -33,8 +33,7 @@ struct PagePosition {
   int pageCount;
   const xtc::ChapterInfo* chapter;  // nullptr when book-relative
 };
-PagePosition pagePosition(const std::vector<xtc::ChapterInfo>& chapters, uint32_t currentPage,
-                          uint32_t bookPageCount);
+PagePosition pagePosition(const std::vector<xtc::ChapterInfo>& chapters, uint32_t currentPage, uint32_t bookPageCount);
 
 // Pull a page index past the end back onto the last page; pageCount 0 leaves it alone.
 uint32_t clampPage(uint32_t page, uint32_t pageCount);

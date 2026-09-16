@@ -37,8 +37,7 @@ PercentTarget percentToSection(int percent, const SectionSizes& sizes) {
   const size_t cumulative = sizes.cumulative(sizes.ctx, targetIdx);
   const size_t sectionSize = (cumulative > prevCumulative) ? (cumulative - prevCumulative) : 0;
   const float progress =
-      (sectionSize == 0) ? 0.0f
-                         : static_cast<float>(targetSize - prevCumulative) / static_cast<float>(sectionSize);
+      (sectionSize == 0) ? 0.0f : static_cast<float>(targetSize - prevCumulative) / static_cast<float>(sectionSize);
   target.sectionIndex = targetIdx;
   target.sectionProgress = std::clamp(progress, 0.0f, 1.0f);
   target.valid = true;

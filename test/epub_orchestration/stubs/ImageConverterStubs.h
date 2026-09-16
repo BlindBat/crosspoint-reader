@@ -16,10 +16,10 @@
 namespace imgconv_host {
 
 struct Recorder {
-  bool result = true;         // what the converter returns
-  int calls = 0;              // number of conversions attempted
-  std::string lastInput;      // bytes read out of the source file
-  int lastTargetWidth = 0;    // 0 for the full-size (non-thumbnail) entry points
+  bool result = true;       // what the converter returns
+  int calls = 0;            // number of conversions attempted
+  std::string lastInput;    // bytes read out of the source file
+  int lastTargetWidth = 0;  // 0 for the full-size (non-thumbnail) entry points
   int lastTargetHeight = 0;
   bool lastCrop = false;
 

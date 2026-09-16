@@ -94,8 +94,8 @@ TEST_F(EpubFixture, ABookWithoutStylesheetsStillGetsACompleteCache) {
 }
 
 TEST_F(EpubFixture, StylesheetsMissingFromTheManifestAreDiscoveredByZipEnumeration) {
-  auto epub = make(writeEpub("hidden.epub", cssBook({{"style.css", "p { text-indent: 1em; }\n"}},
-                                                    "OEBPS/extra.css", "blockquote { margin-left: 2em; }\n")));
+  auto epub = make(writeEpub("hidden.epub", cssBook({{"style.css", "p { text-indent: 1em; }\n"}}, "OEBPS/extra.css",
+                                                    "blockquote { margin-left: 2em; }\n")));
   ASSERT_TRUE(epub->load());
   EXPECT_EQ(cacheRuleCount(*epub), 2);
 }
@@ -120,8 +120,8 @@ TEST_F(EpubFixture, StylesheetsAreDiscoveredAnywhereWhenTheOpfSitsAtTheArchiveRo
 }
 
 TEST_F(EpubFixture, StylesheetsOutsideTheContentFolderAreNotDiscovered) {
-  auto epub = make(writeEpub("outside.epub", cssBook({{"style.css", "p { text-indent: 1em; }\n"}},
-                                                     "extras/theme.css", "blockquote { margin-left: 2em; }\n")));
+  auto epub = make(writeEpub("outside.epub", cssBook({{"style.css", "p { text-indent: 1em; }\n"}}, "extras/theme.css",
+                                                     "blockquote { margin-left: 2em; }\n")));
   ASSERT_TRUE(epub->load());
   EXPECT_EQ(cacheRuleCount(*epub), 1);
 }
@@ -133,8 +133,8 @@ TEST_F(EpubFixture, ByteIdenticalStylesheetsAreExtractedOnlyOnce) {
   EXPECT_EQ(Storage.countWriteOpensEndingWith("/.tmp.css"), 1u);
 
   Storage.resetForTest();
-  auto distinct = make(writeEpub("distinct.epub",
-                                 cssBook({{"a.css", rule}, {"b.css", "blockquote { margin-left: 2em; }\n"}})));
+  auto distinct =
+      make(writeEpub("distinct.epub", cssBook({{"a.css", rule}, {"b.css", "blockquote { margin-left: 2em; }\n"}})));
   ASSERT_TRUE(distinct->load());
   EXPECT_EQ(Storage.countWriteOpensEndingWith("/.tmp.css"), 2u);
   EXPECT_EQ(cacheRuleCount(*distinct), 2);
@@ -210,8 +210,8 @@ TEST_F(EpubFixture, WarmLoadUpgradesAPartialCacheToCompleteAndDropsSections) {
 
 TEST_F(EpubFixture, AnOversizedStylesheetIsSkippedAndTheCacheIsMarkedPartial) {
   const std::string oversized = std::string(129 * 1024, ' ') + "div { margin: 0; }\n";
-  auto epub = make(writeEpub("partial.epub", cssBook({{"style.css", "p { text-indent: 1em; }\n"},
-                                                      {"big.css", oversized}})));
+  auto epub =
+      make(writeEpub("partial.epub", cssBook({{"style.css", "p { text-indent: 1em; }\n"}, {"big.css", oversized}})));
   ASSERT_TRUE(epub->load());
 
   ASSERT_TRUE(epubtest::pathExists(cssCachePath(*epub)));
