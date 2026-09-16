@@ -19,6 +19,7 @@
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
 #include "WebDAVHandler.h"
+#include "WebPathUtils.h"
 #include "WifiCredentialStore.h"
 #include "html/FilesPageHtml.generated.h"
 #include "html/FontsPageHtml.generated.h"
@@ -29,9 +30,6 @@
 #include "util/TaskWatchdog.h"
 
 namespace {
-// Folders/files to hide from the web interface file browser
-// Note: Items starting with "." are automatically hidden
-constexpr const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};
 constexpr uint16_t UDP_PORTS[] = {54982, 48123, 39001, 44044, 59678};
 constexpr uint16_t LOCAL_UDP_PORT = 8134;
 
@@ -52,35 +50,6 @@ String wsLastCompleteName;
 size_t wsLastCompleteSize = 0;
 unsigned long wsLastCompleteAt = 0;
 
-String normalizeWebPath(const String& inputPath) {
-  if (inputPath.isEmpty() || inputPath == "/") {
-    return "/";
-  }
-  std::string normalized = FsHelpers::normalisePath(inputPath.c_str());
-  String result = normalized.c_str();
-  if (result.isEmpty()) {
-    return "/";
-  }
-  if (!result.startsWith("/")) {
-    result = "/" + result;
-  }
-  if (result.length() > 1 && result.endsWith("/")) {
-    result = result.substring(0, result.length() - 1);
-  }
-  return result;
-}
-
-bool isProtectedItemName(const String& name) {
-  if (name.startsWith(".")) {
-    return true;
-  }
-  for (const auto* item : HIDDEN_ITEMS) {
-    if (name.equals(item)) {
-      return true;
-    }
-  }
-  return false;
-}
 }  // namespace
 
 // File listing page template - now using generated headers:
@@ -454,7 +423,7 @@ void CrossPointWebServer::scanFiles(const char* path, const std::function<void(F
 
     // Check against explicitly hidden items list
     if (!shouldHide) {
-      for (const auto* item : HIDDEN_ITEMS) {
+      for (const auto* item : WebPathUtils::HIDDEN_ITEMS) {
         if (fileName.equals(item)) {
           shouldHide = true;
           break;
@@ -562,7 +531,7 @@ void CrossPointWebServer::handleDownload() const {
     server->send(403, "text/plain", "Cannot access system files");
     return;
   }
-  for (const auto* item : HIDDEN_ITEMS) {
+  for (const auto* item : WebPathUtils::HIDDEN_ITEMS) {
     if (itemName.equals(item)) {
       server->send(403, "text/plain", "Cannot access protected items");
       return;
@@ -860,7 +829,7 @@ void CrossPointWebServer::handleRename() const {
     return;
   }
 
-  String itemPath = normalizeWebPath(server->arg("path"));
+  String itemPath = String(WebPathUtils::normalizeWebPath(server->arg("path").c_str()).c_str());
   String newName = server->arg("name");
   newName.trim();
 
@@ -876,13 +845,13 @@ void CrossPointWebServer::handleRename() const {
     server->send(400, "text/plain", "Invalid file name");
     return;
   }
-  if (isProtectedItemName(newName)) {
+  if (WebPathUtils::isProtectedItemName(newName.c_str())) {
     server->send(403, "text/plain", "Cannot rename to protected name");
     return;
   }
 
   const String itemName = itemPath.substring(itemPath.lastIndexOf('/') + 1);
-  if (isProtectedItemName(itemName)) {
+  if (WebPathUtils::isProtectedItemName(itemName.c_str())) {
     server->send(403, "text/plain", "Cannot rename protected item");
     return;
   }
@@ -942,8 +911,8 @@ void CrossPointWebServer::handleMove() const {
     return;
   }
 
-  String itemPath = normalizeWebPath(server->arg("path"));
-  String destPath = normalizeWebPath(server->arg("dest"));
+  String itemPath = String(WebPathUtils::normalizeWebPath(server->arg("path").c_str()).c_str());
+  String destPath = String(WebPathUtils::normalizeWebPath(server->arg("dest").c_str()).c_str());
 
   if (itemPath.isEmpty() || itemPath == "/") {
     server->send(400, "text/plain", "Invalid path");
@@ -955,13 +924,13 @@ void CrossPointWebServer::handleMove() const {
   }
 
   const String itemName = itemPath.substring(itemPath.lastIndexOf('/') + 1);
-  if (isProtectedItemName(itemName)) {
+  if (WebPathUtils::isProtectedItemName(itemName.c_str())) {
     server->send(403, "text/plain", "Cannot move protected item");
     return;
   }
   if (destPath != "/") {
     const String destName = destPath.substring(destPath.lastIndexOf('/') + 1);
-    if (isProtectedItemName(destName)) {
+    if (WebPathUtils::isProtectedItemName(destName.c_str())) {
       server->send(403, "text/plain", "Cannot move into protected folder");
       return;
     }
@@ -1097,7 +1066,7 @@ void CrossPointWebServer::handleDelete() const {
 
     // Check against explicitly protected items
     bool isProtected = false;
-    for (const auto* item : HIDDEN_ITEMS) {
+    for (const auto* item : WebPathUtils::HIDDEN_ITEMS) {
       if (itemName.equals(item)) {
         isProtected = true;
         break;
@@ -1631,38 +1600,17 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
         }
 
         // Parse: START:<filename>:<size>:<path>
-        int firstColon = msg.indexOf(':', 6);
-        int secondColon = msg.indexOf(':', firstColon + 1);
-
-        if (firstColon > 0 && secondColon > 0) {
-          wsUploadFileName = msg.substring(6, firstColon);
-          String sizeToken = msg.substring(firstColon + 1, secondColon);
-          bool sizeValid = sizeToken.length() > 0;
-          int digitStart = (sizeValid && sizeToken[0] == '+') ? 1 : 0;
-          if (digitStart > 0 && sizeToken.length() < 2) sizeValid = false;
-          for (int i = digitStart; i < (int)sizeToken.length() && sizeValid; i++) {
-            if (!isdigit((unsigned char)sizeToken[i])) sizeValid = false;
-          }
-          if (!sizeValid) {
-            LOG_DBG("WS", "START rejected: invalid size token '%s'", sizeToken.c_str());
-            wsServer->sendTXT(num, "ERROR:Invalid START format");
-            return;
-          }
-          wsUploadSize = sizeToken.toInt();
-          wsUploadPath = msg.substring(secondColon + 1);
+        WebPathUtils::WsStartCommand cmd;
+        const auto parsed = WebPathUtils::parseWsStart(msg.c_str(), cmd);
+        if (parsed == WebPathUtils::WsStartParseResult::OK) {
+          wsUploadFileName = cmd.fileName.c_str();
+          wsUploadSize = cmd.size;
+          wsUploadPath = cmd.path.c_str();
           wsUploadReceived = 0;
           wsLastProgressSent = 0;
           wsUploadStartTime = millis();
 
-          // Ensure path is valid
-          if (!wsUploadPath.startsWith("/")) wsUploadPath = "/" + wsUploadPath;
-          if (wsUploadPath.length() > 1 && wsUploadPath.endsWith("/")) {
-            wsUploadPath = wsUploadPath.substring(0, wsUploadPath.length() - 1);
-          }
-
-          String filePath = wsUploadPath;
-          if (!filePath.endsWith("/")) filePath += "/";
-          filePath += wsUploadFileName;
+          String filePath = cmd.filePath.c_str();
 
           resetTaskWatchdogIfSubscribed();
           if (Storage.exists(filePath.c_str())) {
@@ -1702,6 +1650,9 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
           wsUploadInProgress = true;
           wsServer->sendTXT(num, "READY");
         } else {
+          if (parsed == WebPathUtils::WsStartParseResult::INVALID_SIZE) {
+            LOG_DBG("WS", "START rejected: invalid size in '%s'", msg.c_str());
+          }
           wsServer->sendTXT(num, "ERROR:Invalid START format");
         }
       }

@@ -6,6 +6,7 @@
 
 #include <cstdlib>
 
+#include "WebPathUtils.h"
 #include "util/BookCacheUtils.h"
 #include "util/TaskWatchdog.h"
 
@@ -215,7 +216,7 @@ void WebDAVHandler::handleOptions(WebServer& s) {
 
 void WebDAVHandler::handlePropfind(WebServer& s) {
   String path = getRequestPath(s);
-  int depth = getDepth(s);
+  const int depth = WebPathUtils::davDepth(s.header("Depth").c_str());
 
   LOG_DBG("DAV", "PROPFIND %s depth=%d", path.c_str(), depth);
 
@@ -323,7 +324,7 @@ void WebDAVHandler::sendPropEntry(WebServer& s, const String& path, bool isDir, 
     xml += "<D:getcontentlength>";
     xml += String(size);
     xml += "</D:getcontentlength>";
-    String mime = getMimeType(path);
+    String mime = WebPathUtils::mimeTypeForPath(path.c_str());
     xml += "<D:getcontenttype>";
     xml += mime;
     xml += "</D:getcontenttype>";
@@ -366,7 +367,7 @@ void WebDAVHandler::handleGet(WebServer& s) {
     return;
   }
 
-  String contentType = getMimeType(path);
+  String contentType = WebPathUtils::mimeTypeForPath(path.c_str());
   s.setContentLength(file.size());
   s.send(200, contentType.c_str(), "");
 
@@ -403,7 +404,7 @@ void WebDAVHandler::handleHead(WebServer& s) {
     return;
   }
 
-  String contentType = getMimeType(path);
+  String contentType = WebPathUtils::mimeTypeForPath(path.c_str());
   s.setContentLength(file.size());
   s.send(200, contentType.c_str(), "");
   file.close();
@@ -531,7 +532,7 @@ void WebDAVHandler::handleMkcol(WebServer& s) {
 void WebDAVHandler::handleMove(WebServer& s) {
   String srcPath = getRequestPath(s);
   String dstPath = getDestinationPath(s);
-  bool overwrite = getOverwrite(s);
+  const bool overwrite = WebPathUtils::davOverwrite(s.header("Overwrite").c_str());
 
   LOG_DBG("DAV", "MOVE %s -> %s (overwrite=%d)", srcPath.c_str(), dstPath.c_str(), overwrite);
 
@@ -602,7 +603,7 @@ void WebDAVHandler::handleMove(WebServer& s) {
 void WebDAVHandler::handleCopy(WebServer& s) {
   String srcPath = getRequestPath(s);
   String dstPath = getDestinationPath(s);
-  bool overwrite = getOverwrite(s);
+  const bool overwrite = WebPathUtils::davOverwrite(s.header("Overwrite").c_str());
 
   LOG_DBG("DAV", "COPY %s -> %s (overwrite=%d)", srcPath.c_str(), dstPath.c_str(), overwrite);
 
@@ -831,36 +832,4 @@ bool WebDAVHandler::isProtectedPath(const String& path) const {
   }
 
   return false;
-}
-
-int WebDAVHandler::getDepth(WebServer& s) const {
-  String depth = s.header("Depth");
-  if (depth == "0") return 0;
-  if (depth == "1") return 1;
-  // "infinity" or missing → treat as 1 (Class 1 servers don't need to support infinity)
-  return 1;
-}
-
-bool WebDAVHandler::getOverwrite(WebServer& s) const {
-  String ow = s.header("Overwrite");
-  if (ow == "F" || ow == "f") return false;
-  return true;  // Default is T
-}
-
-String WebDAVHandler::getMimeType(const String& path) const {
-  if (FsHelpers::hasEpubExtension(path)) return "application/epub+zip";
-  if (FsHelpers::checkFileExtension(path, ".pdf")) return "application/pdf";
-  if (FsHelpers::hasTxtExtension(path)) return "text/plain";
-  if (FsHelpers::checkFileExtension(path, ".html") || FsHelpers::checkFileExtension(path, ".htm")) return "text/html";
-  if (FsHelpers::checkFileExtension(path, ".css")) return "text/css";
-  if (FsHelpers::checkFileExtension(path, ".js")) return "application/javascript";
-  if (FsHelpers::checkFileExtension(path, ".json")) return "application/json";
-  if (FsHelpers::checkFileExtension(path, ".xml")) return "application/xml";
-  if (FsHelpers::hasJpgExtension(path)) return "image/jpeg";
-  if (FsHelpers::hasPngExtension(path)) return "image/png";
-  if (FsHelpers::hasGifExtension(path)) return "image/gif";
-  if (FsHelpers::checkFileExtension(path, ".svg")) return "image/svg+xml";
-  if (FsHelpers::checkFileExtension(path, ".zip")) return "application/zip";
-  if (FsHelpers::checkFileExtension(path, ".gz")) return "application/gzip";
-  return "application/octet-stream";
 }

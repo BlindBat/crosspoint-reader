@@ -8,20 +8,12 @@
 
 #include "activities/Activity.h"
 #include "components/UiAppHost.h"
+#include "network/WifiScanUtils.h"
 #include "util/ButtonNavigator.h"
 
 struct Rect;
 struct ThemeMetrics;
 struct WifiCredential;
-
-// Structure to hold WiFi network information
-struct WifiNetworkInfo {
-  std::string ssid;
-  int32_t rssi;
-  bool isEncrypted;
-  bool hasSavedPassword;             // Whether we have saved credentials for this network
-  bool isHiddenPlaceholder = false;  // Synthetic "Add hidden network..." list entry
-};
 
 // WiFi selection states
 enum class WifiSelectionState {

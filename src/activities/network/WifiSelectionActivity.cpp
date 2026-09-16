@@ -222,37 +222,14 @@ void WifiSelectionActivity::processWifiScanResults() {
   networks.reserve(scanResult);
 
   for (int i = 0; i < scanResult; i++) {
-    char ssid[33];
-    strlcpy(ssid, WiFi.SSID(i).c_str(), sizeof(ssid));
-    const int32_t rssi = WiFi.RSSI(i);
-
-    // Skip hidden networks (empty SSID)
-    if (ssid[0] == '\0') {
-      continue;
-    }
-
-    auto it =
-        std::find_if(networks.begin(), networks.end(), [&ssid](const WifiNetworkInfo& n) { return n.ssid == ssid; });
-    if (it == networks.end()) {
-      WifiNetworkInfo network;
-      network.ssid = ssid;
-      network.rssi = rssi;
-      network.isEncrypted = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
-      network.hasSavedPassword = WIFI_STORE.hasSavedCredential(network.ssid);
-      networks.push_back(std::move(network));
-    } else if (rssi > it->rssi) {
-      it->rssi = rssi;
-      it->isEncrypted = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
+    const String ssid = WiFi.SSID(i);
+    const bool isEncrypted = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
+    if (WifiScanUtils::mergeScanResult(networks, ssid.c_str(), WiFi.RSSI(i), isEncrypted)) {
+      networks.back().hasSavedPassword = WIFI_STORE.hasSavedCredential(networks.back().ssid);
     }
   }
 
-  // Sort: saved-password networks first, then by signal strength (strongest first)
-  std::sort(networks.begin(), networks.end(), [](const WifiNetworkInfo& a, const WifiNetworkInfo& b) {
-    if (a.hasSavedPassword != b.hasSavedPassword) {
-      return a.hasSavedPassword;
-    }
-    return a.rssi > b.rssi;
-  });
+  WifiScanUtils::sortScannedNetworks(networks);
 
   realNetworkCount = networks.size();
   appendHiddenNetworkEntry();

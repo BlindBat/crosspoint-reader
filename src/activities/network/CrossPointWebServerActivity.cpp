@@ -16,6 +16,7 @@
 #include "activities/network/CalibreConnectActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "network/WifiScanUtils.h"
 #include "util/QrUtils.h"
 #include "util/TaskWatchdog.h"
 
@@ -50,15 +51,6 @@ void restartMdns(const char* hostname, const char* tag) {
   }
 }
 
-// 0..4 bars from RSSI (dBm), with 3 dBm hysteresis on currentBars to suppress flicker.
-int barsForRssi(int rssi, int currentBars) {
-  static constexpr int RISE_DBM[] = {-85, -75, -65, -55};
-  static constexpr int FALL_DBM[] = {-88, -78, -68, -58};
-  int bars = std::clamp(currentBars, 0, 4);
-  while (bars < 4 && rssi >= RISE_DBM[bars]) bars++;
-  while (bars > 0 && rssi < FALL_DBM[bars - 1]) bars--;
-  return bars;
-}
 }  // namespace
 
 void CrossPointWebServerActivity::onEnter() {
@@ -282,7 +274,7 @@ void CrossPointWebServerActivity::startWebServer() {
   if (webServer->isRunning()) {
     state = WebServerActivityState::SERVER_RUNNING;
     LOG_DBG("WEBACT", "Web server started successfully");
-    lastWifiBars = isApMode ? 0 : barsForRssi(WiFi.RSSI(), 0);
+    lastWifiBars = isApMode ? 0 : WifiScanUtils::barsForRssi(WiFi.RSSI(), 0);
 
     // Force an immediate render since we're transitioning from a subactivity
     // that had its own rendering task. We need to make sure our display is shown.
@@ -338,7 +330,7 @@ void CrossPointWebServerActivity::loop() {
           if (rssi < -75) {
             LOG_DBG("WEBACT", "Warning: Weak WiFi signal: %d dBm", rssi);
           }
-          const int bars = barsForRssi(rssi, lastWifiBars);
+          const int bars = WifiScanUtils::barsForRssi(rssi, lastWifiBars);
           if (bars != lastWifiBars) {
             lastWifiBars = bars;
             repaint = true;
