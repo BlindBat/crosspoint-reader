@@ -45,6 +45,7 @@ struct SettingInfo {
   const char* key = nullptr;             // JSON API key (nullptr for ACTION types)
   StrId category = StrId::STR_NONE_OPT;  // Category for web UI grouping
   bool obfuscated = false;               // Save/load via base64 obfuscation (passwords)
+  bool secret = false;                   // Never sent out over the web API; GET reports only whether it is set
   bool inTextSettings = false;           // Surfaced in the Text Settings screen; hidden from the flat Reader list
 
   // Direct char[] string fields (for settings stored in CrossPointSettings)
@@ -59,6 +60,14 @@ struct SettingInfo {
 
   SettingInfo& withObfuscated() {
     obfuscated = true;
+    return *this;
+  }
+
+  // Mark a string setting as a secret: GET /api/settings returns an empty value
+  // and a hasPassword flag instead of the stored text, exactly as the OPDS and
+  // Wi-Fi endpoints do. A POST still sets it when the field is present.
+  SettingInfo& withSecret() {
+    secret = true;
     return *this;
   }
 

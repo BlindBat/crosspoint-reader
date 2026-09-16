@@ -66,6 +66,37 @@ class TouchBoardSettingsTest : public ::testing::Test {
   }
 };
 
+// --- credentials must never leave through the settings API -------------------
+
+TEST_F(TouchBoardSettingsTest, CredentialSettingsAreMarkedSecret) {
+  // GET /api/settings serialises a secret string as an empty value plus a
+  // hasPassword flag (CrossPointWebServer, SettingType::STRING). The rule is
+  // keyed off this flag, so every credential-bearing entry must carry it.
+  bool sawKoPassword = false;
+  for (const auto& info : getSettingsList()) {
+    if (info.key == nullptr) continue;
+    const std::string key = info.key;
+    if (key == "koPassword") {
+      sawKoPassword = true;
+      EXPECT_TRUE(info.secret) << "koPassword would be sent in full over /api/settings";
+    }
+    if (key.find("assword") != std::string::npos) {
+      EXPECT_TRUE(info.secret) << key << " looks like a credential but is not marked secret";
+    }
+  }
+  EXPECT_TRUE(sawKoPassword) << "koPassword entry missing from the settings list";
+}
+
+TEST_F(TouchBoardSettingsTest, NonSecretStringSettingsStayReadable) {
+  // The masking must not spill onto ordinary strings: the sync server URL is
+  // shown in the web UI and is not a credential.
+  for (const auto& info : getSettingsList()) {
+    if (info.key != nullptr && std::string(info.key) == "koServerUrl") {
+      EXPECT_FALSE(info.secret);
+    }
+  }
+}
+
 // --- the board class this binary models ------------------------------------
 
 TEST_F(TouchBoardSettingsTest, BoardStubReportsTouchHomeKeyAndImu) {

@@ -6,12 +6,15 @@
 #include <HalGPIO.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Memory.h>
+#include <PersistableStore.h>
 #include <WiFi.h>
 #include <esp_efuse.h>
 #include <esp_efuse_table.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 
 #include "CrossPointSettings.h"
 #include "FontInstaller.h"
@@ -30,8 +33,26 @@
 #include "util/TaskWatchdog.h"
 
 namespace {
-constexpr uint16_t UDP_PORTS[] = {54982, 48123, 39001, 44044, 59678};
 constexpr uint16_t LOCAL_UDP_PORT = 8134;
+
+// Ceiling for a JSON request body. The API takes a handful of short fields, so
+// anything larger is a mistake or an attempt to exhaust the 380 KB heap.
+constexpr size_t MAX_JSON_BODY_BYTES = 8 * 1024;
+
+// Reads a body field as a string of at most maxLength bytes; an over-long or
+// non-string field yields an empty string, never a truncated one.
+std::string boundedBodyField(JsonVariantConst doc, const char* key, const size_t maxLength) {
+  const char* value = doc[key] | static_cast<const char*>(nullptr);
+  if (value == nullptr) {
+    return {};
+  }
+  const size_t length = strnlen(value, maxLength + 1);
+  if (length > maxLength) {
+    LOG_ERR("WEB", "Body field '%s' exceeds %zu bytes; ignored", key, maxLength);
+    return {};
+  }
+  return std::string(value, length);
+}
 
 // Static pointer for WebSocket callback (WebSocketsServer requires C-style callback)
 CrossPointWebServer* wsInstance = nullptr;
@@ -52,10 +73,9 @@ unsigned long wsLastCompleteAt = 0;
 
 }  // namespace
 
-// File listing page template - now using generated headers:
-// - HomePageHtml (from html/HomePage.html)
-// - FilesPageHeaderHtml (from html/FilesPageHeader.html)
-// - FilesPageFooterHtml (from html/FilesPageFooter.html)
+// The pages are served from headers generated at build time by
+// scripts/build_html.py out of data/html/: HomePageHtml, FilesPageHtml,
+// FontsPageHtml and SettingsPageHtml. Edit the HTML, never the generated header.
 CrossPointWebServer::CrossPointWebServer() {}
 
 CrossPointWebServer::~CrossPointWebServer() { stop(); }
@@ -83,7 +103,11 @@ void CrossPointWebServer::begin() {
   LOG_DBG("WEB", "Network mode: %s", apMode ? "AP" : "STA");
 
   LOG_DBG("WEB", "Creating web server on port %d...", port);
-  server.reset(new WebServer(port));
+  server = makeUniqueNoThrow<WebServer>(port);
+  if (!server) {
+    LOG_ERR("WEB", "OOM: HTTP server");
+    return;
+  }
 
   // Disable WiFi sleep to improve responsiveness and prevent 'unreachable' errors.
   // This is critical for reliable web server operation on ESP32.
@@ -166,7 +190,11 @@ void CrossPointWebServer::begin() {
 
   // Start WebSocket server for fast binary uploads
   LOG_DBG("WEB", "Starting WebSocket server on port %d...", wsPort);
-  wsServer.reset(new WebSocketsServer(wsPort));
+  wsServer = makeUniqueNoThrow<WebSocketsServer>(wsPort);
+  if (!wsServer) {
+    LOG_ERR("WEB", "OOM: WebSocket server");
+    return;
+  }
   wsInstance = const_cast<CrossPointWebServer*>(this);
   wsServer->begin();
   wsServer->onEvent(wsEventCallback);
@@ -465,14 +493,10 @@ void CrossPointWebServer::handleFileListData() const {
   // Get current path from query string (default to root)
   String currentPath = "/";
   if (server->hasArg("path")) {
-    currentPath = server->arg("path");
-    // Ensure path starts with /
-    if (!currentPath.startsWith("/")) {
-      currentPath = "/" + currentPath;
-    }
-    // Remove trailing slash unless it's root
-    if (currentPath.length() > 1 && currentPath.endsWith("/")) {
-      currentPath = currentPath.substring(0, currentPath.length() - 1);
+    currentPath = String(WebPathUtils::normalizeWebPath(server->arg("path").c_str()).c_str());
+    if (WebPathUtils::pathHasProtectedComponent(currentPath.c_str())) {
+      server->send(403, "text/plain", "Cannot list protected items");
+      return;
     }
   }
 
@@ -517,27 +541,17 @@ void CrossPointWebServer::handleDownload() const {
     return;
   }
 
-  String itemPath = server->arg("path");
+  String itemPath = String(WebPathUtils::normalizeWebPath(server->arg("path").c_str()).c_str());
   if (itemPath.isEmpty() || itemPath == "/") {
     server->send(400, "text/plain", "Invalid path");
     return;
   }
-  if (!itemPath.startsWith("/")) {
-    itemPath = "/" + itemPath;
-  }
 
   const String itemName = itemPath.substring(itemPath.lastIndexOf('/') + 1);
-  if (itemName.startsWith(".")) {
-    server->send(403, "text/plain", "Cannot access system files");
+  if (WebPathUtils::pathHasProtectedComponent(itemPath.c_str())) {
+    server->send(403, "text/plain", "Cannot access protected items");
     return;
   }
-  for (const auto* item : WebPathUtils::HIDDEN_ITEMS) {
-    if (itemName.equals(item)) {
-      server->send(403, "text/plain", "Cannot access protected items");
-      return;
-    }
-  }
-
   if (!Storage.exists(itemPath.c_str())) {
     server->send(404, "text/plain", "Item not found");
     return;
@@ -649,17 +663,24 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     // Note: We use query parameter instead of form data because multipart form
     // fields aren't available until after file upload completes
     if (server->hasArg("path")) {
-      state.path = server->arg("path");
-      // Ensure path starts with /
-      if (!state.path.startsWith("/")) {
-        state.path = "/" + state.path;
-      }
-      // Remove trailing slash unless it's root
-      if (state.path.length() > 1 && state.path.endsWith("/")) {
-        state.path = state.path.substring(0, state.path.length() - 1);
-      }
+      state.path = String(WebPathUtils::normalizeWebPath(server->arg("path").c_str()).c_str());
     } else {
       state.path = "/";
+    }
+
+    // The filename comes from the multipart header and the path from the query
+    // string; both are client-supplied, so neither may escape the target folder
+    // or address a protected item.
+    const auto nameCheck = WebPathUtils::checkItemName(state.fileName.c_str());
+    if (nameCheck != WebPathUtils::NameCheck::Ok) {
+      state.error = WebPathUtils::nameCheckMessage(nameCheck);
+      LOG_ERR("WEB", "[UPLOAD] Rejected name '%s': %s", state.fileName.c_str(), state.error.c_str());
+      return;
+    }
+    if (WebPathUtils::pathHasProtectedComponent(state.path.c_str())) {
+      state.error = "Cannot upload into protected items";
+      LOG_ERR("WEB", "[UPLOAD] Rejected path: %s", state.path.c_str());
+      return;
     }
 
     LOG_DBG("WEB", "[UPLOAD] START: %s to path: %s", state.fileName.c_str(), state.path.c_str());
@@ -782,21 +803,20 @@ void CrossPointWebServer::handleCreateFolder() const {
 
   const String folderName = server->arg("name");
 
-  // Validate folder name
-  if (folderName.isEmpty()) {
-    server->send(400, "text/plain", "Folder name cannot be empty");
+  const auto nameCheck = WebPathUtils::checkItemName(folderName.c_str());
+  if (nameCheck != WebPathUtils::NameCheck::Ok) {
+    server->send(nameCheck == WebPathUtils::NameCheck::Protected ? 403 : 400, "text/plain",
+                 WebPathUtils::nameCheckMessage(nameCheck));
     return;
   }
 
   // Get parent path
   String parentPath = "/";
   if (server->hasArg("path")) {
-    parentPath = server->arg("path");
-    if (!parentPath.startsWith("/")) {
-      parentPath = "/" + parentPath;
-    }
-    if (parentPath.length() > 1 && parentPath.endsWith("/")) {
-      parentPath = parentPath.substring(0, parentPath.length() - 1);
+    parentPath = String(WebPathUtils::normalizeWebPath(server->arg("path").c_str()).c_str());
+    if (WebPathUtils::pathHasProtectedComponent(parentPath.c_str())) {
+      server->send(403, "text/plain", "Cannot create folders in protected items");
+      return;
     }
   }
 
@@ -1042,37 +1062,18 @@ void CrossPointWebServer::handleDelete() const {
   for (const auto& p : paths) {
     auto itemPath = p.as<String>();
 
-    // Validate path
+    // Normalise first: ".." and "." collapse, so the checks below see the path
+    // the filesystem will actually act on.
+    itemPath = String(WebPathUtils::normalizeWebPath(itemPath.c_str()).c_str());
     if (itemPath.isEmpty() || itemPath == "/") {
       failedItems += itemPath + " (cannot delete root); ";
       allSuccess = false;
       continue;
     }
 
-    // Ensure path starts with /
-    if (!itemPath.startsWith("/")) {
-      itemPath = "/" + itemPath;
-    }
-
-    // Security check: prevent deletion of protected items
-    const String itemName = itemPath.substring(itemPath.lastIndexOf('/') + 1);
-
-    // Hidden/system files are protected
-    if (itemName.startsWith(".")) {
-      failedItems += itemPath + " (hidden/system file); ";
-      allSuccess = false;
-      continue;
-    }
-
-    // Check against explicitly protected items
-    bool isProtected = false;
-    for (const auto* item : WebPathUtils::HIDDEN_ITEMS) {
-      if (itemName.equals(item)) {
-        isProtected = true;
-        break;
-      }
-    }
-    if (isProtected) {
+    // Security check: every component must be unprotected, not just the last —
+    // otherwise anything inside /.crosspoint could be deleted.
+    if (WebPathUtils::pathHasProtectedComponent(itemPath.c_str())) {
       failedItems += itemPath + " (protected file); ";
       allSuccess = false;
       continue;
@@ -1187,10 +1188,19 @@ void CrossPointWebServer::handleGetSettings() const {
       }
       case SettingType::STRING: {
         doc["type"] = "string";
+        std::string value;
         if (s.stringGetter) {
-          doc["value"] = s.stringGetter();
+          value = s.stringGetter();
         } else if (s.stringMaxLen > 0) {
-          doc["value"] = reinterpret_cast<const char*>(&SETTINGS) + s.stringOffset;
+          value = reinterpret_cast<const char*>(&SETTINGS) + s.stringOffset;
+        }
+        if (s.secret) {
+          // Never expose the stored secret — only whether one is set, matching
+          // /api/opds and /api/wifi. A POST that omits the field leaves it alone.
+          doc["value"] = "";
+          doc["hasPassword"] = !value.empty();
+        } else {
+          doc["value"] = value;
         }
         break;
       }
@@ -1226,6 +1236,10 @@ void CrossPointWebServer::handlePostSettings() {
   }
 
   const String body = server->arg("plain");
+  if (body.length() > MAX_JSON_BODY_BYTES) {
+    server->send(413, "text/plain", "Body too large");
+    return;
+  }
   JsonDocument doc;
   const DeserializationError err = deserializeJson(doc, body);
   if (err) {
@@ -1274,7 +1288,14 @@ void CrossPointWebServer::handlePostSettings() {
         break;
       }
       case SettingType::STRING: {
-        const std::string val = doc[s.key].as<std::string>();
+        // A setting string lands in a fixed char[] or a credential store, so an
+        // over-long value is refused rather than truncated into place.
+        const size_t maxLength = s.stringMaxLen > 0 ? s.stringMaxLen - 1 : PersistableStoreBase::MAX_URL_BYTES;
+        const std::string val = boundedBodyField(doc, s.key, maxLength);
+        if (val.empty() && !(doc[s.key] | std::string("")).empty()) {
+          LOG_ERR("WEB", "Setting '%s' value exceeds %zu bytes; skipped", s.key, maxLength);
+          break;
+        }
         if (s.stringSetter) {
           s.stringSetter(val);
         } else if (s.stringMaxLen > 0) {
@@ -1340,6 +1361,10 @@ void CrossPointWebServer::handlePostOpdsServer() {
   }
 
   const String body = server->arg("plain");
+  if (body.length() > MAX_JSON_BODY_BYTES) {
+    server->send(413, "text/plain", "Body too large");
+    return;
+  }
   JsonDocument doc;
   const DeserializationError err = deserializeJson(doc, body);
   if (err) {
@@ -1348,14 +1373,18 @@ void CrossPointWebServer::handlePostOpdsServer() {
   }
 
   OpdsServer opdsServer;
-  opdsServer.name = doc["name"] | std::string("");
-  opdsServer.url = doc["url"] | std::string("");
-  opdsServer.username = doc["username"] | std::string("");
+  opdsServer.name = boundedBodyField(doc, "name", PersistableStoreBase::MAX_NAME_BYTES);
+  opdsServer.url = boundedBodyField(doc, "url", PersistableStoreBase::MAX_URL_BYTES);
+  opdsServer.username = boundedBodyField(doc, "username", PersistableStoreBase::MAX_USERNAME_BYTES);
 
   // The password field is optional in the JSON payload. When absent (vs. present but empty),
   // we preserve the existing password — the web UI omits it when the user hasn't changed it.
   bool hasPasswordField = doc["password"].is<const char*>() || doc["password"].is<std::string>();
-  std::string password = doc["password"] | std::string("");
+  std::string password = boundedBodyField(doc, "password", PersistableStoreBase::MAX_PASSWORD_BYTES);
+  if (hasPasswordField && password.empty() && !(doc["password"] | std::string("")).empty()) {
+    server->send(400, "text/plain", "Password too long");
+    return;
+  }
 
   if (doc["index"].is<int>()) {
     int idx = doc["index"].as<int>();
@@ -1603,6 +1632,18 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
         WebPathUtils::WsStartCommand cmd;
         const auto parsed = WebPathUtils::parseWsStart(msg.c_str(), cmd);
         if (parsed == WebPathUtils::WsStartParseResult::OK) {
+          const auto nameCheck = WebPathUtils::checkItemName(cmd.fileName);
+          if (nameCheck != WebPathUtils::NameCheck::Ok) {
+            wsServer->sendTXT(num, String("ERROR:") + WebPathUtils::nameCheckMessage(nameCheck));
+            break;
+          }
+          cmd.path = WebPathUtils::normalizeWebPath(cmd.path);
+          if (WebPathUtils::pathHasProtectedComponent(cmd.path)) {
+            wsServer->sendTXT(num, "ERROR:Cannot upload into protected items");
+            break;
+          }
+          cmd.filePath = cmd.path == "/" ? "/" + cmd.fileName : cmd.path + "/" + cmd.fileName;
+
           wsUploadFileName = cmd.fileName.c_str();
           wsUploadSize = cmd.size;
           wsUploadPath = cmd.path.c_str();

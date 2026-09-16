@@ -364,7 +364,10 @@
     if (setting.type === 'string') {
       const inputType = setting.name.toLowerCase().includes('password') ? 'password' : 'text';
       const val = setting.value || '';
-      return '<input type="' + inputType + '" id="' + id + '" value="' + escapeHtml(val) + '"' +
+      // A secret comes back empty with hasPassword telling us one is stored;
+      // the placeholder shows that, and an untouched field is never posted.
+      const placeholder = setting.hasPassword ? ' placeholder="********"' : '';
+      return '<input type="' + inputType + '" id="' + id + '" value="' + escapeHtml(val) + '"' + placeholder +
         ' oninput="handleSettingChanged(\'' + setting.key + '\')">';
     }
 
