@@ -93,6 +93,8 @@ jobs:
             asset: firmware-sticky.bin
           - env: x4pro
             asset: firmware-x4pro.bin
+          - env: x4c
+            asset: firmware-x4c.bin
           - env: papermono
             asset: firmware-papermono.bin
     steps:
@@ -153,8 +155,23 @@ jobs:
           path: .pio/build/${{ matrix.env }}/firmware.bin
           if-no-files-found: error
 
+  # Mirrors bin/run-tests: PRE_TEST discovery so a suite that fails to link
+  # still reports, -k 0 so every failing suite surfaces in one pass. The
+  # sanitizer job builds the same tree with -DCROSSPOINT_SANITIZE=ON
+  # (bin/run-tests --asan).
   unit-tests:
+    name: Unit tests (${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: plain
+            build_dir: build/test
+            configure_extra: ""
+          - name: asan
+            build_dir: build/test-asan
+            configure_extra: "-DCROSSPOINT_SANITIZE=ON"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -168,17 +185,24 @@ jobs:
       - name: Cache googletest source
         uses: actions/cache@v4
         with:
-          path: build/test/_deps/googletest-src
+          path: ${{ matrix.build_dir }}/_deps/googletest-src
           key: ${{ runner.os }}-googletest-${{ hashFiles('test/CMakeLists.txt') }}
 
       - name: Configure
-        run: cmake -S test -B build/test -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: >
+          cmake -S test -B ${{ matrix.build_dir }} -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE=PRE_TEST
+          ${{ matrix.configure_extra }}
 
       - name: Build
-        run: cmake --build build/test
+        run: cmake --build ${{ matrix.build_dir }} -- -k 0
 
       - name: Run tests
-        run: ctest --test-dir build/test --output-on-failure -j
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: ctest --test-dir ${{ matrix.build_dir }} --output-on-failure -j
 
   # This job is used as the PR required actions check, allows for changes to other steps in the future without breaking
   # PR requirements.
