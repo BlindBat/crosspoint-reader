@@ -1,8 +1,8 @@
 #include "FirmwareFlasher.h"
 
-#include <Arduino.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <PlatformSeam.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <mbedtls/sha256.h>
@@ -343,7 +343,7 @@ Result flashFromSdPath(const char* sdPath, ProgressCb onProgress, void* ctx, boo
     }
     streamPos += want;
     if (onProgress) onProgress(streamPos, firmwareSize, ctx);
-    delay(1);
+    platform::yield();
   }
   file.close();
 
