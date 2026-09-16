@@ -4,10 +4,14 @@
 #include <cstdint>
 
 // Flash a firmware image from an SD-card path into the next OTA app
-// partition, then switch otadata so the X3/X4 stock bootloader picks it up
-// on next boot. Mirrors the web flasher: raw esp_partition_erase_range +
-// esp_partition_write + ota_boot::switchTo (no Arduino Update class, no
-// esp_image_verify — those reject our patched image on X4 silicon).
+// partition, then switch otadata so the stock bootloader picks it up on next
+// boot. Raw esp_partition_erase_range + esp_partition_write + ota_boot::switchTo,
+// deliberately bypassing the Arduino Update class and esp_image_verify: the
+// running IDF's image check misreads the new image's app descriptor on this
+// silicon and fails on bogus eFuse block revisions (see
+// src/platform/skip_efuse_blk_check.c, which overrides the same check in the
+// bootloader support library). validateImageFile() below does the integrity
+// checking instead: header, segment table, checksum, SHA-256 and board tag.
 //
 // Both the SD update activity and the OTA path land here. OTA first
 // downloads the firmware to an SD-card cache file, then calls this.

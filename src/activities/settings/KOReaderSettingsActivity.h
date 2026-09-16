@@ -5,8 +5,8 @@
 #include "activities/UiListActivity.h"
 
 /**
- * Submenu for KOReader Sync settings.
- * Shows username, password, and authenticate options.
+ * Submenu for KOReader Sync settings: username, password, sync server URL,
+ * document matching, send metadata, sync behaviour, sign up and authenticate.
  */
 class KOReaderSettingsActivity final : public UiListActivity {
  public:

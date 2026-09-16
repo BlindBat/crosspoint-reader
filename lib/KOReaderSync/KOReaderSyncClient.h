@@ -44,9 +44,11 @@ struct KOReaderProgress {
 };
 
 /**
- * HTTP client for KOReader sync API.
+ * HTTP client for the KOReader sync API.
  *
- * Base URL: https://sync.koreader.rocks:443/
+ * The base URL comes from KOReaderCredentialStore: sync.crosspointreader.com by
+ * default, with sync.koreader.rocks pinned for configs written before v2, and
+ * any kosync-compatible server the user enters.
  *
  * API Endpoints:
  *   GET /users/auth - Authenticate (validate credentials)

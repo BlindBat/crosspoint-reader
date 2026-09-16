@@ -15,10 +15,11 @@
  *
  * Flow:
  * 1. Connect to WiFi (if not connected)
- * 2. Calculate document hash
- * 3. Fetch remote progress
- * 4. Show comparison and options (Apply/Upload)
- * 5. Apply or upload progress
+ * 2. Derive the document id (filename or partial-MD5, per the match method)
+ * 3. Fetch remote progress, probing the alternate id when the first misses
+ * 4. Decide what to offer (see SmartSyncDecision): apply, upload, or nothing
+ *    when the two sides differ by no more than a tenth of a point
+ * 5. Apply or upload, sending the rich position and optional metadata
  */
 class KOReaderSyncActivity final : public Activity, private UiAppHost {
  public:
