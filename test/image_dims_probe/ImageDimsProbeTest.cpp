@@ -8,12 +8,15 @@
 // entropy-coded data, so real encoder output is not needed to exercise every
 // state transition.
 
+#include <PlatformSeam.h>
 #include <gtest/gtest.h>
 
 #include <cstdint>
 #include <vector>
 
 #include "ImageDimsProbe.h"
+#include "ImageToFramebufferDecoder.h"
+#include "PlatformHost.h"
 
 namespace {
 
@@ -400,5 +403,29 @@ void truncationSweep(const Bytes& stream, const int16_t expectW, const int16_t e
 TEST(ImageDimsProbe, PngTruncationSweepSafeAndMonotonic) { truncationSweep(pngStream(300, 200), 300, 200); }
 
 TEST(ImageDimsProbe, JpegTruncationSweepSafeAndMonotonic) { truncationSweep(jpegStream(300, 200), 300, 200); }
+
+// ---------------------------------------------------------------------------
+// Decode-yield pacing. Both decoders call this from their row/MCU callbacks;
+// it runs on the platform seam (lib/Platform/PlatformSeam.h), so the host
+// counts the yields instead of the decoder reaching vTaskDelay() directly.
+// ---------------------------------------------------------------------------
+
+TEST(ImageDecodeYield, YieldsOncePer250msThroughTheSeam) {
+  platform_host::resetCounters();
+
+  // 250 ms "ago" on the seam's own clock; the subtraction is modular, so it is
+  // well defined even before the clock has reached 250.
+  uint32_t lastYield = platform::millis() - 250;
+  ImageToFramebufferDecoder::yieldDuringDecode(lastYield);
+  EXPECT_EQ(platform_host::yieldCount(), 1u);
+  const uint32_t afterYield = lastYield;
+
+  // A second call inside the same window neither yields nor moves the mark.
+  ImageToFramebufferDecoder::yieldDuringDecode(lastYield);
+  EXPECT_EQ(platform_host::yieldCount(), 1u);
+  EXPECT_EQ(lastYield, afterYield);
+
+  platform_host::resetCounters();
+}
 
 }  // namespace

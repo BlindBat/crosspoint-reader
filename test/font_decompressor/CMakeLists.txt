@@ -17,6 +17,7 @@ target_include_directories(FontDecompressorTest PRIVATE
   ${REPO_ROOT}/lib/InflateReader
   ${REPO_ROOT}/lib/uzlib/src
   ${REPO_ROOT}/lib/Utf8
+  ${REPO_ROOT}/lib/Memory
 )
 
 target_link_libraries(FontDecompressorTest PRIVATE

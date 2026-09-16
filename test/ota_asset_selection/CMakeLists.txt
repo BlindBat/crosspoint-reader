@@ -26,6 +26,7 @@ target_include_directories(OtaAssetSelectionTest PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${REPO_ROOT}/src
   ${REPO_ROOT}/lib/JsonParser
+  ${REPO_ROOT}/lib/Memory
 )
 
 target_compile_definitions(OtaAssetSelectionTest PRIVATE

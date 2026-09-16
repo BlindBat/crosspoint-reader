@@ -211,6 +211,27 @@ TEST_F(KosyncClientTest, BinaryHashFollowsFullTwelveOffsetSchedule) {
   EXPECT_EQ(KOReaderDocumentId::calculate("/books/huge.epub"), expectedPartialMd5(size));
 }
 
+// The 1KB chunk buffer lives on the heap, not in calculate()'s frame, where it
+// cost ~1.25KB -- five times the 256-byte stack budget, on a sync path that
+// already carries the TLS session. HalFile::read() samples the deepest stack
+// address the hashing loop reaches.
+TEST_F(KosyncClientTest, BinaryHashRunsInASmallStackFrame) {
+  if (!halfile_stack_probe::kMeasurementIsReliable) {
+    GTEST_SKIP() << "AddressSanitizer pads every frame on the path; the measurement is not the production frame";
+  }
+
+  Storage.addFile("/books/5000.epub", patternBytes(0, 5000));
+
+  const char anchor = 0;
+  halfile_stack_probe::reset();
+  const std::string hash = KOReaderDocumentId::calculate("/books/5000.epub");
+  const size_t depth = halfile_stack_probe::depthFrom(&anchor);
+
+  EXPECT_EQ(hash, expectedPartialMd5(5000));
+  ASSERT_GT(depth, 0u) << "read() was never reached; the probe measured nothing";
+  EXPECT_LT(depth, 640u);
+}
+
 TEST_F(KosyncClientTest, BinaryHashReadsExactlyTheOffsetsBelowEof) {
   Storage.addFile("/books/5000.epub", patternBytes(0, 5000));
   KOReaderDocumentId::calculate("/books/5000.epub");

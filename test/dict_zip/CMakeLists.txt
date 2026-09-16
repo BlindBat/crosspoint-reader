@@ -9,6 +9,7 @@ add_executable(DictZipTest
   ${REPO_ROOT}/lib/InflateReader/InflateReader.cpp
   ${REPO_ROOT}/lib/uzlib/src/tinflate.c
   ${REPO_ROOT}/test/dict_common/UzlibChecksumLinkStubs.c
+  ${REPO_ROOT}/test/support/PlatformHost.cpp
 )
 
 target_include_directories(DictZipTest PRIVATE
@@ -16,6 +17,8 @@ target_include_directories(DictZipTest PRIVATE
   ${REPO_ROOT}/lib/InflateReader
   ${REPO_ROOT}/lib/uzlib/src
   ${REPO_ROOT}/lib/Memory
+  ${REPO_ROOT}/lib/Platform
+  ${REPO_ROOT}/test/support
 )
 
 # Third-party C decompressor: not held to the suite's warning bar.

@@ -44,6 +44,7 @@ target_include_directories(KosyncClientTest PRIVATE
   ${REPO_ROOT}/test/support
   ${REPO_ROOT}/lib/Platform
   ${REPO_ROOT}/lib/KOReaderSync
+  ${REPO_ROOT}/lib/Memory
   ${REPO_ROOT}/lib/Serialization
   ${REPO_ROOT}/lib/Epub
   ${REPO_ROOT}/lib/Utf8

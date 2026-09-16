@@ -1,8 +1,8 @@
 #include "DictZip.h"
 
-#include <Arduino.h>  // ESP.getMaxAllocHeap for the pre-reserve heap guard
 #include <InflateReader.h>
 #include <Memory.h>
+#include <PlatformSeam.h>
 
 #include <cstddef>
 
@@ -184,7 +184,7 @@ bool parse(HalFile& file, Info* info, ExtractError* outError) {
       // heap surfaces LowMemory instead of crashing. chunkCount <= MAX_CHUNK_COUNT
       // caps this at ~32KB.
       const size_t chunkTableBytes = (static_cast<size_t>(chunkCount) + 1) * sizeof(uint32_t);
-      if (ESP.getMaxAllocHeap() < chunkTableBytes + CHUNK_TABLE_HEAP_HEADROOM_BYTES)
+      if (platform::maxAllocHeap() < chunkTableBytes + CHUNK_TABLE_HEAP_HEADROOM_BYTES)
         return fail(ExtractError::LowMemory);
       info->chunkOffsets.reserve(static_cast<size_t>(chunkCount) + 1);
       info->chunkOffsets.push_back(0);

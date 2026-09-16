@@ -49,6 +49,7 @@ target_include_directories(FontSystemTest PRIVATE
   ${REPO_ROOT}/src
   ${REPO_ROOT}/lib/EpdFont
   ${REPO_ROOT}/lib/Utf8
+  ${REPO_ROOT}/lib/Memory
 )
 
 set(FONT_SYSTEM_RESOURCES_DIR ${CMAKE_CURRENT_BINARY_DIR}/resources)

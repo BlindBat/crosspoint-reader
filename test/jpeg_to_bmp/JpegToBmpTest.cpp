@@ -22,6 +22,7 @@
 #include "HalStorage.h"
 #include "JPEGDEC.h"  // sizeof(JPEGDEC) for allocation-budget assertions
 #include "JpegToBmpConverter.h"
+#include "PlatformHost.h"
 
 namespace {
 
@@ -402,6 +403,29 @@ TEST(JpegToBmp, ValidDecodeStaysWithinStreamingBudget) {
   // ballpark (MCU row buffer + ditherer rows + BMP row).
   EXPECT_LE(maxAlloc, sizeof(JPEGDEC) + 4096);
   EXPECT_LE(totalAlloc, sizeof(JPEGDEC) + 128u * 1024);
+}
+
+// Makes the host platform seam report `freeHeap` as the free heap so the
+// converter's pre-decode gate can be driven; restores the "plenty" default.
+class HeapScope {
+ public:
+  explicit HeapScope(size_t freeHeap) { platform_host::setHeap(freeHeap, 0); }
+  ~HeapScope() { platform_host::setHeap(0, 0); }
+  HeapScope(const HeapScope&) = delete;
+  HeapScope& operator=(const HeapScope&) = delete;
+};
+
+TEST(JpegToBmp, LowFreeHeapRefusesBeforeAllocatingTheDecoder) {
+  MemoryPrint out;
+  {
+    HeapScope heap(1024);  // far below MIN_FREE_HEAP (sizeof(JPEGDEC) + 32KB)
+    EXPECT_FALSE(convert(res("gray_baseline.jpg"), out, 16, 16));
+  }
+  EXPECT_TRUE(out.bytes.empty()) << "refusal must precede any BMP output";
+
+  // The same input converts once the seam reports the default "plenty" heap.
+  MemoryPrint ok;
+  EXPECT_TRUE(convert(res("gray_baseline.jpg"), ok, 16, 16));
 }
 
 }  // namespace

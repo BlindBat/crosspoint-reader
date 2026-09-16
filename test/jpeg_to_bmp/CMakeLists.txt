@@ -8,6 +8,7 @@ add_executable(JpegToBmpTest
   ${REPO_ROOT}/lib/JpegToBmpConverter/JpegToBmpConverter.cpp
   ${REPO_ROOT}/lib/GfxRenderer/BitmapHelpers.cpp
   ${jpegdec_SOURCE_DIR}/src/JPEGDEC.cpp
+  ${REPO_ROOT}/test/support/PlatformHost.cpp
 )
 
 # Third-party TU: JPEGDEC is not held to this repo's warning bar. ONE UBSan
@@ -33,6 +34,8 @@ target_include_directories(JpegToBmpTest PRIVATE
   ${REPO_ROOT}/lib/GfxRenderer
   ${REPO_ROOT}/lib/Memory
   ${jpegdec_SOURCE_DIR}/src
+  ${REPO_ROOT}/lib/Platform
+  ${REPO_ROOT}/test/support
 )
 
 target_compile_definitions(JpegToBmpTest PRIVATE

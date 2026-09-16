@@ -1,7 +1,7 @@
 #include "ImageToFramebufferDecoder.h"
 
-#include <Arduino.h>
 #include <Logging.h>
+#include <PlatformSeam.h>
 
 bool ImageToFramebufferDecoder::validateAndStoreDimensions(const int64_t width, const int64_t height,
                                                            ImageDimensions& out, const char* format) {
@@ -31,10 +31,10 @@ bool ImageToFramebufferDecoder::validateAndStoreDimensions(const int64_t width, 
 }
 
 void ImageToFramebufferDecoder::yieldDuringDecode(uint32_t& lastYieldMs) {
-  const uint32_t now = millis();
+  const uint32_t now = platform::millis();
   if (now - lastYieldMs >= 250) {
     lastYieldMs = now;
-    vTaskDelay(1);
+    platform::yield();
   }
 }
 

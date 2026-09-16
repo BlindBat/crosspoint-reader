@@ -6,12 +6,15 @@ add_executable(ImageDimsProbeTest
   ImageDimsProbeTest.cpp
   ${REPO_ROOT}/lib/Epub/Epub/converters/ImageDimsProbe.cpp
   ${REPO_ROOT}/lib/Epub/Epub/converters/ImageToFramebufferDecoder.cpp
+  ${REPO_ROOT}/test/support/PlatformHost.cpp
 )
 
 target_include_directories(ImageDimsProbeTest PRIVATE
   ${REPO_ROOT}/test/image_common/stubs
   ${REPO_ROOT}/test/image_common
   ${REPO_ROOT}/lib/Epub/Epub/converters
+  ${REPO_ROOT}/lib/Platform
+  ${REPO_ROOT}/test/support
 )
 
 target_link_libraries(ImageDimsProbeTest PRIVATE

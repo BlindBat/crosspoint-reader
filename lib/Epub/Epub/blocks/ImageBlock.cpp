@@ -4,6 +4,7 @@
 #include <GfxRenderer.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <PlatformSeam.h>
 #include <Serialization.h>
 
 #include <cstdlib>
@@ -149,7 +150,8 @@ bool loadPxcSlot(uint64_t cacheHash, HalFile& cacheFile, uint16_t cachedWidth, u
   }
   for (size_t i = 0; i < chunkCount; i++) {
     const size_t want = remaining < PXC_CHUNK_SIZE ? remaining : PXC_CHUNK_SIZE;
-    if (ESP.getFreeHeap() < remaining + PXC_HEAP_RESERVE || ESP.getMaxAllocHeap() < want + PXC_MAX_ALLOC_RESERVE) {
+    if (platform::freeHeap() < remaining + PXC_HEAP_RESERVE ||
+        platform::maxAllocHeap() < want + PXC_MAX_ALLOC_RESERVE) {
       releasePxcSlot();
       return false;
     }

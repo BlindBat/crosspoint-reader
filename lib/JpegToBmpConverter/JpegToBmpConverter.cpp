@@ -5,8 +5,7 @@
 #include <JPEGDEC.h>
 #include <Logging.h>
 #include <Memory.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
+#include <PlatformSeam.h>
 
 #include <cstdio>
 #include <cstring>
@@ -173,7 +172,7 @@ constexpr uint32_t FP_ONE = 1UL << 16;
 static HalFile* s_jpegFile = nullptr;
 static uint8_t s_jpegIoSinceYield = 0;
 
-static void yieldToIdle() { vTaskDelay(1); }
+static void yieldToIdle() { platform::yield(); }
 
 static void yieldDuringJpegIo() {
   if (++s_jpegIoSinceYield < 4) return;
@@ -515,8 +514,10 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& b
                                                      int targetHeight, bool oneBit, bool crop) {
   LOG_DBG("JPG", "Converting JPEG to %s BMP (target: %dx%d)", oneBit ? "1-bit" : "2-bit", targetWidth, targetHeight);
 
-  if (ESP.getFreeHeap() < MIN_FREE_HEAP) {
-    LOG_ERR("JPG", "Not enough heap for JPEG decoder (%u free, need %u)", ESP.getFreeHeap(), MIN_FREE_HEAP);
+  const size_t freeHeap = platform::freeHeap();
+  if (freeHeap < MIN_FREE_HEAP) {
+    LOG_ERR("JPG", "Not enough heap for JPEG decoder (%u free, need %u)", static_cast<unsigned>(freeHeap),
+            static_cast<unsigned>(MIN_FREE_HEAP));
     return false;
   }
 

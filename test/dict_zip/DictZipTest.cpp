@@ -8,7 +8,6 @@
 // variant must fail gracefully with the documented ExtractError, without
 // crashing, sanitizer-clean, and without unbounded allocation.
 
-#include <Arduino.h>  // host stub: dictstub::HeapLimitScope drives the heap guards
 #include <gtest/gtest.h>
 #include <unistd.h>
 
@@ -20,6 +19,7 @@
 
 #include "src/util/DictZip.h"
 #include "test/support/AllocCounter.h"
+#include "test/support/PlatformHost.h"
 
 namespace {
 
@@ -27,6 +27,17 @@ using DictZip::ExtractError;
 using DictZip::Info;
 
 std::string resPath(const std::string& name) { return std::string(DICT_RESOURCES_DIR) + "/" + name; }
+
+// Makes the host platform seam report `limit` as the largest allocatable block,
+// so DictZip's pre-reserve guard can be driven without a fragmented heap.
+// Restores the "plenty" default on scope exit.
+class HeapLimitScope {
+ public:
+  explicit HeapLimitScope(size_t limit) { platform_host::setHeap(limit, limit); }
+  ~HeapLimitScope() { platform_host::setHeap(0, 0); }
+  HeapLimitScope(const HeapLimitScope&) = delete;
+  HeapLimitScope& operator=(const HeapLimitScope&) = delete;
+};
 
 std::string readAll(const std::string& path) {
   std::ifstream in(path, std::ios::binary);
@@ -298,11 +309,11 @@ TEST_F(DictZipTest, HugeChunkCountRejectedWithBoundedAllocation) {
 }
 
 TEST_F(DictZipTest, MaxSizedChunkTableRefusedOnLowHeap) {
-  // The pre-reserve guard: with the (stubbed) largest free block smaller than
+  // The pre-reserve guard: with the seam-reported largest free block smaller than
   // the chunk table + headroom, parse must refuse with LowMemory instead of
   // letting vector::reserve() abort. small.dict.dz's table is 13 offsets
   // (52 bytes), so an 8-byte "heap" is below 52 + 1024 headroom.
-  dictstub::HeapLimitScope heap(8);
+  HeapLimitScope heap(8);
   Info info;
   ExtractError err = ExtractError::None;
   EXPECT_FALSE(parseFixture("small.dict.dz", &info, &err));
