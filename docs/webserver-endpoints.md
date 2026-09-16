@@ -7,9 +7,23 @@ available while CrossPoint Reader is in File Transfer or Calibre Wireless mode.
 - WebSocket upload server: port 81
 - UDP discovery listener: port 8134
 - WebDAV: port 80, handled by the same HTTP server
+- Captive-portal DNS, hotspot mode only: UDP port 53
 
 Examples use `crosspoint.local`. If mDNS does not resolve on your network, use
 the IP address shown on the device screen.
+
+There is no authentication. Every response carries `Access-Control-Allow-*`
+headers.
+
+Routes are matched in registration order, and the WebDAV handler is registered
+last but claims every `OPTIONS`, `GET`, `HEAD`, `PUT`, `DELETE`, `PROPFIND`,
+`MKCOL`, `MOVE`, `COPY`, `LOCK` and `UNLOCK` request that none of the pages or
+API routes below matched. An unknown `GET` path is therefore answered by WebDAV —
+`404 Not Found` when the path is not on the card — and an `OPTIONS` request gets
+the WebDAV `200` with `DAV: 1` and `Allow:` headers. The built-in not-found
+handler, which in hotspot (AP) mode redirects unmatched non-`/api/` paths to `/`
+with a `302` for captive-portal detection, only sees methods the WebDAV handler
+does not claim.
 
 ## HTTP Pages
 
@@ -33,13 +47,14 @@ Response:
 
 ```json
 {
-  "version": "1.0.0",
+  "version": "1.6.0",
   "ip": "192.168.1.100",
   "mode": "STA",
   "rssi": -45,
   "freeHeap": 123456,
   "uptime": 3600,
-  "device": "X4"
+  "device": "X4",
+  "serial": "Not found"
 }
 ```
 
@@ -51,7 +66,8 @@ Response:
 | `rssi` | number | Wi-Fi RSSI in dBm; `0` in AP mode |
 | `freeHeap` | number | Free heap in bytes |
 | `uptime` | number | Seconds since boot |
-| `device` | string | `"X3"` or `"X4"` hardware detection |
+| `device` | string | On X4/X3 builds, `"X3"` or `"X4"` from runtime hardware detection. On other builds, the board profile name, for example `sticky`, `xteink_x4_pro`, `xteink_x4_classic` or `m5stack_paper_mono`. |
+| `serial` | string | Serial number read from the eFuse user-data block, or `"Not found"` when the block is blank or not printable |
 
 ## File Management
 
@@ -78,8 +94,20 @@ Response:
 ]
 ```
 
-Hidden dotfiles are omitted unless the device setting `showHiddenFiles` is
-enabled. `System Volume Information` and `XTCache` are always hidden/protected.
+Hidden dotfiles are omitted from this listing unless the device setting
+`showHiddenFiles` is enabled. `System Volume Information` and `XTCache` are
+always hidden/protected.
+
+The setting affects **only** this listing. `/download`, `/rename`, `/move` and
+`/delete` refuse a dot-prefixed or protected name regardless of
+`showHiddenFiles`; those endpoints test the item's own name, so a normally-named
+file inside a hidden folder is still reachable by its full path. WebDAV is
+stricter and refuses a protected segment anywhere in the path (`PROPFIND` and
+`LOCK`/`UNLOCK` excepted — see below). `/upload` and `/mkdir` do not screen the
+name they are given.
+
+The response is streamed as chunked JSON. An entry whose serialized JSON does
+not fit the handler's 512-byte buffer is skipped rather than truncated.
 
 ### `GET /download`
 
@@ -95,8 +123,10 @@ Query parameters:
 |-----------|----------|-------------|
 | `path` | Yes | File path to download |
 
-Protected dotfiles, `System Volume Information`, and `XTCache` cannot be
-downloaded. EPUB files are served as `application/epub+zip`; other files use
+A file name starting with a dot, `System Volume Information`, or `XTCache` is
+refused with `403`, whatever `showHiddenFiles` is set to; the check looks at the
+final path segment only. A missing file returns `404`, and a directory path
+returns `400`. EPUB files are served as `application/epub+zip`; other files use
 `application/octet-stream`.
 
 ### `POST /upload`
@@ -121,9 +151,17 @@ File uploaded successfully: mybook.epub
 
 Notes:
 
-- Existing files with the same name are overwritten.
-- EPUB cache data for the uploaded path is cleared after a successful upload.
+- Uploads never overwrite. If the destination already exists the request fails
+  with `400` and the body `File already exists: <name>`. The browser file manager
+  avoids this by reading `/api/files` first and suffixing a colliding name —
+  `MyBook.epub` becomes `MyBook (2).epub`, then `MyBook (3).epub` — comparing
+  names case-insensitively.
+- The book cache for the uploaded path is cleared after a successful upload.
+  Only EPUB, FB2, XTC and TXT paths have a cache; any other extension is a no-op.
 - HTTP upload uses a 4 KB write buffer before flushing to the SD card.
+- An aborted upload closes and deletes the partial file. A write failure (for
+  example a full card) closes the file and returns `400`, but leaves the partial
+  file on the card.
 
 ### `POST /mkdir`
 
@@ -140,6 +178,10 @@ Form parameters:
 | `name` | Yes | - | New folder name |
 | `path` | No | `/` | Parent folder |
 
+Returns `200 Folder created: <name>`. A missing or empty name returns `400`, an
+existing path returns `400 Folder already exists`, and a failed `mkdir` returns
+`500`.
+
 ### `POST /rename`
 
 Renames a file.
@@ -155,8 +197,12 @@ Form parameters:
 | `path` | Yes | Existing file path |
 | `name` | Yes | New file name, not a path |
 
-Only files can be renamed through this endpoint. The old EPUB cache path is
-cleared before the rename.
+Only files can be renamed through this endpoint. `path` is normalised first
+(`.` segments dropped, `..` clamped at the root, a path containing a backslash
+collapsing to `/`). A protected source or target name returns `403`, a missing
+item `404`, and an existing target `409 Target already exists`. A new name that
+contains `/` or `\` returns `400`, and a new name equal to the old one returns
+`200 Name unchanged`. The old path's book cache is cleared before the rename.
 
 ### `POST /move`
 
@@ -173,8 +219,11 @@ Form parameters:
 | `path` | Yes | Existing file path |
 | `dest` | Yes | Existing destination folder |
 
-Only files can be moved through this endpoint. The old EPUB cache path is
-cleared before the move.
+Only files can be moved through this endpoint, and `dest` must be an existing
+folder. Both parameters are normalised as for `/rename`. A protected source or
+destination returns `403`, a missing item or destination `404`, a destination
+that is not a folder `400`, and an existing target `409 Target already exists`.
+The old path's book cache is cleared before the move.
 
 ### `POST /delete`
 
@@ -192,8 +241,13 @@ Form parameters:
 | `path` | Yes, unless `paths` is provided | Single path to delete |
 | `paths` | Yes, unless `path` is provided | JSON array of paths to delete |
 
-Protected items cannot be deleted. Non-empty folders are rejected. EPUB cache
-data for deleted files is cleared.
+Supply either `path` or `paths`, not both. Protected items cannot be deleted.
+Non-empty folders are rejected. The book cache for each deleted file is cleared.
+
+Deletion is per item: the response is `200 All items deleted successfully`, or
+`500` listing each failure with its reason — `(cannot delete root)`,
+`(hidden/system file)`, `(protected file)`, `(not found)`, `(folder not empty)`
+or `(deletion failed)`.
 
 ## Settings API
 
@@ -222,8 +276,15 @@ Example item:
 `value` is always an index into `options`, never the option's text. `fontSize`
 is one of the settings whose `options` are built at request time — they are the
 point sizes the selected font family actually ships, so a family installed at
-10/12/14 offers three options. (`fontFamily` and `dictionaryName` vary the same
-way, from the SD card contents.)
+10/12/14 offers three options. `fontFamily` varies the same way, from the SD
+card contents. The dictionary picker is device-only: it carries no `key`, and
+the web handler passes no dictionary list, so it never appears here.
+
+Which entries are listed also depends on the board. Settings that do not apply
+to the running hardware are dropped before the list is serialized: **Touch
+Reader Controls** and **Reader Menu Style** on a buttons-only board; **Orient
+front buttons**, **Sunlight Fading Fix** and **Short Back to File Browser** on a
+touch board; **Show Reader Menu** on any board without a capacitive Home key.
 
 Types:
 
@@ -252,6 +313,10 @@ Successful response:
 ```text
 Applied 2 setting(s)
 ```
+
+Unknown keys and out-of-range values are ignored and not counted. A missing body
+or invalid JSON returns `400`. All settings are persisted once, after the whole
+payload has been applied.
 
 ## Font Management API
 
@@ -291,14 +356,27 @@ curl -X POST \
   http://crosspoint.local/api/fonts/upload
 ```
 
-The handler validates the family name, `.cpfont` filename, and `CPFONT` magic
-bytes before accepting the file.
+The handler validates the family name (alphanumerics, `-` and `_` only), the
+`.cpfont` filename (spaces are first replaced with `_`; the basename must be
+alphanumerics, `-` and `_`, with no extra dots) and the `CPFONT` magic bytes in
+the first chunk. A file that fails any check is deleted rather than kept.
 
 Successful response:
 
 ```json
 {"ok":true}
 ```
+
+Rejected upload:
+
+```json
+{"error":"Invalid .cpfont file"}
+```
+
+Families are written under `/.fonts/` or `/fonts/`, reusing the root the family
+already lives in; a new family goes to `/.fonts/` unless only `/fonts/` exists.
+After an upload or delete, the font registry is marked dirty and rebuilt on the
+next `GET /api/fonts` or the next time the on-device settings list is built.
 
 ### `POST /api/fonts/delete`
 
@@ -316,6 +394,9 @@ Successful response:
 ```json
 {"ok":true}
 ```
+
+A malformed body returns `400 {"error":"Invalid request"}`; a failed delete
+returns `500 {"error":"Delete failed"}`.
 
 ## OPDS Server API
 
@@ -344,7 +425,10 @@ Response:
 ### `POST /api/opds`
 
 Adds or updates an OPDS server. Include `index` to update an existing entry.
-If `password` is omitted during an update, the existing password is preserved.
+If `password` is omitted during an update, the existing password is preserved; a
+present-but-empty `password` clears it. Up to eight servers can be stored; an add
+beyond the limit returns `400 Cannot add server (limit reached)`, and an
+out-of-range `index` returns `400 Invalid server index`.
 
 ```bash
 curl -X POST \
@@ -391,7 +475,11 @@ Response:
 
 Adds or updates a saved Wi-Fi network. Include `index` to update an existing
 entry. If `password` is omitted during an update, the existing password is
-preserved.
+preserved; an empty password is valid for open networks. A missing `ssid`
+returns `400 SSID is required`. Posting an `ssid` that is already saved updates
+that entry's password instead of adding a second one. Up to eight networks can
+be stored; an add beyond the limit returns `400 Cannot add network (limit
+reached)`, and an out-of-range `index` returns `400 Invalid network index`.
 
 ```bash
 curl -X POST \
@@ -432,6 +520,10 @@ Protocol:
 4. Server sends `PROGRESS:<received>:<total>` every 64 KB or at completion
 5. Server sends `DONE` when complete or `ERROR:<message>` on failure
 
+`<filename>` is everything up to the first `:` after the prefix and `<path>` is
+everything after the second, so a path may itself contain `:`. The size token
+accepts an optional `+` and decimal digits only.
+
 Example session:
 
 ```text
@@ -443,22 +535,32 @@ Server -> PROGRESS:65536:1234567
 Server -> DONE
 ```
 
+A declared size of `0` is a special case: the server creates and closes the empty
+file, clears the book cache and replies `DONE` immediately. There is no `READY`
+and no binary frame in that exchange.
+
 Error messages include:
 
 | Message | Cause |
 |---------|-------|
 | `ERROR:Upload already in progress` | A second upload was started before the first completed |
 | `ERROR:Invalid START format` | Malformed START message or invalid size token |
+| `ERROR:File already exists: <name>` | Destination already exists — WebSocket uploads never overwrite either |
 | `ERROR:Failed to create file` | Destination file could not be opened |
-| `ERROR:No upload in progress` | Binary data arrived without a matching START |
+| `ERROR:No upload in progress` | Binary data arrived without a matching START, or from a client that does not own the active upload |
 | `ERROR:Upload overflow` | Client sent more bytes than declared |
 | `ERROR:Write failed - disk full?` | SD write failed |
 
-Incomplete WebSocket uploads are deleted on disconnect or error.
+Only one upload runs at a time, and only the client that sent `START` may send
+binary frames. Incomplete WebSocket uploads are deleted when that client
+disconnects, on overflow, or on a write error. The book cache for the uploaded
+path is cleared on completion. The browser file manager sends 4 KB chunks and
+waits whenever more than 8 KB is still buffered on the socket.
 
 ## WebDAV
 
-The same HTTP server registers a WebDAV-compatible handler for file manager clients.
+The same HTTP server registers a WebDAV Class 1 handler for file manager clients.
+`OPTIONS` advertises `DAV: 1` and `MS-Author-Via: DAV`.
 
 Supported methods:
 
@@ -466,13 +568,41 @@ Supported methods:
 OPTIONS, GET, HEAD, PUT, DELETE, PROPFIND, MKCOL, MOVE, COPY, LOCK, UNLOCK
 ```
 
+| Method | Behaviour |
+|--------|-----------|
+| `PROPFIND` | `207` multistatus. `Depth: 0` lists the resource itself; `1`, a missing header or `infinity` list one level. |
+| `GET` / `HEAD` | `GET` serves files only; a directory returns `405`. `HEAD` answers `200` for a directory. |
+| `PUT` | Writes `<path>.davtmp`, then renames it into place. `201` for a new file, `204` for a replacement, `500` when the write failed, the parent folder is missing, or the target is an existing directory. |
+| `DELETE` | Files and empty folders. `403` for the root, `404` when missing, `409` for a non-empty folder, `204` on success. |
+| `MKCOL` | `201` on success, `405` if the path exists, `409` if the parent is missing, `415` if a body is sent. |
+| `MOVE` | Files and folders. `403` for the root, `409` when the destination's parent is missing, `412` when the destination exists and `Overwrite: F` was sent; `Overwrite` defaults to true. |
+| `COPY` | Files only — a directory source returns `403`. Same `Overwrite` rules as `MOVE`. |
+| `LOCK` / `UNLOCK` | Accepted for client compatibility only. |
+
 Notes:
 
-- `PUT` writes to a temporary `.davtmp` file first, then renames it into place.
-- Protected paths are rejected.
-- `LOCK` and `UNLOCK` are accepted for client compatibility only. The server
-  does not implement full WebDAV Class 2 locking semantics such as persistent
-  locks or lock discovery.
+- Unlike the HTTP and WebSocket upload endpoints, `PUT`, `MOVE` and `COPY` do
+  replace an existing destination. `PUT` always replaces; `MOVE` and `COPY`
+  honour the `Overwrite` header and refuse with `412` only when it is `F`.
+- Paths are normalised before use: `.` segments are dropped, `..` is clamped at
+  the root, and a path containing a backslash collapses to `/` rather than
+  returning an error.
+- A request URI or `Destination` header that would decode to an embedded NUL
+  (`%00`, and malformed escapes that decode the same way) is rejected: the URI
+  returns `400 Bad Request`, and such a `Destination` is treated as missing.
+- `GET`, `HEAD`, `PUT`, `DELETE`, `MKCOL`, `MOVE` and `COPY` refuse a
+  dot-prefixed segment, `System Volume Information` or `XTCache` **anywhere** in
+  the path with `403`, so `/.crosspoint/settings.json` is unreachable even
+  though only its first segment is hidden. `PROPFIND` does not apply that check
+  to the requested path itself — it only omits protected entries from the
+  children it lists — and `LOCK`/`UNLOCK` do not check paths at all.
+- Modification times are a fixed `Thu, 01 Jan 2024 00:00:00 GMT`; the device has
+  no reliable wall clock for file timestamps.
+- `LOCK` returns the same dummy token `urn:uuid:dummy-lock-token` every time. The
+  server does not implement full WebDAV Class 2 locking semantics such as
+  persistent locks or lock discovery.
+- The book cache is cleared on `PUT`, `DELETE` of a file, and `MOVE`. `COPY`
+  does not clear it.
 
 ## UDP Discovery
 
@@ -497,10 +627,18 @@ The final field is the WebSocket upload port.
 
 - Device creates an open hotspot named `CrossPoint-Reader`.
 - The device shows a Wi-Fi QR code and URL QR code.
-- The fallback IP is typically `192.168.4.1`.
+- Beneath the URL QR code the reader prints its own AP address as a fallback
+  (normally `192.168.4.1`).
 - `/api/status` returns `"mode": "AP"` and `"rssi": 0`.
 
 ### Calibre Wireless
 
 Calibre Wireless starts the same web server in STA mode and displays setup
 instructions plus WebSocket upload progress on the device screen.
+
+### USB Drive
+
+USB Drive, offered under File Transfer on boards built with USB mass-storage
+support (`x4pro`, `x4c`, `papermono`), hands the raw SD card to the host over
+USB. No Wi-Fi is started and none of the endpoints above are available in that
+mode.

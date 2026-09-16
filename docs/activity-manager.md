@@ -101,6 +101,8 @@ class MyActivity final : public Activity {
 
 Note that navigation callbacks like `goBack` are no longer stored — use `finish()` or `activityManager.goHome()` instead.
 
+`src/activities/ActivityWithSubactivity.h` no longer exists in the tree. Every screen derives from `Activity` (`src/activities/Activity.h`), and nesting is expressed through the manager's stack.
+
 ### 2. Replace Navigation Functions
 
 The free functions `exitActivity()` / `enterNewActivity()` in `main.cpp` are gone. Use `ActivityManager` methods:
@@ -151,6 +153,8 @@ Key differences:
 - **`setResult()`** stores a typed result on the child activity
 - **`finish()`** signals the manager to pop the child, call the result handler, and resume the parent
 - The parent is never deleted during this process — it's safely stored on the stack
+- If the stack is empty when something is popped, the manager logs it and calls `goHome()`; there is
+  no state in which `currentActivity` is left null
 
 ### 4. Update `render()` Signature
 
@@ -238,13 +242,15 @@ public:
 };
 ```
 
-This removes `std::function` overhead (~2-4KB per unique signature) and eliminates lifetime risks from captured `this` pointers.
+This removes the stored navigation callbacks and the lifetime risks from their captured `this` pointers.
+
+It does **not** remove `std::function` from the codebase. The result handler passed to `startActivityForResult()` is itself a `std::function`: `using ActivityResultHandler = std::function<void(const ActivityResult&)>;` (`src/activities/ActivityResult.h:86`), stored per activity as `Activity::resultHandler` (`src/activities/Activity.h:24`). Other `std::function` users remain by design — `SettingInfo`'s getters/setters (`src/activities/settings/SettingsActivity.h:55-58`), `OptionPopup` (`src/components/OptionPopup.h:30,252`), the theme row/label callbacks (`src/components/themes/BaseTheme.h:244-247`), `ButtonNavigator::Callback` (`src/util/ButtonNavigator.h:10`), and the FB2 section parser's page/popup callbacks (`lib/Fb2/Fb2/Fb2SectionParser.h:27-28`). Prefer a plain function pointer or a template in new hot-path code (see `src/activities/reader/ReaderUtils.h:198` for the template alternative), but do not treat `std::function` as banned outright — the activity result path depends on it.
 
 ## Technical Details
 
 ### FreeRTOS Task Model
 
-The firmware runs on an ESP32-C3, a single-core RISC-V microcontroller. FreeRTOS provides cooperative and preemptive multitasking on this single core — only one task executes at any moment, and the scheduler switches between tasks at yield points (blocking calls, `vTaskDelay`, `taskYIELD`) or when a tick interrupt promotes a higher-priority task.
+The firmware targets two MCU families. The `default` environment builds for the ESP32-C3, a single-core RISC-V microcontroller; the `sticky`, `x4pro`, `x4c` and `papermono` environments build for the dual-core ESP32-S3. On the single-core C3, FreeRTOS multitasking is an illusion — only one task executes at any moment, and the scheduler switches between tasks at yield points (blocking calls, `vTaskDelay`, `taskYIELD`) or when a tick interrupt promotes a higher-priority task. The S3 has a second core, but the two tasks below do not use it to run in parallel: the Arduino `loopTask` is pinned to `ARDUINO_RUNNING_CORE`, which the S3 Arduino build sets to core 1, and the render task is pinned to core 1 as well. They interleave on one core on every board. The render mutex is load-bearing anyway — both tasks sit at priority 1, so the tick can preempt one mid-update in favour of the other.
 
 There are two tasks relevant to the activity system:
 
@@ -264,9 +270,25 @@ There are two tasks relevant to the activity system:
 └──────────────────────┘     └──────────────────────────┘
 ```
 
-Both tasks run at priority 1. Since the ESP32-C3 is single-core, they alternate execution: the main task runs `loop()`, then at the end of the loop iteration, notifies the render task if an update was requested. The render task wakes, acquires the mutex, calls `render()`, releases the mutex, and blocks again.
+Both tasks run at priority 1, and the render task gets an 8192-byte stack. They alternate execution: the main task runs `loop()`, then at the end of the loop iteration notifies the render task if an update was requested. The render task wakes, acquires the mutex, calls `render()`, releases the mutex, and blocks again.
 
-Do not use `xTaskCreate` inside activities. If you have a use case that seems to require a background task, open a discussion to propose a lifecycle-aware `Worker` abstraction first.
+`ActivityManager::begin()` creates it with `xTaskCreatePinnedToCore()` rather than `xTaskCreate()`:
+
+```cpp
+#if defined(configNUM_CORES) && configNUM_CORES > 1
+  constexpr BaseType_t renderTaskCore = 1;
+#else
+  constexpr BaseType_t renderTaskCore = 0;
+#endif
+xTaskCreatePinnedToCore(&renderTaskTrampoline, "ActivityManagerRender", 8192, this, 1, &renderTaskHandle,
+                        renderTaskCore);
+```
+
+On the dual-core S3 boards this keeps long renders and cover decodes on core 1, away from core 0's idle watchdog (`src/activities/ActivityManager.cpp:42`); on the C3 core 0 is the only core there is, so the same call behaves exactly like the old `xTaskCreate()`. Nothing about an activity's code changes between the two — the mutex discipline below is what makes it safe either way.
+
+Before each `render()` the render task also takes a `HalPowerManager::Lock` (so the device cannot drop into low-power mode mid-render) and applies night mode as a global output polarity via `display.setInverted(SETTINGS.screenInverted != 0)`. Activities do not apply the inversion themselves; the one exception is the sleep screen, which forces normal polarity from inside `SleepActivity`.
+
+Do not use `xTaskCreate` inside activities — no activity in the tree does, and the `ActivityManager` neither tracks nor cleans up tasks it did not create. If you have a use case that seems to require a background task, open a Discussion first ([GOVERNANCE.md](../GOVERNANCE.md)).
 
 ### The Render Mutex and RenderLock
 
@@ -283,8 +305,11 @@ public:
   explicit RenderLock(Activity&);  // same — Activity& param kept for compatibility
   ~RenderLock();                   // releases mutex if still held
   void unlock();                   // early release
+  static bool peek();              // true while the rendering mutex is held by anyone
 };
 ```
+
+`RenderLock::peek()` is a non-blocking probe: it reports whether the rendering mutex is currently taken, without taking it. Readers use `!RenderLock::peek()` to gate opportunistic background work (idle pre-warm, partial section rebuilds) so it only starts when no render is in flight — see `src/activities/reader/EpubReaderActivity.cpp:333,357,371`.
 
 **Usage patterns:**
 
@@ -353,9 +378,13 @@ caller's task handle.
 Calling Task                 Render Task
 ────────────                 ───────────
 requestUpdateAndWait()
+  ├─ return if no render task
+  ├─ taskENTER_CRITICAL
+  │  store waitingTaskHandle
+  │  taskEXIT_CRITICAL
   ├─ assert: not render task
+  ├─ assert: not already waiting
   ├─ assert: not holding RenderLock
-  ├─ store waitingTaskHandle
   ├─ xTaskNotify(renderTask)  → wakes render task
   └─ ulTaskNotifyTake() ─┐
      (blocked)           │    RenderLock lock;
@@ -383,12 +412,12 @@ activityManager.replaceActivity(make_unique<MyActivity>(...))
 ║  pendingActivity = MyActivity                     ║
 ╚═══════════════════════════════════════════════════╝
   │
-  ▼ (next loop iteration)
+  ▼ (after currentActivity->loop() returns, same loop() pass)
   ActivityManager::loop()
   │
   ├── currentActivity->loop()     // old activity's last loop
   │
-  ├── process pending action:
+  ├── drain pending actions:      // while (pendingAction != None)
   │   ├── RenderLock lock;
   │   ├── oldActivity->onExit()   // cleanup under lock
   │   ├── delete oldActivity
@@ -413,7 +442,7 @@ Parent calls: startActivityForResult(make_unique<Child>(...), handler)
 ║  parent->resultHandler = handler    ║
 ╚══════════════════════════════════════╝
   │
-  ▼ (next loop iteration)
+  ▼ (after the parent's loop() returns, same loop() pass)
   ├── Parent moved to stackActivities[]
   ├── currentActivity = Child
   └── Child->onEnter()
@@ -428,7 +457,7 @@ Child calls: setResult(MyResult{...}); finish();
 ║  child->result = MyResult{...}      ║
 ╚══════════════════════════════════════╝
   │
-  ▼ (next loop iteration)
+  ▼ (after the child's loop() returns, same loop() pass)
   ├── result = child->result
   ├── Child->onExit(); delete Child
   ├── currentActivity = Parent (popped from stack)
@@ -436,13 +465,17 @@ Child calls: setResult(MyResult{...}); finish();
   └── requestUpdate()   // automatic re-render for parent
 ```
 
+Pending actions are **not** deferred to the next Arduino `loop()`. `ActivityManager::loop()` runs `currentActivity->loop()` and then drains `pendingAction` in a `while` loop before it returns, so a push, pop or replace requested from `loop()` takes effect in the same pass. The drain is a loop because a result handler or an `onEnter()` may itself request the next action.
+
+Two paths do defer to the next pass: an exclusive-storage activity (`requiresExclusiveStorageLoop()`, e.g. USB Drive) returns before the drain so nothing can navigate away while the USB host owns the raw SD card, and the Home-gesture / frontlight-panel branches return early after queueing their action.
+
 ### Common Pitfalls
 
-**Calling `finish()` and continuing to access `this`**: `finish()` sets `pendingAction = Pop` but does not immediately destroy the activity. The activity is destroyed on the next `ActivityManager::loop()` iteration. It's safe to access member variables after `finish()` within the same function, but don't rely on the activity surviving past the current `loop()` call.
+**Calling `finish()` and continuing to access `this`**: `finish()` sets `pendingAction = Pop` but does not immediately destroy the activity. Destruction happens once your `loop()` returns and `ActivityManager::loop()` drains the pending action — still inside the same `ActivityManager::loop()` pass. It's safe to access member variables after `finish()` within the same function, but don't rely on the activity surviving past the current `loop()` call.
 
 **Modifying shared state without `RenderLock`**: If `render()` reads a variable and `loop()` writes it, the write must be under a `RenderLock`. Without it, `render()` could see a half-written value (e.g., a partially updated string or struct).
 
-**Creating background tasks that outlive the activity**: Any FreeRTOS task created in `onEnter()` must be deleted in `onExit()` before the activity is destroyed. The `ActivityManager` does not track or clean up background tasks.
+**Creating background tasks that outlive the activity**: the render task is the only FreeRTOS task the activity system creates (`ActivityManager::begin()`), and no activity in the tree calls `xTaskCreate` itself. If you nonetheless add one, it must be deleted in `onExit()` before the activity is destroyed — the `ActivityManager` does not track or clean up background tasks.
 
 **Holding `RenderLock` across blocking calls**: The render task is blocked on the mutex while you hold the lock. Keep critical sections short — acquire, mutate state, release, then do blocking work.
 

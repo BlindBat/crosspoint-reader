@@ -18,7 +18,9 @@ hanging, and so we enter the stricter phases with a clean slate.
 * **RTL support PRs.** The in-flight right-to-left work was reviewed, iterated, and merged.
 * **Dictionary PR.** The offline dictionary lookup work was reviewed and merged.
 * **Bookmarks** feature. First-class navigation markers in EPUBs.
-* ~~**Transparent sleep screens.**~~ Shelved; not picked back up under the stricter phases.
+* **Transparent sleep screens.** Shipped as the Transparent sleep screen mode: it retains the current frame and
+  composites an overlay from `/sleep-overlay.bmp`, `/sleep-overlay.png` or a random file in `/.sleep-overlay/`,
+  falling back to the default sleep screen when no usable overlay is found.
 
 Phase 0 is closed. The tighter scope in [SCOPE.md](SCOPE.md) is now fully enforced. "But it was on the old roadmap"
 is not a valid argument for accepting a PR.
@@ -37,7 +39,7 @@ CrossPoint runs cleanly on ESP32-based e-reader hardware beyond Xteink (X3 / X4)
 * Refactors that tighten the HAL / SDK boundary.
 * ~~Pluggable per-device SDK layers (display, input, storage, battery) and per-device build configuration without
   forking the reader core.~~ **Done.** CrossPoint now builds for and runs on multiple device targets beyond the
-  Xteink X3 / X4, including ESP32-S3 class hardware (X4 Pro, PaperMono, Seeed Sticky).
+  Xteink X3 / X4, including ESP32-S3 class hardware (X4 Pro, X4 Classic, PaperMono, Seeed Sticky).
 * Adding support for a new device is done in the [FreeInk SDK](https://freeink.org) first (display, input,
   storage, battery drivers), followed by a commit to this repo adding board support (build environment and
   device configuration).
@@ -62,7 +64,7 @@ flash.
   script grouping, and CJK support are shipped (see [docs/sd-card-fonts.md](docs/sd-card-fonts.md)).
 * ~~UI languages and localization.~~ **Landed early.** The UI ships with 30+ translations, including RTL languages,
   and continues to receive improvements.
-* Moving themes off-firmware to SD-loaded assets (see SCOPE.md Section 6).
+* Moving themes off-firmware to SD-loaded assets (see SCOPE.md Section 5, "Theme System: Move Themes Off-Firmware").
 * **SD-loaded plugins.** Extend the device from the SD card without growing the firmware: plugin packages that add
   integrations and connectors, running through the web server and a whitelisted job queue instead of compiled-in
   code. This is how new "talk to a server" functionality gets added without paying the flash and RAM cost in the

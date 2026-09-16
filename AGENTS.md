@@ -1,6 +1,6 @@
 # CrossPoint Reader Development Guide
 
-Project: Open-source e-reader firmware for Xteink X4 (ESP32-C3)
+Project: Open-source e-reader firmware for the Xteink X4/X3 (ESP32-C3) and the ESP32-S3 boards Seeed Sticky, Xteink X4 Pro, Xteink X4 Classic and M5Stack Paper Mono
 Mission: Provide a lightweight, high-performance reading experience focused on EPUB rendering on constrained hardware.
 
 ## AI Agent Identity and Cognitive Rules
@@ -48,9 +48,9 @@ Never invoke or probe `clang-format` directly. The repository wrapper is the onl
 
 ### Hardware Specs
 
-* MCUs: ESP32-C3 (single-core RISC-V @ 160MHz) and ESP32-S3 (`sticky`, dual-core Xtensa LX7)
+* MCUs: ESP32-C3 (single-core RISC-V @ 160MHz; X4 and X3, one binary, runtime-detected) and ESP32-S3 (dual-core Xtensa LX7; `sticky`, `x4pro`, `x4c`, `papermono`)
 * RAM: ~380KB usable on ESP32-C3 (VERY LIMITED - primary project constraint)
-  * **NO PSRAM on C3**.
+  * **NO PSRAM on C3**. `sticky` also runs without PSRAM (the 48KB framebuffer fits in DRAM); `x4pro`, `x4c` and `papermono` build with `BOARD_HAS_PSRAM`.
   * **Single Buffer Mode**: Only ONE 48KB framebuffer (not double-buffered)
 * Flash: 16MB (Instruction storage and static data)
 * Display: 800x480 E-Ink (Slow refresh, monochrome, 1-2s full update)
@@ -79,11 +79,11 @@ Never invoke or probe `clang-format` directly. The repository wrapper is the onl
 
 1. **VS Code Extension** (Recommended):
    
-   * Extension ID: `platformio.platformio-ide` (see `.vscode/extensions.json`)
+   * Extension ID: `platformio.platformio-ide`
    
    * Provides: Toolbar buttons, IntelliSense, integrated build/upload/monitor
    
-   * Configuration: `.vscode/c_cpp_properties.json`, `.vscode/tasks.json`
+   * Configuration: `.vscode/` is gitignored, so any editor config is local-only and not part of the repo
    
    * Usage: Click Build (✓), Upload (→), or Monitor (🔌) buttons
 
@@ -105,13 +105,17 @@ Never invoke or probe `clang-format` directly. The repository wrapper is the onl
 
 ### Build Environment
 
-* **Standard**: C++20 (`-std=c++2a`). No Exceptions, No RTTI.
+* **Standard**: C++20 (`-std=gnu++2a`, with `-std=gnu++11` in `build_unflags`). No exceptions: `-fno-exceptions` is set and `-fexceptions` unflagged.
 * **Logging**: ALWAYS use `LOG_INF`, `LOG_DBG`, or `LOG_ERR` from `Logging.h`. Raw Serial output is deprecated.
-* **Environments** (in `platformio.ini`):
-  * `default`: Development (LOG_LEVEL=2, serial enabled)
-  * `gh_release`: Production (LOG_LEVEL=0)
-  * `gh_release_rc`: Release candidate (LOG_LEVEL=1)
-  * `slim`: Minimal build (no serial logging)
+* **Environments** (in `platformio.ini`): one binary per MCU family, so every S3 board has its own environment.
+  * **ESP32-C3** (`FREEINK_DEVICE_X4` + `FREEINK_DEVICE_X3`, one binary for both, runtime-detected):
+    * `default`: Development (LOG_LEVEL=2, serial enabled)
+    * `gh_release`: Production (LOG_LEVEL=1)
+    * `gh_release_rc`: Release candidate (LOG_LEVEL=1)
+    * `slim`: Minimal build (`-UENABLE_SERIAL_LOG`, so no logging is compiled in at all)
+  * **ESP32-S3**: `sticky` (Seeed Sticky), `x4pro` (Xteink X4 Pro), `x4c` (Xteink X4 Classic) and `papermono` (M5Stack Paper Mono). Each is a development environment (LOG_LEVEL=2) and each has `-gh_release` and `-gh_release_rc` variants (e.g. `sticky-gh_release`, `x4c-gh_release_rc`) at LOG_LEVEL=1.
+  * `LOG_LEVEL` semantics: 0 = ERR only, 1 = ERR + INF, 2 = ERR + INF + DBG; unset defaults to 0 ([lib/Logging/Logging.h:15-32](lib/Logging/Logging.h)). Logging is only compiled in when `ENABLE_SERIAL_LOG` is defined.
+  * `scripts/git_branch.py` injects a `<version>-dev-<branch>-<sha>` `CROSSPOINT_VERSION` for the five environments in `DEV_ENVS` — `default`, `sticky`, `x4pro`, `x4c`, `papermono` ([scripts/git_branch.py:81](scripts/git_branch.py)). Every other environment takes the `CROSSPOINT_VERSION` set in `platformio.ini`. The development environments deliberately carry no `CROSSPOINT_VERSION` in the ini, so the script's value is the only definition.
 
 ### Critical Build Flags
 
@@ -123,10 +127,14 @@ These flags in `platformio.ini` fundamentally affect firmware behavior:
 -DARDUINO_USB_CDC_ON_BOOT=1          // Serial available immediately at boot
 -DXML_CONTEXT_BYTES=1024             // XML parser memory limit (EPUB parsing)
 -DUSE_UTF8_LONG_NAMES=1              // SD card long filename support
--DMINIZ_NO_ZLIB_COMPATIBLE_NAMES=1   // Avoid zlib name conflicts
 -DXML_GE=0                           // Disable XML general entities (security)
 -DDESTRUCTOR_CLOSES_FILE=1           // FsFile destructor auto-closes (SdFat)
+-DFREEINK_CAP_USB_MSC=1              // USB Mass Storage (x4pro / x4c / papermono only)
+-DBOARD_HAS_PSRAM                    // S3 boards with PSRAM (x4pro / x4c / papermono)
+-DUSE_BLOCK_DEVICE_INTERFACE=1       // Native 1-bit SDMMC via SdFat (x4pro / x4c / papermono)
 ```
+
+**Not a build flag**: miniz is configured by a header, not `platformio.ini`. `MINIZ_NO_ZLIB_COMPATIBLE_NAMES` — along with `MINIZ_NO_STDIO`, `MINIZ_NO_TIME`, `MINIZ_NO_ARCHIVE_APIS`, `MINIZ_NO_ARCHIVE_WRITING_APIS` and `MINIZ_NO_DEFLATE_APIS` — is defined in [lib/miniz/src/MinizConfig.h:8-13](lib/miniz/src/MinizConfig.h). Include `MinizConfig.h` rather than `<miniz.h>` so every translation unit sees the same configuration; the same header renames `tinfl_*` to `crosspoint_tinfl_*` so the linker cannot silently bind to the ESP32 mask ROM's incompatible copy ([lib/miniz/src/MinizConfig.h:15-25](lib/miniz/src/MinizConfig.h)).
 
 **DESTRUCTOR_CLOSES_FILE implications**:
 
@@ -143,30 +151,41 @@ These flags in `platformio.ini` fundamentally affect firmware behavior:
 **SINGLE_BUFFER_MODE implications**:
 
 - Only ONE framebuffer exists (not double-buffered)
-- Grayscale rendering requires temporary buffer allocation (`renderer.storeBwBuffer()`)
-- Must call `renderer.restoreBwBuffer()` to free temporary buffers
-- See [lib/GfxRenderer/GfxRenderer.cpp:439-440](lib/GfxRenderer/GfxRenderer.cpp) for malloc usage
+- Grayscale (anti-aliased) rendering therefore has **two distinct paths**, and they are not interchangeable:
+  
+  1. **Strip (tiled) grayscale** — gated by `renderer.supportsStripGrayscale()`. Each grey plane is rendered one horizontal band at a time into a caller-owned scratch strip via `beginStripTarget()` / `endStripTarget()` and streamed straight to controller RAM with `writeGrayscalePlaneStrip()`. The BW framebuffer is never overwritten, so **no snapshot is taken and `storeBwBuffer()` is not called**. The reader uses 80-row bands. See `GfxRenderer::beginStripTarget` and the tiled branch of `EpubReaderActivity`'s page render.
+  
+  2. **Snapshot grayscale** — every other panel. `renderer.storeBwBuffer()` copies the framebuffer into heap chunks of `BW_BUFFER_CHUNK_SIZE` (8,000 bytes) so no 48KB *contiguous* block is needed; the grey planes are then rendered over the framebuffer, and `renderer.restoreBwBuffer()` copies it back and frees the chunks. `storeBwBuffer()` returns **false** on allocation failure — callers must skip anti-aliasing for that page rather than proceed.
+- `restoreBwBuffer(resyncPanelBaseline = true)` also rewrites the controller's differential baseline. Pass `false` when the glass shows content painted *after* the snapshot (overlay chrome), or the next differential update will leave that content on screen.
+- Raw `malloc`/`free` inside `GfxRenderer` is confined to `drawBitmap()` / `drawBitmap1Bit()` (scaling row buffers), `fillPolygon()` (scanline node array) and `storeBwBuffer()` (the BW snapshot chunks). Everything else uses `makeUniqueNoThrow`.
 
 ### Directory Structure
 
 * lib/: Internal libraries (Epub engine, GfxRenderer, UITheme, I18n)
-  * lib/hal/: Hardware Abstraction Layer (HalDisplay, HalGPIO, HalStorage)
+  * lib/hal/: Hardware Abstraction Layer (HalClock, HalDisplay, HalFrontlight, HalGPIO, HalPowerManager, HalStorage, HalSystem, HalTiltSensor)
   * lib/I18n/: Internationalization (translations in `translations/*.yaml`, generated string tables)
 * src/activities/: UI logic using the Activity Lifecycle (onEnter, loop, onExit)
 * freeink-sdk/: Low-level SDK (EInkDisplay, InputManager, BatteryMonitor, SDCardManager)
-* .crosspoint/: SD-based binary cache for EPUB metadata and pre-rendered layout sections
+* .crosspoint/: SD-based store for the `PersistableStore` JSON files (`settings.json`, `state.json`, `wifi.json`, `opds.json`, `recent.json`, `koreader.json`) and the per-book binary caches (`epub_`/`fb2_`/`txt_`/`xtc_` prefixed)
 
 ### Hardware Abstraction Layer (HAL)
 
 **CRITICAL**: Always use HAL classes, NOT SDK classes directly.
 
-| HAL Class    | Wraps SDK Class | Purpose               | Singleton Macro |
-| ------------ | --------------- | --------------------- | --------------- |
-| `HalDisplay` | `EInkDisplay`   | E-ink display control | *(none)*        |
-| `HalGPIO`    | `InputManager`  | Button input handling | *(none)*        |
-| `HalStorage` | `SDCardManager` | SD card file I/O      | `Storage`       |
+| HAL Class         | Wraps SDK Class                 | Purpose                                            | Singleton access          |
+| ----------------- | ------------------------------- | -------------------------------------------------- | ------------------------- |
+| `HalClock`        | `Rtc`                           | RTC read/format, NTP sync                          | `halClock` (extern)       |
+| `HalDisplay`      | `EInkDisplay`                   | E-ink display control                              | `display` (extern)        |
+| `HalFrontlight`   | `FrontlightManager`             | Frontlight brightness / warmth                     | `Frontlight` (macro)      |
+| `HalGPIO`         | `InputManager`                  | Button input handling, pin map                     | `gpio` (extern)           |
+| `HalPowerManager` | `BatteryMonitor`, `InputManager`| CPU frequency, battery %, deep sleep               | `powerManager` (extern)   |
+| `HalStorage`      | `SDCardManager`, `UsbMassStorage` | SD card file I/O (+ USB MSC where supported)      | `Storage` (macro)         |
+| `HalSystem`       | *(ESP panic handler + SD)*      | Panic capture/dump, reboot-from-panic detection    | *(free functions in the `HalSystem` namespace)* |
+| `HalTiltSensor`   | `Imu`                           | Tilt gesture detection for page turns              | `halTiltSensor` (extern)  |
 
 **Location**: [lib/hal/](lib/hal/)
+
+Several of these are **board-gated**. `HalFrontlight` reports `present() == false` and is inert on boards without a frontlight; `HalClock` and `HalTiltSensor` expose `isAvailable()` and must be checked before use; `HalStorage`'s USB Mass Storage path is compiled only under `FREEINK_CAP_USB_MSC`. Check `BoardConfig` capabilities / `FREEINK_DEVICE_*` before assuming a feature exists on every board.
 
 **Why HAL?**
 
@@ -192,7 +211,9 @@ if (Storage.openFileForRead("MODULE", "/path/to/file.bin", file)) {
 **SdFat is not thread-safe; all SD access MUST go through HalStorage**:
 
 - SdFat's `SdSpiCard` tracks SPI bus state with an unsynchronized `m_spiActive` bool. Two tasks calling SdFat concurrently can confuse that state machine and end with one task calling `SPIClass::endTransaction()` against a paramLock the *other* task is holding. That trips FreeRTOS's `xTaskPriorityDisinherit` assert (`tasks.c:5156, pxTCB == pxCurrentTCBs[0]`) and panics the system. See SdFat issue #518.
-- `HalStorage` serializes everything via `storageMutex`. Downstream code uses `HalFile` (declared in `<HalStorage.h>`); every method call (read, write, seek, close) takes the mutex. `HalFile`'s destructor also takes the mutex before letting the underlying SdFat `FsFile` close.
+- `HalStorage` serializes everything via `storageMutex`, a **recursive** mutex so the same task can re-enter `StorageLock` without self-deadlock. Downstream code uses `HalFile` (declared in `<HalStorage.h>`); every method that touches the card — `read`, `write`, `seek*`, `available`, `position`, `rename`, `flush`, `getName`, `close`, `openNextFile`, `rewindDirectory` — takes the mutex. `HalFile`'s destructor also takes the mutex before letting the underlying SdFat `FsFile` close.
+- **Exception — lock-free accessors**: `size()`, `fileSize()`, `fileSize64()`, `isDirectory()`, `isOpen()` and `operator bool()` forward to SdFat *without* taking the mutex. They only read state already cached in memory, so they are safe to call from any task and cheap in hot loops ([lib/hal/HalStorage.cpp:247-249, 260-262, 275-277, 294-295](lib/hal/HalStorage.cpp)). Do not add locking around them, and do not assume any other accessor is free.
+- A default-constructed or moved-from `HalFile` has no `Impl`; every accessor built on `HAL_FILE_GUARD` then logs `LOG_ERR` and returns a fail value rather than dereferencing, so a bad handle degrades instead of aborting on device ([lib/hal/HalStorage.cpp:234-241](lib/hal/HalStorage.cpp)). The hand-written `flush()`, `rewindDirectory()` and `isOpen()` return silently instead.
 - **Never** call into `SdFat` / `SdSpiCard` / `FsBaseFile` / `SDCardManager` / raw `FsFile` directly — that bypasses the mutex.
 
 ---
@@ -307,14 +328,12 @@ When a template is necessary, limit instantiations: use explicit template instan
 
 ### Error Handling Philosophy
 
-**Source**: [src/main.cpp:132-143](src/main.cpp), [lib/GfxRenderer/GfxRenderer.cpp:10](lib/GfxRenderer/GfxRenderer.cpp)
-
 **Pattern Hierarchy**:
 
 1. **LOG_ERR + return false** (90%): `LOG_ERR("MOD", "Failed: %s", reason); return false;`
 2. **LOG_ERR + fallback**: `LOG_ERR("MOD", "Unavailable"); useDefault();`
-3. **assert(false)**: Only for fatal "impossible" states (framebuffer missing)
-4. **ESP.restart()**: Only for recovery (OTA complete)
+3. **assert(false)**: Only for fatal "impossible" states — the one in-tree use is a missing framebuffer in `GfxRenderer::begin()` ([lib/GfxRenderer/GfxRenderer.cpp:120-125](lib/GfxRenderer/GfxRenderer.cpp))
+4. **ESP.restart()**: Reserved for deliberate reboots, not error handling. In-tree uses are firmware update completion (`OtaUpdateActivity`, `SdFirmwareUpdateActivity`), the heap-defrag silent restarts and the USB-storage handoff in `src/main.cpp`, and one backstop after a failed framebuffer restore ([lib/GfxRenderer/GfxRenderer.cpp:170](lib/GfxRenderer/GfxRenderer.cpp))
 
 **Rules**: NO exceptions, NO abort(), ALWAYS log before error return
 
@@ -357,8 +376,8 @@ sdkApiThatTakesOwnership(buffer, bufferSize);  // SDK calls free() / delete[]
 **Examples in codebase**:
 
 - Memory utilities: [Memory.h](lib/Memory/Memory.h) (`makeUniqueNoThrow`)
-- Cover image buffers: [HomeActivity.cpp:166](src/activities/home/HomeActivity.cpp)
-- Bitmap rendering: [GfxRenderer.cpp:439-440](lib/GfxRenderer/GfxRenderer.cpp)
+- Cover image buffers: `coverBuffer` in [HomeActivity.cpp](src/activities/home/HomeActivity.cpp)
+- Bitmap rendering: the scaling row buffers in `GfxRenderer::drawBitmap()` / `drawBitmap1Bit()`, and the BW snapshot chunks in `GfxRenderer::storeBwBuffer()` ([GfxRenderer.cpp](lib/GfxRenderer/GfxRenderer.cpp))
 
 ### Heap Allocation with `new`: Always Use `makeUniqueNoThrow`
 
@@ -410,7 +429,7 @@ sdkApiThatTakesOwnership(obj);  // SDK calls delete
 
 ### Logical Button Mapping
 
-**Source**: [src/MappedInputManager.cpp:20-55](src/MappedInputManager.cpp)
+**Source**: `MappedInputManager::mapButton()`, [src/MappedInputManager.cpp:62-123](src/MappedInputManager.cpp)
 
 Constraint: Physical button positions are fixed on hardware, but their logical functions change based on user settings and screen orientation.
 
@@ -437,6 +456,16 @@ Constraint: Physical button positions are fixed on hardware, but their logical f
    - `Button::PageBack` → Uses side button (swappable via `SETTINGS.sideButtonLayout`)
    
    - `Button::PageForward` → Uses side button (swappable)
+   
+   - `SETTINGS.sideButtonLayout == SIDE_BUTTONS_DISABLED` makes both return `false`
+
+4. **Derived** (no hardware button of their own):
+   
+   - `Button::Power` → Always `HalGPIO::BTN_POWER`, bypasses remapping
+   
+   - `Button::NavNext` / `NavPrevious` → side Down/Up **or** front Right/Left, axis-flipped by `isNavDirectionSwapped()`
+   
+   - `Button::ScreenLeft` / `ScreenRight` / `ScreenUp` / `ScreenDown` → screen-space directions remapped through `mapScreenDirection()` per `renderer.getOrientation()`, honouring `SETTINGS.frontButtonFollowOrientation`
 
 **Implementation**:
 
@@ -461,100 +490,120 @@ Constraint: Physical button positions are fixed on hardware, but their logical f
 **Available Singletons**:
 
 ```cpp
-#define SETTINGS CrossPointSettings::getInstance()  // User settings
-#define APP_STATE CrossPointState::getInstance()    // Runtime state
-#define GUI UITheme::getInstance()                   // Current theme
-#define Storage HalStorage::getInstance()            // SD card I/O
-#define I18N I18n::getInstance()                     // Internationalization
+#define SETTINGS CrossPointSettings::getInstance()      // User settings
+#define APP_STATE CrossPointState::getInstance()        // Runtime state
+#define GUI UITheme::getInstance().getTheme()           // Current theme (the Theme, not the UITheme)
+#define Storage HalStorage::getInstance()               // SD card I/O
+#define I18N I18n::getInstance()                        // Internationalization
 ```
+
+`activityManager` is a plain `extern` global rather than a macro ([src/activities/ActivityManager.h:120](src/activities/ActivityManager.h)); so are the HAL singletons listed in the HAL table above.
 
 ### Activity Lifecycle and Memory Management
 
-**Source**: [src/main.cpp:132-143](src/main.cpp)
+**Source**: [src/activities/ActivityManager.h](src/activities/ActivityManager.h), [src/activities/ActivityManager.cpp](src/activities/ActivityManager.cpp)
 
-**CRITICAL**: Activities are **heap-allocated** and **deleted on exit**.
+**CRITICAL**: Activities are **heap-allocated** and **destroyed on exit**. Ownership lives in the `activityManager` singleton, not in `main.cpp`:
 
 ```cpp
-// main.cpp navigation pattern
-void exitActivity() {
+// ActivityManager owns exactly one current activity plus a stack of suspended ones
+std::vector<std::unique_ptr<Activity>> stackActivities;
+std::unique_ptr<Activity> currentActivity;
+
+void ActivityManager::exitActivity(const RenderLock& lock) {
   if (currentActivity) {
     currentActivity->onExit();
-    delete currentActivity;  // Activity deleted here!
-    currentActivity = nullptr;
+    currentActivity.reset();  // Activity destroyed here
   }
-}
-
-void enterNewActivity(Activity* activity) {
-  currentActivity = activity;  // Heap-allocated activity
-  currentActivity->onEnter();
 }
 ```
 
+**Navigation API** — activities never touch `currentActivity` themselves:
+
+- `activityManager.replaceActivity(...)` and the `goTo…()` / `goHome()` wrappers destroy the current activity and clear the stack
+- `pushActivity()` moves the current activity onto `stackActivities` instead of destroying it. It does **not** get `onExit()` — it keeps every buffer it allocated. `popActivity()` runs `onExit()` on the top one, destroys it, and restores the one beneath (or goes home when the stack is empty)
+- From inside an activity, use `startActivityForResult()` / `setResult()` / `finish()` ([src/activities/Activity.h:57-64](src/activities/Activity.h))
+- Navigation requested from `loop()` is **deferred**: it sets `pendingAction` and is applied after `loop()` returns, so an activity never deletes itself mid-call
+
 **Memory Implications**:
 
-- Activity navigation = `delete` old activity + `new` create next activity
+- Activity navigation = destroy old activity + construct the next one
 - Any memory allocated in `onEnter()` MUST be freed in `onExit()`
-- FreeRTOS tasks MUST be deleted in `onExit()` before activity destruction
-- Member `FsFile` handles MUST be closed in `onExit()` (local `FsFile` variables auto-close via destructor)
+- A pushed activity is *not* destroyed and does not run `onExit()` — budget for its heap staying allocated underneath the sub-activity
+- Member `HalFile` handles MUST be closed in `onExit()` (local `HalFile` variables auto-close via destructor)
 
 **Activity Pattern**:
 
 ```cpp
-void onEnter()  { Activity::onEnter(); /* alloc: buffer, tasks */ render(); }
-void loop()     { mappedInput.update(); /* handle input */ }
-void onExit()   { /* free: vTaskDelete, free buffer, close member FsFiles */ Activity::onExit(); }
+void onEnter()        { Activity::onEnter(); /* alloc buffers */ requestUpdate(); }
+void loop()           { /* read input, mutate state, requestUpdate() */ }
+void render(RenderLock&&) { /* draw; runs on the shared render task */ }
+void onExit()         { Activity::onExit(); /* free buffers, close member HalFiles */ }
 ```
 
-**Critical**: Free resources in reverse order. Delete tasks BEFORE activity destruction.
+`mappedInputManager.update()` is called once per iteration by the Arduino `loop()` in [src/main.cpp:585](src/main.cpp), so activities read button state without polling it themselves.
+
+**Critical**: Free resources in reverse order in `onExit()`.
 
 ### FreeRTOS Task Guidelines
 
-**Source**: [src/activities/util/KeyboardEntryActivity.cpp:45-50](src/activities/util/KeyboardEntryActivity.cpp)
+**Source**: [src/activities/ActivityManager.cpp:32-46](src/activities/ActivityManager.cpp)
 
-**Pattern**: See Activity Lifecycle above. `xTaskCreate(&taskTrampoline, "Name", stackSize, this, 1, &handle)`
+**There is exactly one application-created FreeRTOS task.** `ActivityManager::begin()` spawns the shared render task and nothing else in `src/` or `lib/` calls `xTaskCreate*`:
 
-**Stack Sizing** (in BYTES, not words):
+```cpp
+xTaskCreatePinnedToCore(&renderTaskTrampoline, "ActivityManagerRender",
+                        8192,               // Stack size, in BYTES (ESP-IDF, not words)
+                        this,               // Parameters
+                        1,                  // Priority
+                        &renderTaskHandle,
+                        renderTaskCore);    // Core 1 when configNUM_CORES > 1, else core 0
+```
 
-- **2048**: Simple rendering (most activities)
-- **4096**: Network, EPUB parsing
-- Monitor: `uxTaskGetStackHighWaterMark()` if crashes
+It blocks on `ulTaskNotifyTake()` and renders the current activity under a `RenderLock` whenever `requestUpdate()` fires. Activities therefore do **not** own render tasks: they implement `render(RenderLock&&)` and let the manager schedule it.
 
-**Rules**: Always `vTaskDelete()` in `onExit()` before destruction. Use mutex if shared state.
+**Rules**:
+
+- Do not add a per-activity task. Push work into `render()` or the activity's `loop()` instead
+- `requestUpdate(immediate)` defers or forces a render; `requestUpdateAndWait()` blocks until it completes and must not be called from the render task or while holding a `RenderLock`
+- If a task is ever genuinely needed, `vTaskDelete()` it in `onExit()` before the activity is destroyed, and guard shared state with a mutex
+- Monitor with `uxTaskGetStackHighWaterMark()` if you see crashes
 
 ### Global Font Loading
 
-**Source**: [src/main.cpp:40-115](src/main.cpp)
+**Source**: [src/main.cpp:62-125](src/main.cpp)
 
-**All fonts are loaded as global static objects** at firmware startup:
+**All built-in fonts are loaded as global objects** at firmware startup:
 
 - Noto Serif: 12, 14, 16, 18pt (4 styles each: regular, bold, italic, bold-italic)
 - Noto Sans: 12, 14, 16, 18pt (4 styles each)
-- Ubuntu UI fonts: 10, 12pt (2 styles)
+- Noto Sans 8pt regular, as the single-style `smallFontFamily`
+- Ubuntu UI fonts: 10, 12pt (2 styles: regular, bold)
 
-**Total**: ~80+ global `EpdFont` and `EpdFontFamily` objects
+**Total** (with `OMIT_FONTS` unset): 37 `EpdFont` + 11 `EpdFontFamily` globals
 
 **Compilation Flag**:
 
 ```cpp
 #ifndef OMIT_FONTS
-  // Most fonts loaded here
+  // Everything except notoserif14, smallFont and the two UI families
 #endif
 ```
 
 **Implications**:
 
-- Fonts stored in **Flash** (marked as `static const` in `lib/EpdFont/builtinFonts/`)
-- Font rendering data cached in **DRAM** when first used
+- Glyph data lives in **Flash** (`static const` arrays in `lib/EpdFont/builtinFonts/`)
+- The reader families (Noto Serif / Noto Sans) are 2-bit and DEFLATE-compressed in groups; `FontDecompressor` expands a group into **DRAM** on demand and caches it ([lib/EpdFont/FontDecompressor.h:66-71](lib/EpdFont/FontDecompressor.h)). The Ubuntu UI fonts and `notosans_8_regular` are converted without `--2bit --compress`, so they carry `groups == nullptr` and are read straight from Flash
 - `OMIT_FONTS` can reduce binary size for minimal builds
-- Font IDs defined in [src/fontIds.h](src/fontIds.h)
+- Font IDs are in [src/fontIds.h](src/fontIds.h), which is **generated** by `lib/EpdFont/scripts/build-font-ids.sh` — the IDs are hashes, so never hand-edit them
 
 **Usage**:
 
 ```cpp
 #include "fontIds.h"
 
-renderer.insertFont(FONT_UI_MEDIUM, ui12FontFamily);
-renderer.drawText(FONT_UI_MEDIUM, x, y, "Hello", true);
+renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
+renderer.drawText(UI_12_FONT_ID, x, y, "Hello", true);
 ```
 
 ---
@@ -572,12 +621,16 @@ pio run
 # Build and upload to device
 pio run -t upload
 
-# Build specific environment
+# Build specific environment (C3 default, or an S3 board)
 pio run -e gh_release
+pio run -e sticky
+pio run -e x4pro -t upload
 
 # Clean build artifacts
 pio run -t clean
 ```
+
+**A change is only proven on the family you built.** The C3 and each S3 board are separate binaries; `pio run` alone builds `default` (C3) only.
 
 **Via VS Code**:
 
@@ -775,15 +828,17 @@ Tested in all 4 orientations with 5MB+ files.
 
 **NEVER manually edit these files** - they are regenerated automatically:
 
-1. **HTML Headers** (generated by `scripts/build_html.py`):
+1. **HTML/JS Headers** (generated by `scripts/build_html.py`):
    
-   - `src/network/html/*.generated.h`
+   - `src/network/html/*.generated.h` and `src/network/html/js/*.generated.h`
    
-   - **Source**: HTML templates in `data/html/` directory
+   - **Source**: the `.html` and `.js` files that sit *next to* the generated headers — `src/network/html/{HomePage,FilesPage,FontsPage,SettingsPage}.html` and `src/network/html/js/jszip.min.js`. There is no `data/` directory; the script walks `src/` and writes each header beside its source.
    
    - **Triggered**: During PlatformIO `pre:` build step
    
-   - **To modify**: Edit source HTML in `data/html/`, not generated headers
+   - **What it emits**: the source is minified (HTML only), gzipped at level 9, and written as a `constexpr char[] PROGMEM` byte array plus `…CompressedSize` and `…OriginalSize` constants
+   
+   - **To modify**: Edit the source `.html` / `.js`, not the generated headers
 
 2. **I18n Headers** (generated by `scripts/gen_i18n.py`):
    
@@ -809,9 +864,9 @@ Tested in all 4 orientations with 5MB+ files.
 
 **To change HTML pages**:
 
-1. Edit source: `data/html/<pagename>.html`
+1. Edit source: `src/network/html/<PageName>.html`
 2. Build: `pio run` (auto-triggers `scripts/build_html.py`)
-3. Generated headers update: `src/network/html/<pagename>Html.generated.h`
+3. Generated headers update in place: `src/network/html/<PageName>Html.generated.h`
 4. **Commit ONLY** source HTML, NOT generated `.generated.h` files
 
 **To add/modify translations (i18n)**:
@@ -828,15 +883,15 @@ Tested in all 4 orientations with 5MB+ files.
 ```cpp
 #include <I18n.h>
 // Use tr() macro with StrId enum (defined in generated I18nKeys.h)
-renderer.drawText(FONT_UI, x, y, tr(STR_LOADING), true);
+renderer.drawText(UI_12_FONT_ID, x, y, tr(STR_LOADING), true);
 ```
 
-**To add custom fonts**:
+**To change the built-in fonts**:
 
-1. Place source fonts in `lib/EpdFont/fontsrc/` (gitignored)
-2. Run conversion script (see `lib/EpdFont/README`)
-3. Update global font objects in `src/main.cpp:40-115`
-4. Add font ID constant to `src/fontIds.h`
+1. Place the source TTFs under `lib/EpdFont/builtinFonts/source/<Family>/`
+2. Run `lib/EpdFont/scripts/convert-builtin-fonts.sh`, which calls `fontconvert.py` per face and rewrites `lib/EpdFont/builtinFonts/<name>.h`. Reader faces are generated with `--2bit --compress --pnum --zopfli`; UI faces are not
+3. Regenerate the IDs: `lib/EpdFont/scripts/build-font-ids.sh` prints the whole of `src/fontIds.h` to stdout. The IDs are SHA-256 digests of the generated headers, so they change whenever a face is reconverted
+4. Update the global font objects in [src/main.cpp:62-125](src/main.cpp) and the `insertFont()` calls that follow
 
 ---
 
@@ -903,19 +958,32 @@ build_flags =
 
 **GitHub Actions** run automatically on pull requests:
 
-| Workflow      | File                                        | Purpose                |
-| ------------- | ------------------------------------------- | ---------------------- |
-| Build Check   | `.github/workflows/ci.yml`                  | Verifies code compiles |
-| Format Check  | `.github/workflows/pr-formatting-check.yml` | Validates clang-format |
-| Release Build | `.github/workflows/release.yml`             | Production releases    |
-| RC Build      | `.github/workflows/release_candidate.yml`   | Release candidates     |
+| Workflow      | File                                        | Purpose                                                      |
+| ------------- | ------------------------------------------- | ------------------------------------------------------------ |
+| CI (build)    | `.github/workflows/ci.yml`                  | All quality gates: clang-format, cppcheck, firmware builds, unit tests |
+| PR Formatting | `.github/workflows/pr-formatting-check.yml` | **PR title only** — semantic-commit format check              |
+| Release Build | `.github/workflows/release.yml`             | Production releases                                           |
+| RC Build      | `.github/workflows/release_candidate.yml`   | Release candidates                                            |
+| Fonts Release | `.github/workflows/release-fonts.yml`       | Manual (`workflow_dispatch`) SD-card font build and publish   |
+
+**`ci.yml` jobs** (run on PRs and on pushes to `master`):
+
+| Job            | What it does                                                                                        |
+| -------------- | --------------------------------------------------------------------------------------------------- |
+| `clang-format` | Runs `./bin/clang-format-fix` with clang-format-21 and fails if `git diff` is non-empty               |
+| `cppcheck`     | `pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high`                        |
+| `build`        | Matrix build of **five** environments: `default`, `sticky`, `x4pro`, `x4c`, `papermono` — each uploaded as `firmware.bin` / `firmware-<board>.bin` |
+| `unit-tests`   | CMake/Ninja + ctest over `test/`, twice: `plain` and `asan` (`-DCROSSPOINT_SANITIZE=ON`, `ASAN_OPTIONS=detect_leaks=1`) |
+| `test-status`  | Aggregating gate used as the PR required check; fails if any of the above failed or was cancelled     |
 
 **Rules**:
 
 - **Fix CI failures BEFORE** requesting review
-- CI runs on: Push to PR, PR updates
-- Format check fails → Run `./bin/clang-format-fix -g`
-- Build check fails → Fix compile errors
+- `ci.yml` runs on: pull requests, and pushes to `master`
+- `clang-format` job fails → Run `./bin/clang-format-fix -g`
+- `build` job fails → Fix compile errors; note a change can build on C3 and still fail on an S3 board (or vice versa)
+- `unit-tests` job fails → Reproduce locally with `./bin/run-tests` (add `--asan` for the sanitizer variant)
+- `PR Formatting` fails → Your **PR title** is not in semantic-commit form (`feat:`, `fix:`, `chore:`, `docs:`, …); it says nothing about code formatting
 
 ---
 
@@ -943,9 +1011,11 @@ build_flags =
 
 **Location**: `.crosspoint/` directory on SD card root
 
-**Structure**: `.crosspoint/epub_<hash>/{book.bin, progress.bin, cover.bmp, sections/*.bin}`
+**Structure**: `.crosspoint/epub_<hash>/{book.bin, progress.bin, cover.bmp, sections/<n>.bin}`
 
-**Hash**: `std::hash<std::string>{}(filepath)` → Moving/renaming file = new hash = lost progress
+**Per-format prefixes**: `epub_`, `fb2_`, `txt_`, `xtc_` ([src/util/BookCacheUtils.cpp:18-21](src/util/BookCacheUtils.cpp))
+
+**Hash**: `std::hash<std::string>{}(filepath)` ([lib/Epub/Epub.h:43](lib/Epub/Epub.h)) → Moving/renaming file = new hash = lost progress
 
 ### Cache Invalidation Rules
 
@@ -953,21 +1023,21 @@ build_flags =
 
 1. **File format version changes** (see `docs/file-formats.md`)
    
-   - `book.bin` version number incremented
+   - `book.bin` version number incremented (`BOOK_CACHE_VERSION`)
    
-   - `section.bin` version number incremented
-2. **Render settings change**:
+   - `sections/<n>.bin` version number incremented (`SECTION_FILE_VERSION`)
+2. **Render settings change**: section files are keyed on the whole `ReaderRenderSpec`, and *any* differing field discards and rebuilds the file ([lib/Epub/Epub/ReaderRenderSpec.h](lib/Epub/Epub/ReaderRenderSpec.h)). The spec is built by `CrossPointSettings::readerRenderSpec(width, height)` ([src/CrossPointSettings.cpp:263-277](src/CrossPointSettings.cpp)) from:
    
-   - Font family or size (`SETTINGS.fontFamily`, `SETTINGS.fontSize`)
+   - `fontId` — derived from `SETTINGS.fontFamily` + `SETTINGS.fontPointSize`, or from `SETTINGS.sdFontFamilyName` when an SD card font is selected
    
-   - Line spacing (`SETTINGS.lineSpacing`)
+   - `lineCompression` — derived from `SETTINGS.lineSpacing` (and the active family)
    
-   - Paragraph spacing (`SETTINGS.extraParagraphSpacing`)
-   
-   - Screen margins (`SETTINGS.screenMargin`)
-3. **Viewport dimensions change**:
+   - `extraParagraphSpacing`, `paragraphAlignment`, `hyphenationEnabled`, `embeddedStyle`, `imageRendering`, `focusReadingEnabled`
+3. **Viewport dimensions change** (`viewportWidth` / `viewportHeight`, passed in by the reader):
    
    - Screen orientation change
+   
+   - Screen margins (`SETTINGS.screenMargin`), which shrink the viewport
    
    - Display resolution change
 4. **Book file modified**:
@@ -999,24 +1069,33 @@ rm -rf /path/to/sd/.crosspoint/epub_<hash>/sections/
 
 ### Cache File Format Versioning
 
-**Source**: `lib/Epub/Epub/Section.cpp`, `lib/Epub/Epub/BookMetadataCache.cpp`
+**Source**: the constant in each format's own file — the version is the code, not the doc.
 
-**Current Versions** (as of docs/file-formats.md):
+| Cache file                        | Constant                       | Version | Defined in                                                    |
+| --------------------------------- | ------------------------------ | ------- | ------------------------------------------------------------- |
+| `book.bin` (EPUB metadata)        | `BOOK_CACHE_VERSION`           | **10**  | [lib/Epub/Epub/BookMetadataCache.cpp:14](lib/Epub/Epub/BookMetadataCache.cpp) |
+| `sections/<n>.bin` (EPUB layout)  | `SECTION_FILE_VERSION`         | **45**  | [lib/Epub/Epub/Section.cpp:50](lib/Epub/Epub/Section.cpp)      |
+| CSS cache                         | `CssParser::CSS_CACHE_VERSION` | **12**  | [lib/Epub/Epub/css/CssParser.h:53](lib/Epub/Epub/css/CssParser.h) |
+| FB2 metadata                      | `FB2_CACHE_VERSION`            | **2**   | [lib/Fb2/Fb2.cpp:13](lib/Fb2/Fb2.cpp)                          |
+| FB2 section layout                | `FB2_SECTION_FILE_VERSION`     | **4**   | [lib/Fb2/Fb2/Fb2Section.cpp:20](lib/Fb2/Fb2/Fb2Section.cpp)     |
+| TXT page index                    | `CACHE_VERSION`                | **3**   | [lib/Txt/TxtPageIndex.h:15](lib/Txt/TxtPageIndex.h)            |
 
-- `book.bin`: **Version 7** (metadata structure)
-- `section.bin`: **Version 25** (layout structure)
+Section files are named `sections/<spineIndex>.bin`, not `section.bin` ([lib/Epub/Epub/Section.cpp:80](lib/Epub/Epub/Section.cpp)).
 
 **Version Increment Rules**:
 
 1. **ALWAYS increment version** BEFORE changing binary structure
 2. Version mismatch → Cache auto-invalidated and regenerated
 3. Document format changes in `docs/file-formats.md`
+4. `SECTION_FILE_VERSION` has two companion sentinels that must stay consistent with it:
+   - `SECTION_FILE_INCOMPLETE_VERSION` (0) is written first and replaced by the real version as the last step, so an interrupted build is never mistaken for a valid cache
+   - `SECTION_FILE_PARTIAL_VERSION` is *derived* from `SECTION_FILE_VERSION` (`0xFE - (SECTION_FILE_VERSION - 28)`) so it changes in lockstep — do not hardcode it
 
 **Example** (incrementing section format version):
 
 ```cpp
 // lib/Epub/Epub/Section.cpp
-static constexpr uint8_t SECTION_FILE_VERSION = 26;  // Was 25, now 26
+constexpr uint8_t SECTION_FILE_VERSION = 46;  // Was 45, now 46
 
 // Add new field to structure
 struct PageLine {

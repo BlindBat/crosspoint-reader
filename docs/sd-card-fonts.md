@@ -9,17 +9,37 @@ There are three ways to install fonts:
 
 ### Option 1: Download from device (recommended)
 
-1. Connect your CrossPoint reader to Wi-Fi
-2. Go to **Settings > Reader > Manage Fonts**
-3. Browse available font families and tap to download
-4. Downloaded fonts appear immediately in **Settings > Reader > Font Family**
+1. Go to **Settings > Reader > Manage Fonts**. The reader asks you to join a
+   Wi-Fi network before it fetches the font list
+2. If the font list declares script groups, a group screen opens first: **All
+   fonts** plus one row per script, each showing how many families it holds.
+   Pick one to filter the family list below it; **Back** returns to the group
+   screen
+3. Pick a family to download it. Above the families, a **Download All** row
+   appears whenever the current group still has something uninstalled, and an
+   **Update All** row whenever it has an update; both show the combined size
+4. Every downloaded file is verified against the manifest's CRC32 and its
+   `CPFONT` magic bytes. A failed or cancelled download deletes the whole
+   family directory again, so nothing is left half-installed
+5. Picking a family that is already installed and up to date opens a **Delete**
+   confirmation instead. Deleting removes the family from both font roots and,
+   if that family was the active reader font, clears the selection
+6. Leaving the screen disconnects Wi-Fi and silently restarts the reader (this
+   recovers the heap the Wi-Fi session fragmented). Installed families are
+   listed in **Settings > Reader > Text Settings**, under the **Font** tab
 
 ### Option 2: Upload via web browser
 
-1. Start **File Transfer** and connect through **Join Network** or **Create Hotspot**
+1. Start **File Transfer** and connect through **Join a Network** or **Create Hotspot**
 2. Open the web interface URL shown on the reader
 3. Navigate to the **Fonts** tab
 4. Upload `.cpfont` files using the upload form
+
+The page derives the destination family folder from the file name — everything
+before the last `-` or `_` — so the files you upload must be named
+`<Family>_<size>.cpfont`, and every file in one upload has to resolve to the
+same family. Characters outside `A-Za-z0-9_-` are replaced with `_`, and the
+firmware rejects any family or file name that still contains something else.
 
 ### Option 3: Manual SD card copy
 
@@ -36,7 +56,9 @@ There are three ways to install fonts:
    family installed in `/fonts/` shows up even when `/.fonts/` also
    exists, and vice versa. The two roots only collide if the same family
    name appears in both — in that case the copy in `/.fonts/` wins and
-   the duplicate in `/fonts/` is ignored.
+   the duplicate in `/fonts/` is ignored. Downloads and web uploads are
+   written to whichever root already holds that family; for a brand-new
+   family they go to `/.fonts/`, unless only `/fonts/` exists on the card.
 
        SD Card Root/
        ├── .fonts/                     ← Hidden root (preferred)
@@ -50,12 +72,26 @@ There are three ways to install fonts:
                ├── Merriweather_12.cpfont
                └── ...
 
+   The folder name is the family name, and the part of the file name before
+   `_<size>` is ignored: `Literata_14.cpfont` and `Serif_14.cpfont` both
+   register as Literata at 14 pt when they sit in `/.fonts/Literata/`. A file
+   only counts if it ends in exactly `.cpfont` (`Literata_14.cpfont.tmp` and
+   `Literata_14.cpfont~` do not) and its size reads as 1–255. Files and
+   folders whose names start with `.` or `_` are skipped, which keeps macOS
+   `._` resource forks out. If two files in one family claim the same point
+   size, the second one is ignored. At most 128 families are kept, sorted by
+   name. Keep the family folder name to 31 characters or fewer: the reader
+   stores the selected family in a 32-byte field, so a longer name is
+   truncated when saved, no longer matches the folder on disk, and the
+   selection is dropped.
+
 3. Insert the SD card and power on your CrossPoint reader
 
 ## CJK in the User Interface
 
-The built-in UI fonts are Latin-only, so by default the interface (book titles
-in the library, file names in the browser, list rows, headers) shows
+The built-in UI fonts carry no CJK glyphs — they cover Latin (including
+Vietnamese), Cyrillic, Hebrew and Arabic — so by default the interface (book
+titles in the library, file names in the browser, list rows, headers) shows
 replacement boxes for Chinese/Japanese/Korean text even when book *content*
 renders correctly with a selected SD-card font.
 
@@ -65,18 +101,28 @@ the built-in font cannot draw, that whole string is rendered with your selected
 SD-card font instead.
 
 The fallback is **size-matched**. The built-in UI fonts render at 8 pt
-(small/author lines), 10 pt (list rows) and 12 pt (book-cover titles, headers),
-so CrossPoint loads your SD family at those sizes too and maps each UI font to
-its same-size SD font. CJK book names therefore appear at the same size as the
+(header status text and button hints), 10 pt (list subtitles, the home-screen
+author line) and 12 pt (list rows, headers, book-cover titles), so CrossPoint
+loads your SD family at those sizes too and maps each UI font to its same-size
+SD font. CJK book names therefore appear at the same size as the
 Latin text around them. For this to work the family must contain `.cpfont`
 files at sizes **8, 10 and 12** (in addition to the reader sizes 12–18); any UI
 size missing from the family simply keeps showing boxes for CJK at that size.
+The UI sizes are only loaded at all when the selected family really does carry
+CJK: CrossPoint first probes the loaded reader-size font for U+4E00, U+3042,
+U+30A2 and U+AC00, and skips the fallback sizes entirely for a Latin-only
+family rather than spend RAM on glyphs it could never redirect to.
 
-Note that **Settings > Reader > Font Size** lists every size the family ships,
-so a family built at 8,10,12,14,16,18 offers all six as reading sizes — the UI
-sizes are not hidden from the list. Reading at 8 pt is your call; if you would
-rather not see the small sizes there, convert two families (one with the UI
-sizes for fallback, one with only the reading sizes you want).
+Note that the **Size** tab of **Settings > Reader > Text Settings** lists every
+size the family ships, so a family built at 8,10,12,14,16,18 offers all six as
+reading sizes — the UI sizes are not hidden from the list. Reading at 8 pt is
+your call; if you would rather not see the small sizes there, convert two
+families (one with the UI sizes for fallback, one with only the reading sizes
+you want).
+
+Changing family keeps your reading size only if the new family ships it:
+otherwise the size snaps to the nearest one it does ship (a tie picks the
+smaller), and going back to a built-in family snaps it into 12/14/16/18.
 
 When converting your own font, include the UI sizes:
 
@@ -90,9 +136,10 @@ When converting your own font, include the UI sizes:
 
 What this means in practice:
 
-- Select a CJK-capable SD font under **Settings > Reader > Font Family**
-  (see [Installing Fonts](#installing-fonts) and the `cjk` / `hangul` presets
-  under [Converting Custom Fonts](#converting-custom-fonts)). That single
+- Select a CJK-capable SD font on the **Font** tab of **Settings > Reader >
+  Text Settings** (see [Installing Fonts](#installing-fonts) and the `cjk` /
+  `hangul` presets under
+  [Converting Custom Fonts](#converting-custom-fonts)). That single
   selection drives both book content *and* size-matched CJK fallback in the UI.
 - Pure-Latin UI strings keep the crisp built-in font; only strings that
   actually contain CJK are routed to the SD font.
@@ -153,14 +200,14 @@ To convert your own TrueType/OpenType fonts:
 | `georgian` | Georgian + Georgian Supplement |
 | `armenian` | Armenian |
 | `ethiopic` | Ethiopic + Extended |
-| `vietnamese` | Vietnamese subset (ơ/ư and combining marks) |
+| `vietnamese` | Vietnamese subset (ơ/ư plus the precomposed tone-mark letters) |
 | `ipa-chars` | IPA Extensions + Spacing Modifier Letters (phonetic transcription) |
 | `punctuation` | General punctuation (U+2000–U+206F) |
-| `cjk` | CJK Unified Ideographs + Hiragana + Katakana + Fullwidth |
+| `cjk` | CJK symbols/punctuation + Hiragana + Katakana + Unified Ideographs + Compatibility Ideographs + Half/Fullwidth Forms |
 | `hangul` | Korean Hangul syllables + Jamo + Compatibility Jamo |
-| `cherokee` | Cherokee (historic + supplement block) |
+| `cherokee` | Cherokee + Cherokee Supplement |
 | `tifinagh` | Tifinagh |
-| `symbols` | Math, currency, arrows, box-drawing, misc symbols, dingbats |
+| `symbols` | Super/subscripts, currency, number forms, arrows, math, box-drawing, geometric shapes, misc symbols, dingbats |
 | `reading` | Literary fiction coverage: Latin, Greek, Cyrillic, math/symbol blocks, supplemental punctuation, and CJK quote marks |
 | `builtin` | Matches the firmware's built-in font conversion intervals |
 
