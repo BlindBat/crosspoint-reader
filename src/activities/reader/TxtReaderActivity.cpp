@@ -6,8 +6,10 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Memory.h>
-#include <Serialization.h>
+#include <TxtPageIndex.h>
 #include <Utf8.h>
+
+#include <algorithm>
 
 #include "CrossPointSettings.h"
 #include "ProgressFile.h"
@@ -17,10 +19,45 @@
 #include "fontIds.h"
 
 namespace {
-constexpr size_t CHUNK_SIZE = 8 * 1024;  // 8KB chunk for reading
-// Cache file magic and version
-constexpr uint32_t CACHE_MAGIC = 0x54585449;  // "TXTI"
-constexpr uint8_t CACHE_VERSION = 3;          // Increment when cache format changes
+
+// Measures text with the reader font and prewarms SD-card font glyphs per chunk.
+class RendererMeasurer final : public TxtPageIndex::TextMeasurer {
+  const GfxRenderer& renderer;
+  const int fontId;
+
+ public:
+  RendererMeasurer(const GfxRenderer& renderer, const int fontId) : renderer(renderer), fontId(fontId) {}
+  void prepare(const char* chunkText) override {
+    if (renderer.isSdCardFont(fontId)) {
+      renderer.ensureSdCardFontReady(fontId, chunkText, /*styleMask=*/0x01);
+    }
+  }
+  int advanceX(const char* text) override { return renderer.getTextAdvanceX(fontId, text, EpdFontFamily::REGULAR); }
+};
+
+class TxtContentReader final : public TxtPageIndex::ContentReader {
+  const Txt& txt;
+
+ public:
+  explicit TxtContentReader(const Txt& txt) : txt(txt) {}
+  bool readContent(uint8_t* buffer, const size_t offset, const size_t length) override {
+    return txt.readContent(buffer, offset, length);
+  }
+};
+
+class HalFileBytes final : public TxtPageIndex::ByteReader, public TxtPageIndex::ByteWriter {
+  HalFile& file;
+
+ public:
+  explicit HalFileBytes(HalFile& file) : file(file) {}
+  size_t read(void* buffer, const size_t count) override {
+    const int n = file.read(buffer, count);
+    return n < 0 ? 0 : static_cast<size_t>(n);
+  }
+  size_t size() override { return file.size(); }
+  size_t write(const void* buffer, const size_t count) override { return file.write(buffer, count); }
+};
+
 }  // namespace
 
 bool TxtReaderActivity::loadBook() {
@@ -79,162 +116,31 @@ void TxtReaderActivity::initializeReader(GfxRenderer& renderer) {
   initialized = true;
 }
 
+TxtPageIndex::Layout TxtReaderActivity::pageLayout() const { return {viewportWidth, linesPerPage}; }
+
+TxtPageIndex::CacheKey TxtReaderActivity::cacheKey() const {
+  return {static_cast<uint32_t>(txt->getFileSize()), static_cast<int32_t>(viewportWidth),
+          static_cast<int32_t>(linesPerPage),        static_cast<int32_t>(cachedFontId),
+          static_cast<int32_t>(cachedScreenMargin),  cachedParagraphAlignment};
+}
+
 void TxtReaderActivity::buildPageIndex(GfxRenderer& renderer) {
-  pageOffsets.clear();
-  pageOffsets.push_back(0);  // First page starts at offset 0
-
-  size_t offset = 0;
-  const size_t fileSize = txt->getFileSize();
-
-  LOG_DBG("TRS", "Building page index for %zu bytes...", fileSize);
+  LOG_DBG("TRS", "Building page index for %zu bytes...", txt->getFileSize());
 
   GUI.drawPopup(renderer, tr(STR_INDEXING));
 
-  while (offset < fileSize) {
-    std::vector<std::string> tempLines;
-    size_t nextOffset = offset;
-
-    if (!loadPageAtOffset(renderer, offset, tempLines, nextOffset)) {
-      break;
-    }
-
-    if (nextOffset <= offset) {
-      // No progress made, avoid infinite loop
-      break;
-    }
-
-    offset = nextOffset;
-    if (offset < fileSize) {
-      pageOffsets.push_back(offset);
-    }
-
-    // Yield to other tasks periodically
-    if (pageOffsets.size() % 20 == 0) {
-      vTaskDelay(1);
-    }
-  }
-
-  totalPages = pageOffsets.size();
+  TxtContentReader content(*txt);
+  RendererMeasurer measurer(renderer, cachedFontId);
+  totalPages = TxtPageIndex::buildPageIndex(content, txt->getFileSize(), pageLayout(), measurer, pageOffsets);
   LOG_DBG("TRS", "Built page index: %d pages", totalPages);
 }
 
 bool TxtReaderActivity::loadPageAtOffset(GfxRenderer& renderer, size_t offset, std::vector<std::string>& outLines,
                                          size_t& nextOffset) {
-  outLines.clear();
-  const size_t fileSize = txt->getFileSize();
-
-  if (offset >= fileSize) {
-    return false;
-  }
-
-  // Read a chunk from file
-  size_t chunkSize = std::min(CHUNK_SIZE, fileSize - offset);
-  auto* buffer = static_cast<uint8_t*>(malloc(chunkSize + 1));
-  if (!buffer) {
-    LOG_ERR("TRS", "Failed to allocate %zu bytes", chunkSize);
-    return false;
-  }
-
-  if (!txt->readContent(buffer, offset, chunkSize)) {
-    free(buffer);
-    return false;
-  }
-  buffer[chunkSize] = '\0';
-
-  if (renderer.isSdCardFont(cachedFontId)) {
-    renderer.ensureSdCardFontReady(cachedFontId, reinterpret_cast<const char*>(buffer), /*styleMask=*/0x01);
-  }
-
-  // Parse lines from buffer
-  size_t pos = 0;
-
-  while (pos < chunkSize && static_cast<int>(outLines.size()) < linesPerPage) {
-    // Find end of line
-    size_t lineEnd = pos;
-    while (lineEnd < chunkSize && buffer[lineEnd] != '\n') {
-      lineEnd++;
-    }
-
-    // Check if we have a complete line
-    bool lineComplete = (lineEnd < chunkSize) || (offset + lineEnd >= fileSize);
-
-    if (!lineComplete && static_cast<int>(outLines.size()) > 0) {
-      // Incomplete line and we already have some lines, stop here
-      break;
-    }
-
-    size_t lineContentLen = lineEnd - pos;
-    bool hasCR = (lineContentLen > 0 && buffer[pos + lineContentLen - 1] == '\r');
-    size_t displayLen = hasCR ? lineContentLen - 1 : lineContentLen;
-
-    std::string line(reinterpret_cast<char*>(buffer + pos), displayLen);
-    size_t lineBytePos = 0;
-
-    do {
-      if (line.empty()) {
-        outLines.emplace_back();
-        break;
-      }
-
-      int lineWidth = renderer.getTextAdvanceX(cachedFontId, line.c_str(), EpdFontFamily::REGULAR);
-
-      if (lineWidth <= viewportWidth) {
-        outLines.push_back(line);
-        lineBytePos = displayLen;
-        line.clear();
-        break;
-      }
-
-      // Find break point
-      size_t breakPos = line.length();
-      while (breakPos > 0 && renderer.getTextAdvanceX(cachedFontId, line.substr(0, breakPos).c_str(),
-                                                      EpdFontFamily::REGULAR) > viewportWidth) {
-        // Try to break at space
-        size_t spacePos = line.rfind(' ', breakPos - 1);
-        if (spacePos != std::string::npos && spacePos > 0) {
-          breakPos = spacePos;
-        } else {
-          // Break at character boundary for UTF-8
-          breakPos--;
-          while (breakPos > 0 && (line[breakPos] & 0xC0) == 0x80) {
-            breakPos--;
-          }
-        }
-      }
-
-      if (breakPos == 0) {
-        breakPos = 1;
-      }
-
-      outLines.push_back(line.substr(0, breakPos));
-
-      size_t skipChars = breakPos;
-      if (breakPos < line.length() && line[breakPos] == ' ') {
-        skipChars++;
-      }
-      lineBytePos += skipChars;
-      line = line.substr(skipChars);
-    } while (!line.empty() && static_cast<int>(outLines.size()) < linesPerPage);
-
-    if (line.empty()) {
-      pos = lineEnd + 1;
-    } else {
-      pos = pos + lineBytePos;
-      break;
-    }
-  }
-
-  if (pos == 0 && !outLines.empty()) {
-    pos = 1;
-  }
-
-  nextOffset = offset + pos;
-  if (nextOffset > fileSize) {
-    nextOffset = fileSize;
-  }
-
-  free(buffer);
-  return !outLines.empty();
+  TxtContentReader content(*txt);
+  RendererMeasurer measurer(renderer, cachedFontId);
+  return TxtPageIndex::loadPageAtOffset(content, txt->getFileSize(), offset, pageLayout(), measurer, outLines,
+                                        nextOffset);
 }
 
 void TxtReaderActivity::renderBook() {
@@ -380,11 +286,8 @@ bool TxtReaderActivity::isAtEndOfBook() const { return initialized && currentPag
 void TxtReaderActivity::onReturnFromEndOfBook() { currentPage = totalPages > 0 ? totalPages - 1 : 0; }
 
 void TxtReaderActivity::saveProgress() const {
-  uint8_t data[4];
-  data[0] = currentPage & 0xFF;
-  data[1] = (currentPage >> 8) & 0xFF;
-  data[2] = 0;
-  data[3] = 0;
+  uint8_t data[TxtPageIndex::PROGRESS_SIZE];
+  TxtPageIndex::encodeProgress(currentPage, data);
   if (!ProgressFile::writeAtomic(txt->getCachePath(), data, sizeof(data))) {
     LOG_ERR("TRS", "Failed to save progress: page %d", currentPage);
   }
@@ -393,15 +296,9 @@ void TxtReaderActivity::saveProgress() const {
 void TxtReaderActivity::loadProgress() {
   HalFile f;
   if (Storage.openFileForRead("TRS", txt->getCachePath() + "/progress.bin", f)) {
-    uint8_t data[4];
-    if (f.read(data, 4) == 4) {
-      currentPage = data[0] + (data[1] << 8);
-      if (currentPage >= totalPages) {
-        currentPage = totalPages - 1;
-      }
-      if (currentPage < 0) {
-        currentPage = 0;
-      }
+    uint8_t data[TxtPageIndex::PROGRESS_SIZE];
+    if (f.read(data, sizeof(data)) == static_cast<int>(sizeof(data))) {
+      currentPage = TxtPageIndex::decodeProgress(data, totalPages);
       LOG_DBG("TRS", "Loaded progress: page %d/%d", currentPage, totalPages);
     }
   }
@@ -415,72 +312,9 @@ bool TxtReaderActivity::loadPageIndexCache() {
     return false;
   }
 
-  uint32_t magic;
-  serialization::readPod(f, magic);
-  if (magic != CACHE_MAGIC) {
-    LOG_DBG("TRS", "Cache magic mismatch, rebuilding");
+  HalFileBytes bytes(f);
+  if (!TxtPageIndex::loadPageIndexCache(bytes, cacheKey(), pageOffsets)) {
     return false;
-  }
-
-  uint8_t version;
-  serialization::readPod(f, version);
-  if (version != CACHE_VERSION) {
-    LOG_DBG("TRS", "Cache version mismatch (%d != %d), rebuilding", version, CACHE_VERSION);
-    return false;
-  }
-
-  uint32_t fileSize;
-  serialization::readPod(f, fileSize);
-  if (fileSize != txt->getFileSize()) {
-    LOG_DBG("TRS", "Cache file size mismatch, rebuilding");
-    return false;
-  }
-
-  int32_t cachedWidth;
-  serialization::readPod(f, cachedWidth);
-  if (cachedWidth != viewportWidth) {
-    LOG_DBG("TRS", "Cache viewport width mismatch, rebuilding");
-    return false;
-  }
-
-  int32_t cachedLines;
-  serialization::readPod(f, cachedLines);
-  if (cachedLines != linesPerPage) {
-    LOG_DBG("TRS", "Cache lines per page mismatch, rebuilding");
-    return false;
-  }
-
-  int32_t fontId;
-  serialization::readPod(f, fontId);
-  if (fontId != cachedFontId) {
-    LOG_DBG("TRS", "Cache font ID mismatch (%d != %d), rebuilding", fontId, cachedFontId);
-    return false;
-  }
-
-  int32_t margin;
-  serialization::readPod(f, margin);
-  if (margin != cachedScreenMargin) {
-    LOG_DBG("TRS", "Cache screen margin mismatch, rebuilding");
-    return false;
-  }
-
-  uint8_t alignment;
-  serialization::readPod(f, alignment);
-  if (alignment != cachedParagraphAlignment) {
-    LOG_DBG("TRS", "Cache paragraph alignment mismatch, rebuilding");
-    return false;
-  }
-
-  uint32_t numPages;
-  serialization::readPod(f, numPages);
-
-  pageOffsets.clear();
-  pageOffsets.reserve(numPages);
-
-  for (uint32_t i = 0; i < numPages; i++) {
-    uint32_t offset;
-    serialization::readPod(f, offset);
-    pageOffsets.push_back(offset);
   }
 
   totalPages = pageOffsets.size();
@@ -496,19 +330,8 @@ void TxtReaderActivity::savePageIndexCache() const {
     return;
   }
 
-  serialization::writePod(f, CACHE_MAGIC);
-  serialization::writePod(f, CACHE_VERSION);
-  serialization::writePod(f, static_cast<uint32_t>(txt->getFileSize()));
-  serialization::writePod(f, static_cast<int32_t>(viewportWidth));
-  serialization::writePod(f, static_cast<int32_t>(linesPerPage));
-  serialization::writePod(f, static_cast<int32_t>(cachedFontId));
-  serialization::writePod(f, static_cast<int32_t>(cachedScreenMargin));
-  serialization::writePod(f, cachedParagraphAlignment);
-  serialization::writePod(f, static_cast<uint32_t>(pageOffsets.size()));
-
-  for (size_t offset : pageOffsets) {
-    serialization::writePod(f, static_cast<uint32_t>(offset));
-  }
+  HalFileBytes bytes(f);
+  TxtPageIndex::savePageIndexCache(bytes, cacheKey(), pageOffsets);
 
   LOG_DBG("TRS", "Saved page index cache: %d pages", totalPages);
 }

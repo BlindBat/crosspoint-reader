@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Txt.h>
+#include <TxtPageIndex.h>
 
 #include <memory>
 #include <string>
@@ -31,6 +32,8 @@ class TxtReaderActivity final : public ReaderActivity {
   int cachedOrientedMarginBottom = 0;
   int cachedOrientedMarginLeft = 0;
 
+  TxtPageIndex::Layout pageLayout() const;
+  TxtPageIndex::CacheKey cacheKey() const;
   void renderPage(GfxRenderer& renderer);
   void initializeReader(GfxRenderer& renderer);
   bool loadPageAtOffset(GfxRenderer& renderer, size_t offset, std::vector<std::string>& outLines, size_t& nextOffset);
