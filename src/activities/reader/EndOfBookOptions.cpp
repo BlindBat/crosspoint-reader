@@ -6,6 +6,7 @@
 #include <I18n.h>
 
 #include "CrossPointSettings.h"
+#include "EndOfBookRows.h"
 #include "ReaderUtils.h"
 // ReaderUtils.h pulls in ActivityManager.h, which only forward-declares Activity while holding
 // std::unique_ptr<Activity> members. Destroying that unique_ptr needs the complete type, so the
@@ -20,12 +21,6 @@ namespace fui = freeink::ui;
 
 namespace {
 constexpr fui::ActionId ACTION_ROW = 1;
-
-// Display name without the file extension, mirroring the file browser rows
-std::string displayName(const std::string& filename) {
-  const auto pos = filename.rfind('.');
-  return filename.substr(0, pos);
-}
 }  // namespace
 
 EndOfBookOptions::EndOfBookOptions(GfxRenderer& renderer) : UiAppHost(renderer), renderer(renderer) {}
@@ -52,23 +47,12 @@ void EndOfBookOptions::loadOnce(const std::string& currentBookPath) {
 // Populates rowLabels/rowItems from names + the trailing "Home" row. Called
 // once here since names never changes after loadOnce() completes.
 void EndOfBookOptions::buildRowItems() {
-  rowCount = 0;
-  for (const auto& name : names) {
-    if (rowCount >= MAX_ROWS) break;
-    rowLabels[rowCount] = displayName(name);
+  rowCount = EndOfBookRows::buildLabels(names, tr(STR_EOB_HOME), rowLabels, MAX_ROWS);
+  for (size_t i = 0; i < rowCount; i++) {
     fui::ListItem item;
-    item.label = rowLabels[rowCount].c_str();
-    item.actionValue = static_cast<int16_t>(rowCount);
-    rowItems[rowCount] = item;
-    rowCount++;
-  }
-  if (rowCount < MAX_ROWS) {
-    rowLabels[rowCount] = tr(STR_EOB_HOME);
-    fui::ListItem item;
-    item.label = rowLabels[rowCount].c_str();
-    item.actionValue = static_cast<int16_t>(rowCount);
-    rowItems[rowCount] = item;
-    rowCount++;
+    item.label = rowLabels[i].c_str();
+    item.actionValue = static_cast<int16_t>(i);
+    rowItems[i] = item;
   }
 }
 
@@ -78,7 +62,7 @@ std::string EndOfBookOptions::fullPath(const size_t index) const {
   if (index >= names.size()) {
     return {};
   }
-  return folder == "/" ? "/" + names[index] : folder + "/" + names[index];
+  return EndOfBookRows::joinPath(folder, names[index]);
 }
 
 void EndOfBookOptions::onRowEvent(const fui::ActionEvent& event, void* user) {

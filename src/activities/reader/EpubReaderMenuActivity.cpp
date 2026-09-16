@@ -37,31 +37,9 @@ void EpubReaderMenuActivity::buildMenuRowItems() {
   }
 }
 
-void EpubReaderMenuActivity::buildMenuItems(std::vector<MenuItem>& items, bool hasFootnotes, bool hasBookmarks) {
-  items.clear();
-  items.reserve(MAX_MENU_ITEMS);
-  items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
-  if (hasFootnotes) {
-    items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
-  }
-  if (hasBookmarks) {
-    items.push_back({MenuAction::BOOKMARKS, StrId::STR_BOOKMARKS});
-  }
-  items.push_back({MenuAction::TOGGLE_BOOKMARK, StrId::STR_TOGGLE_BOOKMARK});
-  items.push_back({MenuAction::TEXT_SETTINGS, StrId::STR_TEXT_SETTINGS});
-  items.push_back({MenuAction::NIGHT_MODE, StrId::STR_NIGHT_MODE});
-  if (Frontlight.present()) {
-    items.push_back({MenuAction::FRONTLIGHT, StrId::STR_FRONTLIGHT});
-  }
-  items.push_back({MenuAction::DICTIONARY, StrId::STR_LOOKUP});
-  items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
-  items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN});
-  items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
-  items.push_back({MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON});
-  items.push_back({MenuAction::DISPLAY_QR, StrId::STR_DISPLAY_QR});
-  items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON});
-  items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS});
-  items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
+void EpubReaderMenuActivity::buildMenuItems(std::vector<MenuItem>& items, const bool hasFootnotes,
+                                            const bool hasBookmarks) {
+  ReaderMenu::buildMenuItems(items, hasFootnotes, hasBookmarks, Frontlight.present());
 }
 
 void EpubReaderMenuActivity::closeCancelled() {

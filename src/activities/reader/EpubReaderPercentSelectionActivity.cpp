@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "PercentWrap.h"
 #include "components/UITheme.h"
 #include "components/UiSliderDialog.h"
 #include "fontIds.h"
@@ -43,14 +44,7 @@ void EpubReaderPercentSelectionActivity::onEnter() {
 void EpubReaderPercentSelectionActivity::onExit() { Activity::onExit(); }
 
 void EpubReaderPercentSelectionActivity::adjustPercent(const int delta) {
-  // Wrap using a 100-value ring (0% and 100% are the same wrap point), but keep 100 as the
-  // natural landing value when reached without crossing the boundary (e.g. 90 + 10 = 100).
-  const int raw = percent + delta;
-  if (raw > 0 && raw % 100 == 0) {
-    percent = 100;
-  } else {
-    percent = ((raw % 100) + 100) % 100;
-  }
+  percent = ReaderPercent::wrapPercent(percent, delta);
   requestUpdate();
 }
 

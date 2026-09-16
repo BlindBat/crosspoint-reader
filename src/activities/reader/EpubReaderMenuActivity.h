@@ -5,35 +5,15 @@
 #include <string>
 #include <vector>
 
+#include "EpubReaderMenuItems.h"
 #include "activities/UiListActivity.h"
 #include "components/OptionPopup.h"
 
 class EpubReaderMenuActivity final : public UiListActivity {
  public:
-  // Menu actions available from the reader menu.
-  enum class MenuAction {
-    SELECT_CHAPTER,
-    FOOTNOTES,
-    TEXT_SETTINGS,
-    NIGHT_MODE,
-    FRONTLIGHT,
-    GO_TO_PERCENT,
-    AUTO_PAGE_TURN,
-    ROTATE_SCREEN,
-    BOOKMARKS,
-    TOGGLE_BOOKMARK,
-    SCREENSHOT,
-    DISPLAY_QR,
-    GO_HOME,
-    SYNC,
-    DELETE_CACHE,
-    DICTIONARY
-  };
-
-  struct MenuItem {
-    MenuAction action;
-    StrId labelId;
-  };
+  // Menu actions available from the reader menu (row model in EpubReaderMenuItems.h).
+  using MenuAction = ReaderMenu::MenuAction;
+  using MenuItem = ReaderMenu::MenuItem;
 
   static void buildMenuItems(std::vector<MenuItem>& items, bool hasFootnotes, bool hasBookmarks);
 
@@ -49,7 +29,7 @@ class EpubReaderMenuActivity final : public UiListActivity {
   // fixed-capacity array avoids any heap allocation for the row list. Labels
   // are set once in the constructor (buildMenuRowItems()); buildScreen()
   // only refreshes rows whose values reflect live state.
-  static constexpr size_t MAX_MENU_ITEMS = 16;
+  static constexpr size_t MAX_MENU_ITEMS = ReaderMenu::MAX_MENU_ITEMS;
   freeink::ui::ListItem menuRowItems[MAX_MENU_ITEMS]{};
   void buildMenuRowItems();
 
