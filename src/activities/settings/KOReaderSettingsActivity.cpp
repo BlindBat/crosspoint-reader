@@ -8,6 +8,7 @@
 
 #include "KOReaderAuthActivity.h"
 #include "KOReaderCredentialStore.h"
+#include "KOReaderServerUrl.h"
 #include "MappedInputManager.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
@@ -61,17 +62,14 @@ void KOReaderSettingsActivity::activateIndex(const int index) {
                              }
                            });
   } else if (index == 2) {
-    // Sync Server URL - prefill with https:// if empty to save typing
-    const std::string currentUrl = KOREADER_STORE.getServerUrl();
-    const std::string prefillUrl = currentUrl.empty() ? "https://" : currentUrl;
+    // Sync Server URL
+    const std::string prefillUrl = KOReaderServerUrl::prefillForEntry(KOREADER_STORE.getServerUrl());
     startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SYNC_SERVER_URL),
                                                                    prefillUrl, 128, InputType::Url),
                            [this](const ActivityResult& result) {
                              if (!result.isCancelled) {
                                const auto& kb = std::get<KeyboardResult>(result.data);
-                               const std::string urlToSave =
-                                   (kb.text == "https://" || kb.text == "http://") ? "" : kb.text;
-                               KOREADER_STORE.setServerUrl(urlToSave);
+                               KOREADER_STORE.setServerUrl(KOReaderServerUrl::normalizeEntered(kb.text));
                                KOREADER_STORE.saveToFile();
                              }
                            });
@@ -135,12 +133,8 @@ void KOReaderSettingsActivity::buildScreen(UiScreen& screen) {
       rowValues_[i] = KOREADER_STORE.getServerUrl();
       if (rowValues_[i].empty()) {
         // Show which server the default actually is, scheme stripped for space
-        std::string defaultUrl = KOREADER_STORE.getBaseUrl();
-        const auto schemeEnd = defaultUrl.find("://");
-        if (schemeEnd != std::string::npos) {
-          defaultUrl.erase(0, schemeEnd + 3);
-        }
-        rowValues_[i] = std::string(tr(STR_DEFAULT_VALUE)) + ": " + defaultUrl;
+        rowValues_[i] =
+            std::string(tr(STR_DEFAULT_VALUE)) + ": " + KOReaderServerUrl::stripScheme(KOREADER_STORE.getBaseUrl());
       }
     } else if (i == 3) {
       rowValues_[i] =
