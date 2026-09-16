@@ -569,22 +569,22 @@ void EpubReaderActivity::loop() {
   if (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::FOOTNOTES &&
       mappedInput.wasReleased(MappedInputManager::Button::Power) &&
       !mappedInput.wasReleased(MappedInputManager::Button::Down)) {
-    if (footnoteDepth > 0) {
+    // Inside a footnote the click returns to the origin only while
+    // "Quick-return from footnotes" is on; otherwise it is an ordinary
+    // Footnotes click on the current page.
+    if (footnoteDepth > 0 && SETTINGS.pwrBtnFootnoteBack) {
       restoreSavedPosition();
-    } else {
-      if (currentPageFootnotes.size() == 1) {
-        navigateToHref(currentPageFootnotes[0].href, true);
-      } else if (currentPageFootnotes.size() > 1) {
-        startActivityForResult(
-            std::make_unique<EpubReaderFootnotesActivity>(renderer, mappedInput, currentPageFootnotes),
-            [this](const ActivityResult& result) {
-              if (!result.isCancelled) {
-                const auto& footnoteResult = std::get<FootnoteResult>(result.data);
-                navigateToHref(footnoteResult.href, true);
-              }
-              requestUpdate();
-            });
-      }
+    } else if (currentPageFootnotes.size() == 1) {
+      navigateToHref(currentPageFootnotes[0].href, true);
+    } else if (currentPageFootnotes.size() > 1) {
+      startActivityForResult(std::make_unique<EpubReaderFootnotesActivity>(renderer, mappedInput, currentPageFootnotes),
+                             [this](const ActivityResult& result) {
+                               if (!result.isCancelled) {
+                                 const auto& footnoteResult = std::get<FootnoteResult>(result.data);
+                                 navigateToHref(footnoteResult.href, true);
+                               }
+                               requestUpdate();
+                             });
     }
     return;
   }
