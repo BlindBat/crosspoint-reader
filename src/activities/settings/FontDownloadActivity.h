@@ -6,12 +6,7 @@
 #include "FontInstaller.h"
 #include "SdCardFont.h"
 #include "activities/UiListActivity.h"
-
-// JSON schema version of the fonts.json manifest. The canonical version for
-// the build tooling lives in lib/EpdFont/scripts/cpfont_version.py. This
-// firmware-side copy must be bumped manually when the firmware is updated to
-// support a new manifest schema.
-#define FONTS_MANIFEST_VERSION 1
+#include "util/FontManifest.h"
 
 #ifndef FONT_MANIFEST_URL
 // Manifest + .cpfont assets are published by .github/workflows/release-fonts.yml
@@ -52,24 +47,8 @@ class FontDownloadActivity final : public UiListActivity {
     ERROR,
   };
 
-  struct ManifestFile {
-    std::string name;
-    size_t size = 0;
-    uint32_t crc32 = 0;
-  };
-
-  struct ManifestFamily {
-    std::string name;
-    std::string description;
-    std::vector<std::string> styles;
-    std::vector<ManifestFile> files;
-    size_t totalSize = 0;
-    bool installed = false;
-    bool hasUpdate = false;
-    uint32_t scriptMask = 0;
-  };
-
-  static constexpr size_t MAX_SCRIPT_GROUPS = 32;
+  using ManifestFile = FontManifestFile;
+  using ManifestFamily = FontManifestFamily;
 
   State state_ = WIFI_SELECTION;
   FontInstaller fontInstaller_;

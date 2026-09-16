@@ -1,0 +1,84 @@
+#include "FontManifest.h"
+
+#include <Logging.h>
+
+#include <algorithm>
+#include <cstring>
+
+FontManifestError parseFontManifest(JsonDocument& doc, std::string& baseUrl,
+                                    std::vector<std::string>& scriptGroupLabels,
+                                    std::vector<FontManifestFamily>& families) {
+  const int version = doc["version"] | 0;
+  if (version != FONTS_MANIFEST_VERSION) {
+    LOG_ERR("FONT", "Unsupported manifest version: %d", version);
+    return FontManifestError::UNSUPPORTED_VERSION;
+  }
+
+  baseUrl = doc["baseUrl"] | "";
+  families.clear();
+  scriptGroupLabels.clear();
+
+  JsonArray groupsArr = doc["scriptGroups"].as<JsonArray>();
+  const size_t groupCount = std::min(groupsArr.size(), FONT_MANIFEST_MAX_SCRIPT_GROUPS);
+  scriptGroupLabels.reserve(groupCount);
+  if (groupsArr.size() > FONT_MANIFEST_MAX_SCRIPT_GROUPS) {
+    LOG_ERR("FONT", "Manifest declares more than %zu script groups; extra groups ignored",
+            FONT_MANIFEST_MAX_SCRIPT_GROUPS);
+  }
+  for (size_t groupIndex = 0; groupIndex < groupCount; groupIndex++) {
+    JsonObject groupObj = groupsArr[groupIndex].as<JsonObject>();
+    const char* tag = groupObj["tag"] | "";
+    const char* label = groupObj["label"] | "";
+    if (*tag == '\0' || *label == '\0') {
+      LOG_ERR("FONT", "Malformed script group at index %zu", groupIndex);
+      return FontManifestError::MALFORMED;
+    }
+    scriptGroupLabels.push_back(label);
+  }
+
+  JsonArray familiesArr = doc["families"].as<JsonArray>();
+  families.reserve(familiesArr.size());
+
+  for (JsonObject fObj : familiesArr) {
+    FontManifestFamily family;
+    family.name = fObj["name"] | "";
+    family.description = fObj["description"] | "";
+
+    for (JsonVariant s : fObj["styles"].as<JsonArray>()) {
+      family.styles.push_back(s.as<std::string>());
+    }
+
+    for (JsonVariant script : fObj["scripts"].as<JsonArray>()) {
+      const char* familyTag = script.as<const char*>();
+      if (!familyTag) continue;
+      for (size_t groupIndex = 0; groupIndex < scriptGroupLabels.size(); groupIndex++) {
+        JsonObject groupObj = groupsArr[groupIndex].as<JsonObject>();
+        const char* groupTag = groupObj["tag"] | "";
+        if (std::strcmp(familyTag, groupTag) == 0) {
+          family.scriptMask |= uint32_t{1} << groupIndex;
+          break;
+        }
+      }
+    }
+
+    family.totalSize = 0;
+    for (JsonObject fileObj : fObj["files"].as<JsonArray>()) {
+      FontManifestFile file;
+      file.name = fileObj["name"] | "";
+      file.size = fileObj["size"] | 0;
+
+      if (!fileObj["crc32"].is<uint32_t>()) {
+        LOG_ERR("FONT", "Malformed manifest file entry: missing or invalid crc32 for %s", file.name.c_str());
+        return FontManifestError::MALFORMED;
+      }
+      file.crc32 = fileObj["crc32"].as<uint32_t>();
+
+      family.totalSize += file.size;
+      family.files.push_back(std::move(file));
+    }
+
+    families.push_back(std::move(family));
+  }
+
+  return FontManifestError::OK;
+}

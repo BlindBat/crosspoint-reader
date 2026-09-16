@@ -165,80 +165,21 @@ bool FontDownloadActivity::fetchAndParseManifest() {
     return false;
   }
 
-  int version = doc["version"] | 0;
-  if (version != FONTS_MANIFEST_VERSION) {
-    LOG_ERR("FONT", "Unsupported manifest version: %d", version);
-    errorMessage_ = "Unsupported manifest version";
-    return false;
-  }
-
-  baseUrl_ = doc["baseUrl"] | "";
-  families_.clear();
-  scriptGroupLabels_.clear();
-  filteredIndices_.clear();
-  fontInstaller_.refreshRegistry();
-
-  JsonArray groupsArr = doc["scriptGroups"].as<JsonArray>();
-  const size_t groupCount = std::min(groupsArr.size(), MAX_SCRIPT_GROUPS);
-  scriptGroupLabels_.reserve(groupCount);
-  if (groupsArr.size() > MAX_SCRIPT_GROUPS) {
-    LOG_ERR("FONT", "Manifest declares more than %zu script groups; extra groups ignored", MAX_SCRIPT_GROUPS);
-  }
-  for (size_t groupIndex = 0; groupIndex < groupCount; groupIndex++) {
-    JsonObject groupObj = groupsArr[groupIndex].as<JsonObject>();
-    const char* tag = groupObj["tag"] | "";
-    const char* label = groupObj["label"] | "";
-    if (*tag == '\0' || *label == '\0') {
-      LOG_ERR("FONT", "Malformed script group at index %zu", groupIndex);
+  switch (parseFontManifest(doc, baseUrl_, scriptGroupLabels_, families_)) {
+    case FontManifestError::OK:
+      break;
+    case FontManifestError::UNSUPPORTED_VERSION:
+      errorMessage_ = "Unsupported manifest version";
+      return false;
+    case FontManifestError::MALFORMED:
       errorMessage_ = "Invalid font manifest";
       return false;
-    }
-    scriptGroupLabels_.push_back(label);
   }
+  filteredIndices_.clear();
+  filteredIndices_.reserve(families_.size());
+  fontInstaller_.refreshRegistry();
 
-  JsonArray familiesArr = doc["families"].as<JsonArray>();
-  families_.reserve(familiesArr.size());
-  filteredIndices_.reserve(familiesArr.size());
-
-  for (JsonObject fObj : familiesArr) {
-    ManifestFamily family;
-    family.name = fObj["name"] | "";
-    family.description = fObj["description"] | "";
-
-    for (JsonVariant s : fObj["styles"].as<JsonArray>()) {
-      family.styles.push_back(s.as<std::string>());
-    }
-
-    for (JsonVariant script : fObj["scripts"].as<JsonArray>()) {
-      const char* familyTag = script.as<const char*>();
-      if (!familyTag) continue;
-      for (size_t groupIndex = 0; groupIndex < scriptGroupLabels_.size(); groupIndex++) {
-        JsonObject groupObj = groupsArr[groupIndex].as<JsonObject>();
-        const char* groupTag = groupObj["tag"] | "";
-        if (std::strcmp(familyTag, groupTag) == 0) {
-          family.scriptMask |= uint32_t{1} << groupIndex;
-          break;
-        }
-      }
-    }
-
-    family.totalSize = 0;
-    for (JsonObject fileObj : fObj["files"].as<JsonArray>()) {
-      ManifestFile file;
-      file.name = fileObj["name"] | "";
-      file.size = fileObj["size"] | 0;
-
-      if (!fileObj["crc32"].is<uint32_t>()) {
-        LOG_ERR("FONT", "Malformed manifest file entry: missing or invalid crc32 for %s", file.name.c_str());
-        errorMessage_ = "Invalid font manifest";
-        return false;
-      }
-      file.crc32 = fileObj["crc32"].as<uint32_t>();
-
-      family.totalSize += file.size;
-      family.files.push_back(std::move(file));
-    }
-
+  for (auto& family : families_) {
     family.installed = fontInstaller_.isFamilyInstalled(family.name.c_str());
 
     // Detect updates by comparing manifest file sizes with files on disk.
@@ -262,8 +203,6 @@ bool FontDownloadActivity::fetchAndParseManifest() {
         }
       }
     }
-
-    families_.push_back(std::move(family));
   }
 
   const size_t rowCapacity = std::max(families_.size() + 2, scriptGroupLabels_.size() + 1);
