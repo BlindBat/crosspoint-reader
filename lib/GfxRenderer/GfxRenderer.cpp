@@ -457,9 +457,22 @@ static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode 
   const EpdFontData* fontData = fontFamily.getData(style);
   const bool is2Bit = fontData->is2Bit;
   const uint8_t width = glyph->width;
-  const uint8_t height = glyph->height;
   const int left = glyph->left;
   const int top = glyph->top;
+
+  // A glyph's metrics and its bitmap extent are independent fields; for an
+  // SD-card font both come from an untrusted file. Every well-formed font has
+  // dataLength == ceil(width * height * bpp / 8), so this costs one multiply
+  // and one compare per glyph and changes nothing. When they disagree, decode
+  // only the whole rows the bitmap actually backs, so the loops below can never
+  // read past the glyph buffer (and drawPixel never sees the runaway
+  // coordinates a bogus height would produce).
+  const uint32_t backedPixels = static_cast<uint32_t>(glyph->dataLength) * (is2Bit ? 4u : 8u);
+  uint8_t height = glyph->height;
+  if (static_cast<uint32_t>(width) * height > backedPixels) {
+    LOG_ERR("GFX", "Glyph %u: %ux%u needs more than its %u bitmap bytes", cp, width, height, glyph->dataLength);
+    height = width > 0 ? static_cast<uint8_t>(backedPixels / width) : 0;
+  }
 
   // Tiled-grayscale band culling: if this glyph's physical y-extent is entirely
   // outside the active strip, skip it before the expensive bitmap decode. This

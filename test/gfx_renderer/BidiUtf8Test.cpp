@@ -22,8 +22,8 @@ namespace {
 
 // UTF-8 literals kept as escapes so the file stays plain ASCII.
 constexpr const char* kHebrewShalom = "\xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d";  // shalom
-constexpr const char* kHebrewSefer = "\xd7\xa1\xd7\xa4\xd7\xa8";          // sefer
-constexpr const char* kArabicSalam = "\xd8\xb3\xd9\x84\xd8\xa7\xd9\x85";  // salam
+constexpr const char* kHebrewSefer = "\xd7\xa1\xd7\xa4\xd7\xa8";           // sefer
+constexpr const char* kArabicSalam = "\xd8\xb3\xd9\x84\xd8\xa7\xd9\x85";   // salam
 
 uint32_t decodeOne(const char* s) {
   const auto* p = reinterpret_cast<const unsigned char*>(s);
@@ -237,9 +237,10 @@ TEST(ApplyBidiVisual, MultibyteInputCountsCodepointsNotBytes) {
 TEST(ApplyBidiVisual, DecodingStopsAtInvalidUtf8) {
   // "AB" then a stray continuation byte then "CD": only the prefix survives.
   std::string out;
-  ASSERT_TRUE(BidiUtils::applyBidiVisual("AB\x80"
-                                         "CD",
-                                         out));
+  ASSERT_TRUE(
+      BidiUtils::applyBidiVisual("AB\x80"
+                                 "CD",
+                                 out));
   EXPECT_EQ(out, "AB");
 }
 
@@ -319,8 +320,9 @@ TEST(Utf8Decode, InvalidLeadBytesBecomeTheReplacementGlyph) {
 
 TEST(Utf8Decode, AMissingContinuationByteConsumesOnlyTheBytesItValidated) {
   // 0xE2 promises two continuation bytes but the second is an ASCII 'A'.
-  const char* text = "\xe2\x82"
-                     "AB";
+  const char* text =
+      "\xe2\x82"
+      "AB";
   const auto* p = reinterpret_cast<const unsigned char*>(text);
   const auto* start = p;
   EXPECT_EQ(utf8NextCodepoint(&p), static_cast<uint32_t>(REPLACEMENT_GLYPH));
@@ -346,12 +348,12 @@ TEST(Utf8Decode, AFourByteSequenceTruncatedAfterOneContinuationByteIsRejected) {
 
 TEST(Utf8Decode, OverlongEncodingsAreRejectedAtEveryLength) {
   const char* overlongs[] = {
-      "\xc0\x80",              // NUL encoded in two bytes
-      "\xc1\xbf",              // U+007F encoded in two bytes
-      "\xe0\x80\x80",          // three-byte overlong
-      "\xe0\x9f\xbf",          // U+07FF encoded in three bytes
-      "\xf0\x80\x80\x80",      // four-byte overlong
-      "\xf0\x8f\xbf\xbf",      // U+FFFF encoded in four bytes
+      "\xc0\x80",          // NUL encoded in two bytes
+      "\xc1\xbf",          // U+007F encoded in two bytes
+      "\xe0\x80\x80",      // three-byte overlong
+      "\xe0\x9f\xbf",      // U+07FF encoded in three bytes
+      "\xf0\x80\x80\x80",  // four-byte overlong
+      "\xf0\x8f\xbf\xbf",  // U+FFFF encoded in four bytes
   };
   for (const char* bad : overlongs) {
     const auto* p = reinterpret_cast<const unsigned char*>(bad);
@@ -428,8 +430,9 @@ TEST(Utf8Truncate, RemoveLastCharDropsWholeCodepoints) {
 }
 
 TEST(Utf8Truncate, TruncateCharsRemovesNCodepointsAndStopsAtEmpty) {
-  std::string s = "\xe2\x82\xac\xe2\x82\xac\xe2\x82\xac"
-                  "A";
+  std::string s =
+      "\xe2\x82\xac\xe2\x82\xac\xe2\x82\xac"
+      "A";
   utf8TruncateChars(s, 2);
   EXPECT_EQ(s, "\xe2\x82\xac\xe2\x82\xac");
   utf8TruncateChars(s, 99);

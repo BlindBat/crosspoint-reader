@@ -154,6 +154,11 @@ TEST_F(SdCardFontLoadTest, MalformedFilesAreRejected) {
       // (ordering, overlap, span, cumulative offsets) holds.
       "interval_offset_overrun.cpfont",
       "truncated_intervals.cpfont",
+      // truncated_glyphs declares 93 glyphs but the file ends after 2 records,
+      // so the glyph table and every section after it lie past EOF. Only a
+      // check against the real file size catches it: every count in the TOC is
+      // individually plausible.
+      "truncated_glyphs.cpfont",
   };
   for (const char* name : kMalformed) {
     SdCardFont font;
@@ -331,16 +336,6 @@ TEST_F(SdCardFontPrewarmTest, MetadataOnlyPrewarmServesMetricsThenFullRebuildLoa
   ASSERT_EQ(font.prewarm("Hi"), 0);
   EXPECT_GT(font.getStats().seekCount, seeksBefore);
   expectResidentGlyph(font.getEpdFont(0), 'H');
-}
-
-TEST_F(SdCardFontPrewarmTest, TruncatedGlyphTablePrewarmFailsGracefully) {
-  SdCardFont font;
-  // Header + intervals are intact, so load() succeeds...
-  ASSERT_TRUE(font.load(res("truncated_glyphs.cpfont").c_str()));
-  // ...but the glyph table is cut: all 3 requested glyphs (H, i, U+FFFD) miss.
-  EXPECT_EQ(font.prewarm("Hi"), 3);
-  // The font falls back to the stub (nothing resident), not a crash.
-  EXPECT_EQ(font.getEpdFont(0)->data->intervalCount, 0u);
 }
 
 TEST_F(SdCardFontPrewarmTest, BitmapPastEofFailsGracefullyButServesIntactPrefix) {
@@ -549,6 +544,292 @@ TEST_F(SdCardFontMultiStyleTest, AstralPlaneFontLoadsAndServesGlyphs) {
   ASSERT_NE(glyph, nullptr);
   EXPECT_EQ(glyph->advanceX, 301);
   EXPECT_EQ(glyph->height, 2);  // index 1 -> height 2
+}
+
+// --- Hostile .cpfont input: records the loader must refuse (FR-116) ---
+//
+// The build-time fixtures are well-formed files with byte surgery applied.
+// These cases need whole records under the test's control, so the v4 layout of
+// scripts/generate_test_cpfonts.py is rebuilt here. Kern and ligature sections
+// are always empty — nothing under test reads them.
+
+namespace {
+
+constexpr uint32_t FX_HEADER_SIZE = 32;
+constexpr uint32_t FX_TOC_ENTRY_SIZE = 32;
+constexpr uint32_t FX_REPLACEMENT_CP = 0xFFFD;
+
+struct FxInterval {
+  uint32_t first;
+  uint32_t last;
+  uint32_t offset;
+};
+
+struct FxGlyph {
+  uint8_t width = 4;  // 4 px at 2 bpp == 1 bitmap byte
+  uint8_t height = 1;
+  uint16_t advanceX = 100;
+  int16_t left = 0;
+  int16_t top = 10;
+  uint16_t dataLength = 1;
+  uint32_t dataOffset = 0;
+};
+
+struct FxStyle {
+  uint8_t styleId = 0;
+  std::vector<FxInterval> intervals;
+  std::vector<FxGlyph> glyphs;
+  std::vector<uint8_t> bitmaps;
+  // TOC-only lies: the sections are still written at their natural place, but
+  // the table of contents claims something else.
+  uint32_t glyphCountOverride = 0;    // 0 = derive from glyphs.size()
+  bool dataOffsetOverridden = false;  // true = use dataOffsetOverride
+  uint32_t dataOffsetOverride = 0;
+};
+
+void put8(std::vector<uint8_t>& b, uint8_t v) { b.push_back(v); }
+void put16(std::vector<uint8_t>& b, uint16_t v) {
+  b.push_back(static_cast<uint8_t>(v & 0xFF));
+  b.push_back(static_cast<uint8_t>(v >> 8));
+}
+void put32(std::vector<uint8_t>& b, uint32_t v) {
+  for (int i = 0; i < 4; i++) b.push_back(static_cast<uint8_t>((v >> (8 * i)) & 0xFF));
+}
+void pad(std::vector<uint8_t>& b, size_t n) { b.insert(b.end(), n, 0); }
+
+// Sections of one style, in file order (kern/ligature sections are empty).
+std::vector<uint8_t> styleSections(const FxStyle& st) {
+  std::vector<uint8_t> out;
+  for (const FxInterval& iv : st.intervals) {
+    put32(out, iv.first);
+    put32(out, iv.last);
+    put32(out, iv.offset);
+  }
+  for (const FxGlyph& g : st.glyphs) {
+    put8(out, g.width);
+    put8(out, g.height);
+    put16(out, g.advanceX);
+    put16(out, static_cast<uint16_t>(g.left));
+    put16(out, static_cast<uint16_t>(g.top));
+    put16(out, g.dataLength);
+    pad(out, 2);
+    put32(out, g.dataOffset);
+  }
+  out.insert(out.end(), st.bitmaps.begin(), st.bitmaps.end());
+  return out;
+}
+
+// Build a v4 file. Styles are laid out in the order given, contiguously.
+std::vector<uint8_t> buildCpFont(const std::vector<FxStyle>& styles) {
+  std::vector<uint8_t> blob;
+  const char magic[8] = {'C', 'P', 'F', 'O', 'N', 'T', '\0', '\0'};
+  blob.insert(blob.end(), magic, magic + 8);
+  put16(blob, CPFONT_VERSION);
+  put16(blob, 1);  // flags: bit 0 = 2 bpp
+  put8(blob, static_cast<uint8_t>(styles.size()));
+  pad(blob, 19);
+
+  std::vector<std::vector<uint8_t>> sections;
+  sections.reserve(styles.size());
+  for (const FxStyle& st : styles) sections.push_back(styleSections(st));
+
+  uint32_t offset = FX_HEADER_SIZE + static_cast<uint32_t>(styles.size()) * FX_TOC_ENTRY_SIZE;
+  for (size_t i = 0; i < styles.size(); i++) {
+    const FxStyle& st = styles[i];
+    put8(blob, st.styleId);
+    pad(blob, 3);
+    put32(blob, static_cast<uint32_t>(st.intervals.size()));
+    put32(blob, st.glyphCountOverride != 0 ? st.glyphCountOverride : static_cast<uint32_t>(st.glyphs.size()));
+    put8(blob, 20);                          // advanceY
+    put16(blob, static_cast<uint16_t>(14));  // ascender
+    put16(blob, static_cast<uint16_t>(-4));  // descender
+    put16(blob, 0);                          // kernLeftEntryCount
+    put16(blob, 0);                          // kernRightEntryCount
+    put8(blob, 0);                           // kernLeftClassCount
+    put8(blob, 0);                           // kernRightClassCount
+    put8(blob, 0);                           // ligaturePairCount
+    put32(blob, st.dataOffsetOverridden ? st.dataOffsetOverride : offset);
+    pad(blob, 4);
+    offset += static_cast<uint32_t>(sections[i].size());
+  }
+  for (const std::vector<uint8_t>& sec : sections) blob.insert(blob.end(), sec.begin(), sec.end());
+  return blob;
+}
+
+// A style covering [first, first+count-1] plus U+FFFD (prewarm always asks for
+// the replacement glyph). Every glyph is 4x1 at 2 bpp: exactly one bitmap byte.
+FxStyle simpleStyle(uint8_t styleId, uint32_t first, uint32_t count) {
+  FxStyle st;
+  st.styleId = styleId;
+  st.intervals.push_back({first, first + count - 1, 0});
+  st.intervals.push_back({FX_REPLACEMENT_CP, FX_REPLACEMENT_CP, count});
+  for (uint32_t i = 0; i <= count; i++) {
+    FxGlyph g;
+    g.advanceX = static_cast<uint16_t>(100 + i);
+    g.dataOffset = i;
+    st.glyphs.push_back(g);
+    st.bitmaps.push_back(static_cast<uint8_t>(0x40 + i));
+  }
+  return st;
+}
+
+class SdCardFontHostileTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    sandbox_ = std::string(CPFONT_SANDBOX_DIR "/") + ::testing::UnitTest::GetInstance()->current_test_info()->name();
+    makeDirs(sandbox_);
+    halstub::root = sandbox_;
+    ESP = EspHostStub{};
+  }
+  void TearDown() override {
+    halstub::root.clear();
+    ESP = EspHostStub{};
+  }
+
+  // Write `bytes` into this test's sandbox; returns the device path to load.
+  std::string writeFont(const std::vector<uint8_t>& bytes) {
+    const char* devicePath = "/hostile.cpfont";
+    std::FILE* f = std::fopen((sandbox_ + devicePath).c_str(), "wb");
+    EXPECT_NE(f, nullptr);
+    if (f) {
+      std::fwrite(bytes.data(), 1, bytes.size(), f);
+      std::fclose(f);
+    }
+    return devicePath;
+  }
+
+  std::string sandbox_;
+};
+
+}  // namespace
+
+TEST_F(SdCardFontHostileTest, WellFormedProgrammaticFontStillLoadsAndPrewarms) {
+  // Guards the new bounds against off-by-one: the last glyph's bitmap byte ends
+  // exactly at EOF.
+  const std::vector<uint8_t> blob = buildCpFont({simpleStyle(0, 'A', 3)});
+  SdCardFont font;
+  ASSERT_TRUE(font.load(writeFont(blob).c_str()));
+  EXPECT_EQ(font.prewarm("AC"), 0);
+  const EpdGlyph* glyph = font.getEpdFont(0)->getGlyph('C');
+  ASSERT_NE(glyph, nullptr);
+  EXPECT_EQ(glyph->advanceX, 102);
+}
+
+TEST_F(SdCardFontHostileTest, GlyphClaimingMorePixelsThanItsBytesIsRejected) {
+  // 'B' claims a 40x40 bitmap (400 bytes at 2 bpp) backed by its 1 declared
+  // byte. Nothing else in the file is wrong, so only the metrics-vs-dataLength
+  // check stands between this record and a 400-byte read of a 1-byte arena.
+  FxStyle style = simpleStyle(0, 'A', 3);
+  style.glyphs[1].width = 40;
+  style.glyphs[1].height = 40;
+  SdCardFont font;
+  ASSERT_TRUE(font.load(writeFont(buildCpFont({style})).c_str()));
+
+  // Prewarm refuses the whole page rather than making the record resident.
+  EXPECT_EQ(font.prewarm("AB"), 3);
+  EXPECT_EQ(font.getEpdFont(0)->data->intervalCount, 0u) << "nothing may be resident";
+
+  // The on-demand path refuses it too, so the lookup yields the replacement
+  // glyph instead of the oversized record.
+  const EpdFont* epd = font.getEpdFont(0);
+  const EpdGlyph* served = epd->getGlyph('B');
+  ASSERT_NE(served, nullptr);
+  EXPECT_EQ(served->width, 4) << "the 40x40 record must never be served";
+  EXPECT_EQ(served, epd->getGlyph(FX_REPLACEMENT_CP));
+}
+
+TEST_F(SdCardFontHostileTest, GlyphBitmapCrossingIntoTheNextStylesSectionIsRejected) {
+  // Style 0's bitmap section is 4 bytes; 'B' claims bytes 3..6, i.e. 3 bytes of
+  // style 2's data. Those bytes exist in the file, so only a bound derived from
+  // the neighbouring style's data offset can catch it.
+  FxStyle regular = simpleStyle(0, 'A', 3);
+  regular.glyphs[1].dataOffset = 3;
+  regular.glyphs[1].dataLength = 4;
+  const FxStyle italic = simpleStyle(2, 'A', 3);
+  SdCardFont font;
+  ASSERT_TRUE(font.load(writeFont(buildCpFont({regular, italic})).c_str()));
+  EXPECT_EQ(font.styleCount(), 2);
+
+  EXPECT_EQ(font.prewarm("AB", 0x01), 3);
+  const EpdFont* epd = font.getEpdFont(0);
+  EXPECT_EQ(epd->getGlyph('B'), epd->getGlyph(FX_REPLACEMENT_CP));
+
+  // The untouched italic style is unaffected.
+  EXPECT_EQ(font.prewarm("AB", 0x04), 0);
+}
+
+TEST_F(SdCardFontHostileTest, GlyphBitmapPastEndOfFileIsRejectedForTheLastStyle) {
+  // Single style: the bitmap section ends at EOF, so a record reaching past it
+  // must be refused even though every count in the TOC is plausible.
+  FxStyle style = simpleStyle(0, 'A', 3);
+  style.glyphs[1].dataOffset = 3;
+  style.glyphs[1].dataLength = 8;
+  SdCardFont font;
+  ASSERT_TRUE(font.load(writeFont(buildCpFont({style})).c_str()));
+
+  EXPECT_EQ(font.prewarm("AB"), 3);
+  const EpdFont* epd = font.getEpdFont(0);
+  EXPECT_EQ(epd->getGlyph('B'), epd->getGlyph(FX_REPLACEMENT_CP));
+}
+
+TEST_F(SdCardFontHostileTest, GlyphDataOffsetWrappingA32BitSumIsRejected) {
+  // dataOffset = 2^32-1 makes bitmapFileOffset + dataOffset + dataLength wrap a
+  // 32-bit accumulator back to bitmapFileOffset itself, so the record looks
+  // in-range while the read lands on someone else's bytes. Only 64-bit
+  // accumulation in the bound sees the overflow.
+  FxStyle style = simpleStyle(0, 'A', 3);
+  style.glyphs[1].dataOffset = 0xFFFFFFFFu;
+  SdCardFont font;
+  ASSERT_TRUE(font.load(writeFont(buildCpFont({style})).c_str()));
+
+  EXPECT_EQ(font.prewarm("AB"), 3);
+  const EpdFont* epd = font.getEpdFont(0);
+  EXPECT_EQ(epd->getGlyph('B'), epd->getGlyph(FX_REPLACEMENT_CP));
+}
+
+TEST_F(SdCardFontHostileTest, ZeroSizedGlyphIsAcceptedNotRejected) {
+  // Real fonts carry zero-metric records (space has no bitmap at all), so the
+  // needed-bytes bound must treat 0 pixels backed by 0 bytes as valid.
+  FxStyle style = simpleStyle(0, 'A', 3);
+  style.glyphs[1].width = 0;
+  style.glyphs[1].height = 0;
+  style.glyphs[1].dataLength = 0;
+  SdCardFont font;
+  ASSERT_TRUE(font.load(writeFont(buildCpFont({style})).c_str()));
+
+  EXPECT_EQ(font.prewarm("AB"), 0);
+  const EpdFont* epd = font.getEpdFont(0);
+  const EpdGlyph* served = epd->getGlyph('B');
+  ASSERT_NE(served, nullptr);
+  EXPECT_EQ(served->width, 0);
+  EXPECT_NE(served, epd->getGlyph(FX_REPLACEMENT_CP));
+}
+
+TEST_F(SdCardFontHostileTest, TocGlyphCountReachingPastEofIsRejectedAtLoad) {
+  // 5000 glyphs passes the loader's plausibility cap but puts the glyph table
+  // (and every section after it) past the end of a ~100-byte file. Checking the
+  // count against the real file size is the only way to see that.
+  FxStyle style = simpleStyle(0, 'A', 3);
+  style.glyphCountOverride = 5000;
+  SdCardFont font;
+  EXPECT_FALSE(font.load(writeFont(buildCpFont({style})).c_str()));
+  EXPECT_EQ(font.getEpdFont(0), nullptr);
+  EXPECT_EQ(font.styleCount(), 0);
+}
+
+TEST_F(SdCardFontHostileTest, TocDataOffsetOutsideTheDataAreaIsRejectedAtLoad) {
+  // An empty interval table means no later read can trip over the lie: without
+  // an offset check these files load "successfully" with a bogus layout.
+  FxStyle style = simpleStyle(0, 'A', 3);
+  style.intervals.clear();
+  style.dataOffsetOverridden = true;
+
+  for (const uint32_t badOffset : {0u, 16u, 0x40000000u, 0xFFFFFFF0u}) {
+    style.dataOffsetOverride = badOffset;
+    SdCardFont font;
+    EXPECT_FALSE(font.load(writeFont(buildCpFont({style})).c_str())) << "dataOffset " << badOffset;
+    EXPECT_EQ(font.getEpdFont(0), nullptr) << "dataOffset " << badOffset;
+  }
 }
 
 // --- SdCardFontRegistry: discovery and filename parsing ---

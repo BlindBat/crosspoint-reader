@@ -1141,4 +1141,101 @@ TEST_F(GfxRendererTest, SdCardFontScalesDefaultToUnityAndAreClearable) {
   EXPECT_EQ(renderer.getSdCardFontScale(kTiny), 256);
 }
 
+// ---------------------------------------------------------------------------
+// Hostile glyph metrics: the decode must stay inside the glyph's own bitmap
+// (FR-116). An SD-card font's glyph record comes from an untrusted file, and
+// nothing in the format ties width/height to dataLength.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// One-glyph font ('A') whose declared dataLength is deliberately smaller than
+// its width x height needs. `bufferBytes` sizes the actual allocation
+// independently: give it padding to make the over-read deterministic, or make
+// it exactly `declaredLength` so an over-read is a true heap overflow ASan can
+// trap.
+class LyingGlyphFont {
+ public:
+  LyingGlyphFont(uint8_t width, uint8_t height, uint16_t declaredLength, size_t bufferBytes, bool is2Bit, uint8_t fill)
+      : bitmap_(bufferBytes, fill) {
+    // top == ascender, so glyph row 0 always lands on the drawText y whatever
+    // height the record claims.
+    glyph_ = {width, height, 0x40, 0, kAscender, declaredLength, 0};
+    interval_ = {0x0041, 0x0041, 0};
+    data_.bitmap = bitmap_.data();
+    data_.glyph = &glyph_;
+    data_.intervals = &interval_;
+    data_.intervalCount = 1;
+    data_.advanceY = 20;
+    data_.ascender = kAscender;
+    data_.descender = -4;
+    data_.is2Bit = is2Bit;
+  }
+
+  static constexpr int16_t kAscender = 16;
+  LyingGlyphFont(const LyingGlyphFont&) = delete;
+  LyingGlyphFont& operator=(const LyingGlyphFont&) = delete;
+
+  EpdFontFamily family() const { return EpdFontFamily(&font_); }
+
+ private:
+  std::vector<uint8_t> bitmap_;
+  EpdGlyph glyph_{};
+  EpdUnicodeInterval interval_{};
+  EpdFontData data_{};
+  EpdFont font_{&data_};
+};
+
+constexpr int kLiar = 4;
+// drawText's y is the top of the line; with top == ascender the glyph's row 0
+// lands exactly there.
+constexpr int kTopY = 40;
+
+}  // namespace
+
+TEST_F(GfxRendererTest, GlyphClaimingMoreRowsThanItsDataPaintsOnlyBackedRows) {
+  // 1-bit, 8x8 = 8 bytes of ink claimed, 1 byte declared. The allocation holds
+  // 8 solid bytes, so an unclamped decode would paint all 8 rows.
+  LyingGlyphFont liar(8, 8, 1, 8, false, 0xFF);
+  renderer.insertFont(kLiar, liar.family());
+  renderer.drawText(kLiar, 0, kTopY, "A");
+
+  EXPECT_EQ(inkCount(), 8u) << "only the single row the declared dataLength backs may be painted";
+  for (int x = 0; x < 8; x++) {
+    EXPECT_TRUE(ink(x, kTopY)) << "x=" << x;
+  }
+  for (int y = kTopY + 1; y < kTopY + 8; y++) {
+    for (int x = 0; x < 8; x++) {
+      EXPECT_FALSE(ink(x, y)) << "row " << y << " is not backed by bitmap data";
+    }
+  }
+}
+
+TEST_F(GfxRendererTest, TwoBitGlyphClaimingMoreRowsThanItsDataPaintsOnlyBackedRows) {
+  // 2-bit, 8x8 needs 16 bytes; 4 declared == 16 pixels == 2 rows.
+  LyingGlyphFont liar(8, 8, 4, 16, true, 0xFF);
+  renderer.insertFont(kLiar, liar.family());
+  renderer.drawText(kLiar, 0, kTopY, "A");
+
+  EXPECT_EQ(inkCount(), 16u) << "2 bpp: 4 declared bytes back exactly two 8-pixel rows";
+}
+
+TEST_F(GfxRendererTest, GlyphDecodeStaysInsideItsOwnBitmapAllocation) {
+  // The allocation is exactly the declared length, so reading even one byte
+  // past it is a heap overflow (--asan traps; a plain run still sees the row
+  // clamp).
+  LyingGlyphFont liar(16, 200, 2, 2, false, 0xFF);
+  renderer.insertFont(kLiar, liar.family());
+  renderer.drawText(kLiar, 0, kTopY, "A");
+
+  EXPECT_EQ(inkCount(), 16u) << "2 bytes at 1 bpp back exactly one 16-pixel row";
+}
+
+TEST_F(GfxRendererTest, RotatedGlyphDecodeIsClampedToo) {
+  LyingGlyphFont liar(8, 8, 1, 8, false, 0xFF);
+  renderer.insertFont(kLiar, liar.family());
+  renderer.drawTextRotated90CW(kLiar, 100, 100, "A");
+  EXPECT_EQ(inkCount(), 8u) << "the rotated decode shares the clamp";
+}
+
 }  // namespace

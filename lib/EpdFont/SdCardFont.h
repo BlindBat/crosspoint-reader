@@ -169,6 +169,11 @@ class SdCardFont {
     uint32_t kernMatrixFileOffset = 0;
     uint32_t ligatureFileOffset = 0;
     uint32_t bitmapFileOffset = 0;
+    // One-past-the-end of this style's bitmap section, resolved at load from
+    // the real file size and the neighbouring styles' data offsets. Bounds
+    // every glyph's (dataOffset, dataLength) without re-querying the file size
+    // per glyph. 16 bytes total for the four style slots.
+    uint32_t bitmapSectionEnd = 0;
 
     // Full intervals loaded from file (kept in RAM for codepoint lookup)
     EpdUnicodeInterval* fullIntervals = nullptr;
@@ -330,7 +335,12 @@ class SdCardFont {
   // Global helpers
   void freeAll();
   void clearOverflow();
-  static void computeStyleFileOffsets(PerStyle& s, uint32_t baseOffset);
+  // Lay out a style's sections from its TOC data offset. Returns false when the
+  // declared section sizes run past `fileSize` (or wrap), i.e. the TOC lies.
+  static bool computeStyleFileOffsets(PerStyle& s, uint32_t baseOffset, uint32_t dataStart, uint32_t fileSize);
+  // Reject an untrusted glyph record: the bitmap must be large enough for the
+  // declared pixel count and must lie inside this style's bitmap section.
+  static bool glyphRecordIsValid(const PerStyle& s, const EpdGlyph& g);
 
   // Static callback for EpdFontData::glyphMissHandler (per-style via OverflowContext)
   static const EpdGlyph* onGlyphMiss(void* ctx, uint32_t codepoint);

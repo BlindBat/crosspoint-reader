@@ -25,14 +25,14 @@ namespace testfonts {
 // 'B' 2x2 solid, advance 2.5 px      'E' 1x1 solid, advance 1.0 px
 // 'C' 4x4 solid, advance 4.5 px      'F' 2x2, ink only at (1,1)
 inline constexpr uint8_t kTinyBitmap[] = {
-    0xF0,  // 'A' 2x2 solid
-    0xF0,  // 'B' 2x2 solid
+    0xF0,        // 'A' 2x2 solid
+    0xF0,        // 'B' 2x2 solid
     0xFF, 0xFF,  // 'C' 4x4 solid
-    0x80,  // 'D' 2x2, pixel (0,0)
-    0x80,  // 'E' 1x1
-    0x10,  // 'F' 2x2, pixel (1,1)
-    0xE0,  // U+2026 3x1
-    0xF0,  // U+FFFD 2x2 solid
+    0x80,        // 'D' 2x2, pixel (0,0)
+    0x80,        // 'E' 1x1
+    0x10,        // 'F' 2x2, pixel (1,1)
+    0xE0,        // U+2026 3x1
+    0xF0,        // U+FFFD 2x2 solid
 };
 
 inline constexpr EpdGlyph kTinyGlyphs[] = {

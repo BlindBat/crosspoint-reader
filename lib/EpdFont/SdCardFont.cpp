@@ -512,15 +512,44 @@ bool SdCardFont::onCoverageQuery(void* ctx, const uint32_t codepoint) {
 
 // --- Compute per-style file offsets from a base data offset ---
 
-void SdCardFont::computeStyleFileOffsets(PerStyle& s, uint32_t baseOffset) {
-  s.intervalsFileOffset = baseOffset;
-  s.glyphsFileOffset = s.intervalsFileOffset + s.header.intervalCount * sizeof(EpdUnicodeInterval);
-  s.kernLeftFileOffset = s.glyphsFileOffset + s.header.glyphCount * sizeof(EpdGlyph);
-  s.kernRightFileOffset = s.kernLeftFileOffset + s.header.kernLeftEntryCount * sizeof(EpdKernClassEntry);
-  s.kernMatrixFileOffset = s.kernRightFileOffset + s.header.kernRightEntryCount * sizeof(EpdKernClassEntry);
-  s.ligatureFileOffset =
-      s.kernMatrixFileOffset + static_cast<uint32_t>(s.header.kernLeftClassCount) * s.header.kernRightClassCount;
-  s.bitmapFileOffset = s.ligatureFileOffset + s.header.ligaturePairCount * sizeof(EpdLigaturePair);
+bool SdCardFont::computeStyleFileOffsets(PerStyle& s, uint32_t baseOffset, uint32_t dataStart, uint32_t fileSize) {
+  // Every term below is a count the (untrusted) file supplies, so the running
+  // offset accumulates in 64-bit: in uint32 a malformed TOC can wrap a section
+  // back inside the file and make an out-of-range read look in-range.
+  uint64_t off = baseOffset;
+  s.intervalsFileOffset = static_cast<uint32_t>(off);
+  off += static_cast<uint64_t>(s.header.intervalCount) * sizeof(EpdUnicodeInterval);
+  s.glyphsFileOffset = static_cast<uint32_t>(off);
+  off += static_cast<uint64_t>(s.header.glyphCount) * sizeof(EpdGlyph);
+  s.kernLeftFileOffset = static_cast<uint32_t>(off);
+  off += static_cast<uint64_t>(s.header.kernLeftEntryCount) * sizeof(EpdKernClassEntry);
+  s.kernRightFileOffset = static_cast<uint32_t>(off);
+  off += static_cast<uint64_t>(s.header.kernRightEntryCount) * sizeof(EpdKernClassEntry);
+  s.kernMatrixFileOffset = static_cast<uint32_t>(off);
+  off += static_cast<uint64_t>(s.header.kernLeftClassCount) * s.header.kernRightClassCount;
+  s.ligatureFileOffset = static_cast<uint32_t>(off);
+  off += static_cast<uint64_t>(s.header.ligaturePairCount) * sizeof(EpdLigaturePair);
+  s.bitmapFileOffset = static_cast<uint32_t>(off);
+  // Provisional: narrowed to the next style's data offset in load(), once every
+  // style's TOC entry is known.
+  s.bitmapSectionEnd = fileSize;
+  // Sections other than the bitmap all have a declared length, so the whole
+  // fixed part must lie between the end of the TOC and EOF of the real file.
+  return baseOffset >= dataStart && off <= fileSize;
+}
+
+// A glyph record is two independent claims: the metrics (width/height) and the
+// bitmap extent (dataOffset/dataLength). Nothing in the format ties them, so a
+// malformed file can promise more pixels than its bytes back, or point the
+// bitmap outside the style's section. Checked once per glyph as it is read from
+// SD — never per glyph per frame.
+bool SdCardFont::glyphRecordIsValid(const PerStyle& s, const EpdGlyph& g) {
+  const uint32_t pixels = static_cast<uint32_t>(g.width) * g.height;
+  const uint32_t neededBytes = s.header.is2Bit ? (pixels + 3) / 4 : (pixels + 7) / 8;
+  if (neededBytes > g.dataLength) return false;
+  // dataOffset is relative to the style's bitmap section.
+  const uint64_t end = static_cast<uint64_t>(s.bitmapFileOffset) + g.dataOffset + g.dataLength;
+  return end <= s.bitmapSectionEnd;
 }
 
 // --- Load ---
@@ -537,6 +566,20 @@ bool SdCardFont::load(const char* path) {
   HalFile file;
   if (!Storage.openFileForRead("SDCF", path, file)) {
     LOG_ERR("SDCF", "Failed to open .cpfont: %s", path);
+    return false;
+  }
+
+  // The physical file size is the only length in play the file itself cannot
+  // forge; every section bound below is checked against it, never against a
+  // header field. Taken once here so no later read has to re-query it.
+  const size_t rawFileSize = file.size();
+  const uint32_t fileSize = static_cast<uint32_t>(rawFileSize);
+  if (static_cast<size_t>(fileSize) != rawFileSize) {
+    LOG_ERR("SDCF", "File too large for 32-bit offsets: %s", path);
+    return false;
+  }
+  if (fileSize < HEADER_SIZE) {
+    LOG_ERR("SDCF", "File too small (%u bytes): %s", fileSize, path);
     return false;
   }
 
@@ -566,6 +609,13 @@ bool SdCardFont::load(const char* path) {
   uint8_t styleCount = headerBuf[12];
   if (styleCount == 0 || styleCount > MAX_STYLES) {
     LOG_ERR("SDCF", "Invalid style count: %u", styleCount);
+    return false;
+  }
+
+  // First byte of style data: everything before it is header + TOC.
+  const uint32_t dataStart = HEADER_SIZE + static_cast<uint32_t>(styleCount) * STYLE_TOC_ENTRY_SIZE;
+  if (fileSize < dataStart) {
+    LOG_ERR("SDCF", "File shorter than header+TOC for %u styles: %s", styleCount, path);
     return false;
   }
 
@@ -619,7 +669,28 @@ bool SdCardFont::load(const char* path) {
     }
 
     uint32_t dataOffset = readU32(tocBuf + 24);
-    computeStyleFileOffsets(s, dataOffset);
+    if (!computeStyleFileOffsets(s, dataOffset, dataStart, fileSize)) {
+      LOG_ERR("SDCF", "Style %u: sections fall outside the %u-byte file (dataOffset=%u)", styleId, fileSize,
+              dataOffset);
+      file.close();
+      freeAll();
+      return false;
+    }
+  }
+
+  // Narrow each style's bitmap section to the next style's data offset. The
+  // bitmap section carries no declared length — it is whatever lies between the
+  // style's fixed sections and the start of the next style (or EOF) — so this
+  // is the only bound a glyph's (dataOffset, dataLength) can be checked against.
+  for (uint8_t a = 0; a < MAX_STYLES; a++) {
+    if (!styles_[a].present) continue;
+    uint32_t end = fileSize;
+    for (uint8_t b = 0; b < MAX_STYLES; b++) {
+      if (b == a || !styles_[b].present) continue;
+      const uint32_t otherStart = styles_[b].intervalsFileOffset;  // that style's TOC dataOffset
+      if (otherStart >= styles_[a].bitmapFileOffset && otherStart < end) end = otherStart;
+    }
+    styles_[a].bitmapSectionEnd = end;
   }
 
   styleCount_ = styleCount;
@@ -1168,6 +1239,18 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
       freeStyleMiniData(s);
       return static_cast<int>(cpCount);
     }
+    // dataOffset is still the file-relative value here; the bitmap pass below
+    // rewrites it to the mini-arena offset, so this is the last point the
+    // record can be checked against the file.
+    if (!glyphRecordIsValid(s, s.miniGlyphs[mapIdx])) {
+      const EpdGlyph& bad = s.miniGlyphs[mapIdx];
+      LOG_ERR("SDCF", "Prewarm: bad glyph record %d (style %u): %ux%u, len=%u, off=%u", gIdx, styleIdx, bad.width,
+              bad.height, bad.dataLength, bad.dataOffset);
+      delete[] readOrder;
+      delete[] mappings;
+      freeStyleMiniData(s);
+      return static_cast<int>(cpCount);
+    }
     lastReadIndex = gIdx;
   }
 
@@ -1632,6 +1715,11 @@ const EpdGlyph* SdCardFont::onGlyphMiss(void* ctx, uint32_t codepoint) {
   }
   if (file.read(reinterpret_cast<uint8_t*>(&tempGlyph), sizeof(EpdGlyph)) != sizeof(EpdGlyph)) {
     LOG_ERR("SDCF", "Overflow: failed to read glyph metadata for U+%04X style %u", codepoint, styleIdx);
+    return nullptr;
+  }
+  if (!glyphRecordIsValid(s, tempGlyph)) {
+    LOG_ERR("SDCF", "Overflow: bad glyph record for U+%04X style %u: %ux%u, len=%u, off=%u", codepoint, styleIdx,
+            tempGlyph.width, tempGlyph.height, tempGlyph.dataLength, tempGlyph.dataOffset);
     return nullptr;
   }
 
