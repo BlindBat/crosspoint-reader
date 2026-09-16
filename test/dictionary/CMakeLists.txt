@@ -1,13 +1,15 @@
 # StarDict Dictionary (.idx / .syn / sampled-offset sidecar) lookup suite.
-# Compiles the production Dictionary plus the DictZip reader its definitions
-# stream through, over the stdio HalStorage stub shared with test/dict_zip.
-# DictionaryRegistry is link-stubbed (the real one needs HalFile directory
-# iteration). Fixtures: scripts/generate_test_dict.py -> test/dict_common.
+# Compiles the production Dictionary, the DictionaryRegistry folder scan it
+# resolves through, and the DictZip reader its definitions stream through,
+# over the stdio/dirent HalStorage stub shared with test/dict_zip.
+# Fixtures: scripts/generate_test_dict.py -> test/dict_common, plus byte
+# builders in the tests for the registry, .ifo, stemming and yield cases.
 add_executable(DictionaryTest
   DictionaryTest.cpp
-  DictRegistryLinkStub.cpp
+  DictionaryRegistryTest.cpp
   ${REPO_ROOT}/test/support/AllocCounter.cpp
   ${REPO_ROOT}/src/util/Dictionary.cpp
+  ${REPO_ROOT}/src/util/DictionaryRegistry.cpp
   ${REPO_ROOT}/src/util/DictZip.cpp
   ${REPO_ROOT}/lib/InflateReader/InflateReader.cpp
   ${REPO_ROOT}/lib/uzlib/src/tinflate.c

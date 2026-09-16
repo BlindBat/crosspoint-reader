@@ -9,6 +9,7 @@
 
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
+#include "util/DictTextUtils.h"
 
 // Paged viewer for one dictionary definition. HTML definitions are laid out
 // through the EPUB chapter parser into styled Pages; anything else (plain
@@ -29,12 +30,8 @@ class DictionaryDefinitionActivity final : public Activity {
   void render(RenderLock&&) override;
 
  private:
-  // One wrapped display line: a byte span of `definition`. Wrapping keeps
-  // lines under the screen width, so uint16_t length is ample.
-  struct Line {
-    uint32_t start;
-    uint16_t len;
-  };
+  // One wrapped display line: a byte span of `definition`.
+  using Line = DictTextUtils::WrappedLine;
 
   // Usable body-text area between the header and the button hints.
   struct BodyArea {

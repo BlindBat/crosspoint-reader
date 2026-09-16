@@ -16,9 +16,7 @@
 
 namespace {
 
-// Longest measurable/drawable span. Wrapped lines stay under the screen width
-// (far below this); only pathological unbreakable tokens are split at this cap.
-constexpr size_t MAX_LINE_BYTES = 191;
+using DictTextUtils::MAX_LINE_BYTES;
 
 // Body text left/right inset, matching the reader's default feel.
 constexpr int SIDE_PADDING = 20;
@@ -89,14 +87,9 @@ int DictionaryDefinitionActivity::measureSpan(const int fontId, const char* text
   return renderer.getTextAdvanceX(fontId, buf, EpdFontFamily::REGULAR);
 }
 
-// Greedy word-wrap of `definition` into byte spans. '\n' breaks lines (blank
-// lines survive as paragraph spacing; NULs from multi-type StarDict entries
-// were normalized to newlines in onEnter); '\r' is dropped by treating it as
-// a space at a token edge.
+// Wrap `definition` into byte spans (NULs from multi-type StarDict entries
+// were normalized to newlines in onEnter) and size the page grid.
 void DictionaryDefinitionActivity::wrapText() {
-  lines.clear();
-  lines.reserve(definition.size() / 32 + 8);
-
   const int fontId = SETTINGS.getReaderFontId();
   // SD-card fonts: merge every definition codepoint into the persistent
   // advance table up front. Otherwise each unseen codepoint measured below
@@ -104,94 +97,21 @@ void DictionaryDefinitionActivity::wrapText() {
   renderer.ensureSdCardFontReady(fontId, definition.c_str(), 0x01 /* REGULAR */);
 
   const BodyArea body = bodyArea();
-  const int maxWidth = body.width;
   const int spaceWidth = renderer.getSpaceWidth(fontId, EpdFontFamily::REGULAR);
   const int lineHeight = renderer.getLineHeight(fontId);
   linesPerPage = std::max(1, body.height / lineHeight);
 
-  const char* text = definition.c_str();
-  const uint32_t n = static_cast<uint32_t>(definition.size());
-  uint32_t lineStart = 0;
-  uint32_t lineEnd = 0;  // one past the last token byte on the current line
-  int lineWidth = 0;
-
-  const auto flushLine = [&](uint32_t nextStart) {
-    lines.push_back({lineStart, static_cast<uint16_t>(lineEnd - lineStart)});
-    lineStart = nextStart;
-    lineEnd = nextStart;
-    lineWidth = 0;
+  struct MeasureCtx {
+    const DictionaryDefinitionActivity* self;
+    int fontId;
   };
-
-  uint32_t i = 0;
-  while (i < n) {
-    const char c = text[i];
-    if (c == '\n' || c == '\0') {
-      flushLine(i + 1);
-      i++;
-      continue;
-    }
-    if (c == ' ' || c == '\t' || c == '\r') {
-      i++;
-      continue;
-    }
-
-    // Token: run of non-whitespace bytes, capped at the measure buffer.
-    const uint32_t tokenStart = i;
-    while (i < n && text[i] != ' ' && text[i] != '\t' && text[i] != '\r' && text[i] != '\n' && text[i] != '\0' &&
-           i - tokenStart < MAX_LINE_BYTES) {
-      i++;
-    }
-    // If the byte cap cut the token mid-UTF-8-sequence, back off to the last
-    // complete codepoint so measure/draw never see a partial sequence. A
-    // natural stop lands on whitespace or the terminating NUL, never on a
-    // continuation byte, so this is a no-op there.
-    while (i - tokenStart > 1 && (text[i] & 0xC0) == 0x80) i--;
-    const uint32_t tokenLen = i - tokenStart;
-    const int tokenWidth = measureSpan(fontId, text + tokenStart, tokenLen);
-
-    if (lineEnd == lineStart) {
-      lineStart = tokenStart;
-      lineEnd = tokenStart + tokenLen;
-      lineWidth = tokenWidth;
-    } else if (lineWidth + spaceWidth + tokenWidth <= maxWidth &&
-               tokenStart + tokenLen - lineStart <= UINT16_MAX) {  // span len must fit Line::len
-      lineEnd = tokenStart + tokenLen;
-      lineWidth += spaceWidth + tokenWidth;
-    } else {
-      flushLine(tokenStart);
-      lineEnd = tokenStart + tokenLen;
-      lineWidth = tokenWidth;
-    }
-
-    // An unbreakable token wider than the screen is now alone on the line
-    // (any previous content was flushed above): split it at the widest
-    // fitting UTF-8 boundary and carry the remainder forward.
-    while (lineWidth > maxWidth && lineEnd - lineStart > 1) {
-      const uint32_t len = lineEnd - lineStart;
-      uint32_t lastFit = 0;
-      for (uint32_t f = 1; f <= len; f++) {
-        if (f == len || (text[lineStart + f] & 0xC0) != 0x80) {  // codepoint boundary
-          if (measureSpan(fontId, text + lineStart, f) > maxWidth) break;
-          lastFit = f;
-        }
-      }
-      if (lastFit == 0) {
-        // Even a single over-wide glyph must make progress; consume its whole
-        // UTF-8 sequence rather than splitting it into invalid fragments.
-        lastFit = 1;
-        while (lastFit < len && (text[lineStart + lastFit] & 0xC0) == 0x80) lastFit++;
-      }
-      const uint32_t rest = lineStart + lastFit;
-      lineEnd = rest;
-      flushLine(rest);
-      lineEnd = rest + (len - lastFit);
-      lineWidth = measureSpan(fontId, text + lineStart, lineEnd - lineStart);
-    }
-  }
-  if (lineEnd > lineStart) flushLine(n);
-
-  // Trim trailing blank lines so the last page is not empty padding.
-  while (!lines.empty() && lines.back().len == 0) lines.pop_back();
+  MeasureCtx ctx{this, fontId};
+  const DictTextUtils::SpanMeasurer measurer{&ctx, [](void* c, const char* text, size_t len) {
+                                               const auto* m = static_cast<const MeasureCtx*>(c);
+                                               return m->self->measureSpan(m->fontId, text, len);
+                                             }};
+  DictTextUtils::wrapDefinitionText(definition.c_str(), static_cast<uint32_t>(definition.size()), body.width,
+                                    spaceWidth, measurer, lines);
 
   totalPages = std::max(1, (static_cast<int>(lines.size()) + linesPerPage - 1) / linesPerPage);
   currentPage = 0;

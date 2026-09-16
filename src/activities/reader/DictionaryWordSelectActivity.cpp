@@ -6,36 +6,16 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include <cctype>
-#include <climits>
-#include <cstdlib>
-
 #include "CrossPointSettings.h"
 #include "DictionaryDefinitionActivity.h"
 #include "components/UITheme.h"
+#include "util/DictTextUtils.h"
 
 namespace {
 
 constexpr unsigned long POPUP_DURATION_MS = 1500;
 constexpr unsigned long WORD_REPEAT_START_MS = 500;
 constexpr unsigned long WORD_REPEAT_INTERVAL_MS = 500;
-
-// A token is selectable when it has an ASCII alphanumeric or a non-ASCII
-// codepoint outside U+2000-U+206F (dashes, bullets and other General
-// Punctuation that appear as standalone tokens are not words).
-bool isSelectableToken(const char* text) {
-  for (const uint8_t* p = reinterpret_cast<const uint8_t*>(text); *p != 0; p++) {
-    if (*p < 0x80) {
-      if (std::isalnum(*p)) return true;
-    } else if (*p == 0xE2 && (p[1] == 0x80 || p[1] == 0x81)) {
-      if (p[2] == 0) break;  // truncated sequence: skipping would step past the NUL
-      p += 2;                // skip the 3-byte General Punctuation codepoint
-    } else {
-      return true;
-    }
-  }
-  return false;
-}
 
 void indexBuildYield(void*) { vTaskDelay(1); }
 
@@ -84,7 +64,7 @@ void DictionaryWordSelectActivity::extractWords() {
     const int rubyShift = block->getRubyShift(ascender);
     for (uint16_t i = 0; i < block->wordCount(); i++) {
       const char* text = block->wordText(i);
-      if (!isSelectableToken(text)) continue;
+      if (!DictTextUtils::isSelectableToken(text)) continue;
 
       WordBox box;
       box.x = static_cast<int16_t>(line->xPos + block->wordXpos(i) + marginLeft);
@@ -127,17 +107,7 @@ int DictionaryWordSelectActivity::wordAt(const int x, const int y) const {
 // Index of the word in `row` whose horizontal center is closest to centerX;
 // -1 when the row has no words.
 int DictionaryWordSelectActivity::closestInRow(const uint16_t row, const int centerX) const {
-  int best = -1;
-  int bestDistance = INT_MAX;
-  for (int i = 0; i < static_cast<int>(words.size()); i++) {
-    if (words[i].row != row) continue;
-    const int distance = std::abs(words[i].x + words[i].width / 2 - centerX);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = i;
-    }
-  }
-  return best;
+  return DictTextUtils::closestInRow(words.data(), words.size(), row, centerX);
 }
 
 void DictionaryWordSelectActivity::moveVertical(const int direction) {
