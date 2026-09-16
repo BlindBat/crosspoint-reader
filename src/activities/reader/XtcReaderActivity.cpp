@@ -6,13 +6,12 @@
 #include <I18n.h>
 #include <Memory.h>
 
-#include <algorithm>
-
 #include "CrossPointSettings.h"
 #include "ProgressFile.h"
 #include "ReaderActivity.h"
 #include "ReaderUtils.h"
 #include "XtcReaderChapterSelectionActivity.h"
+#include "XtcReaderMath.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -79,21 +78,16 @@ XtcReaderActivity::StatusBarInfo XtcReaderActivity::getStatusBarInfo() const {
     return StatusBarInfo{bookPage, bookPageCount, std::move(title)};
   }
 
-  const auto& chapters = xtc->getChapters();
-  const auto chapterIt = std::find_if(chapters.begin(), chapters.end(), [this](const xtc::ChapterInfo& chapter) {
-    return currentPage >= chapter.startPage && currentPage <= chapter.endPage;
-  });
-
-  if (chapterIt == chapters.end() || chapterIt->endPage < chapterIt->startPage) {
+  const auto position = xtc_reader::pagePosition(xtc->getChapters(), currentPage, xtc->getPageCount());
+  if (!position.chapter) {
     return StatusBarInfo{bookPage, bookPageCount, std::move(title)};
   }
 
   if (sb.titleMode == CrossPointSettings::STATUS_BAR_TITLE::CHAPTER_TITLE) {
-    title = chapterIt->name.empty() ? tr(STR_UNNAMED) : chapterIt->name;
+    title = position.chapter->name.empty() ? tr(STR_UNNAMED) : position.chapter->name;
   }
 
-  return StatusBarInfo{static_cast<int>(currentPage - chapterIt->startPage) + 1,
-                       static_cast<int>(chapterIt->endPage - chapterIt->startPage) + 1, std::move(title)};
+  return StatusBarInfo{position.currentPage, position.pageCount, std::move(title)};
 }
 
 void XtcReaderActivity::renderStatusBarOverlay(GfxRenderer& renderer, const StatusBarOverlayPosition position) const {
@@ -115,29 +109,16 @@ void XtcReaderActivity::renderStatusBarOverlay(GfxRenderer& renderer, const Stat
   renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
                                    &orientedMarginLeft);
 
-  int clearY;
-  int paddingBottom = 0;
-  if (position == StatusBarOverlayPosition::Bottom) {
-    clearY = renderer.getScreenHeight() - orientedMarginBottom - statusBarHeight - 4;
-    if (clearY < 0) {
-      clearY = 0;
-    }
-  } else {
-    clearY = orientedMarginTop;
-    paddingBottom = renderer.getScreenHeight() - statusBarHeight - orientedMarginBottom - orientedMarginTop - 4;
-  }
-  const int clearHeight = position == StatusBarOverlayPosition::Bottom
-                              ? renderer.getScreenHeight() - orientedMarginBottom - clearY
-                              : statusBarHeight + 4;
-  if (clearHeight > 0) {
-    renderer.fillRect(0, clearY, renderer.getScreenWidth(), clearHeight, false);
+  const auto layout =
+      xtc_reader::statusBarLayout(position == StatusBarOverlayPosition::Bottom, renderer.getScreenHeight(),
+                                  statusBarHeight, orientedMarginTop, orientedMarginBottom);
+  if (layout.clearHeight > 0) {
+    renderer.fillRect(0, layout.clearY, renderer.getScreenWidth(), layout.clearHeight, false);
   }
 
-  const int pageCount = static_cast<int>(xtc->getPageCount());
-  const int displayPage = static_cast<int>(currentPage) + 1;
-  const float progress = pageCount > 0 ? (static_cast<float>(displayPage) * 100.0f) / pageCount : 0.0f;
+  const float progress = xtc_reader::progressPercent(currentPage, xtc->getPageCount());
   const auto pageInfo = getStatusBarInfo();
-  GUI.drawStatusBar(renderer, progress, pageInfo.currentPage, pageInfo.pageCount, pageInfo.title, paddingBottom);
+  GUI.drawStatusBar(renderer, progress, pageInfo.currentPage, pageInfo.pageCount, pageInfo.title, layout.paddingBottom);
 }
 
 void XtcReaderActivity::renderPage() {
@@ -305,11 +286,9 @@ bool XtcReaderActivity::pageTurn(bool isForward) {
 
 bool XtcReaderActivity::skipPages(int amount) {
   if (!xtc) return false;
-  int newPage = static_cast<int>(currentPage) + amount;
-  if (newPage < 0) newPage = 0;
-  if (newPage > static_cast<int>(xtc->getPageCount())) newPage = static_cast<int>(xtc->getPageCount());
-  if (newPage != static_cast<int>(currentPage)) {
-    currentPage = static_cast<uint32_t>(newPage);
+  const uint32_t newPage = xtc_reader::skipTarget(currentPage, amount, xtc->getPageCount());
+  if (newPage != currentPage) {
+    currentPage = newPage;
     return true;
   }
   return false;
@@ -343,10 +322,7 @@ void XtcReaderActivity::loadProgress() {
   if (Storage.openFileForRead("XTC", xtc->getCachePath() + "/progress.bin", f)) {
     uint8_t data[4];
     if (f.read(data, 4) == 4) {
-      currentPage = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
-      if (currentPage >= xtc->getPageCount() && xtc->getPageCount() > 0) {
-        currentPage = xtc->getPageCount() - 1;
-      }
+      currentPage = xtc_reader::decodeProgress(data, xtc->getPageCount());
       LOG_DBG("XTC", "Loaded progress: page %lu/%lu", currentPage + 1, xtc->getPageCount());
     }
   }
@@ -360,7 +336,7 @@ ScreenshotInfo XtcReaderActivity::getScreenshotInfo() const {
     snprintf(info.title, sizeof(info.title), "%s", t.c_str());
     const uint32_t pageCount = xtc->getPageCount();
     info.totalPages = pageCount;
-    uint32_t clampedPage = (pageCount > 0 && currentPage >= pageCount) ? pageCount - 1 : currentPage;
+    const uint32_t clampedPage = xtc_reader::clampPage(currentPage, pageCount);
     info.progressPercent = pageCount > 0 ? xtc->calculateProgress(clampedPage) : 0;
     info.currentPage = static_cast<int>(clampedPage) + 1;
   } else {

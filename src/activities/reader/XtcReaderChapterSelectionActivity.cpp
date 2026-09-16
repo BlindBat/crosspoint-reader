@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "MappedInputManager.h"
+#include "XtcReaderMath.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -21,14 +22,7 @@ int XtcReaderChapterSelectionActivity::findChapterIndexForPage(const uint32_t pa
   if (!xtc) {
     return 0;
   }
-
-  const auto& chapters = xtc->getChapters();
-  for (size_t i = 0; i < chapters.size(); i++) {
-    if (page >= chapters[i].startPage && page <= chapters[i].endPage) {
-      return static_cast<int>(i);
-    }
-  }
-  return 0;
+  return xtc_reader::findChapterIndexForPage(xtc->getChapters(), page);
 }
 
 void XtcReaderChapterSelectionActivity::onEnter() {

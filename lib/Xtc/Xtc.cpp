@@ -10,14 +10,16 @@
 #include <Bitmap.h>
 #include <HalStorage.h>
 #include <Logging.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
+#include <PlatformSeam.h>
+
+#include <cstdlib>
+#include <cstring>
 
 namespace {
 void yieldDuringThumbnail(uint8_t& rowsSinceYield) {
   if (++rowsSinceYield < 8) return;
   rowsSinceYield = 0;
-  vTaskDelay(1);
+  platform::yield();
 }
 }  // namespace
 

@@ -12,6 +12,7 @@
 #include "CrossPointSettings.h"
 #include "EpubReaderPercentSelectionActivity.h"
 #include "Fb2ReaderChapterSelectionActivity.h"
+#include "Fb2ReaderMath.h"
 #include "MappedInputManager.h"
 #include "ProgressFile.h"
 #include "ReaderUtils.h"
@@ -21,10 +22,8 @@
 #include "fontIds.h"
 
 namespace {
-int clampPercent(const int percent) {
-  if (percent < 0) return 0;
-  if (percent > 100) return 100;
-  return percent;
+size_t cumulativeSectionSize(const void* ctx, const int index) {
+  return static_cast<const Fb2*>(ctx)->getCumulativeSectionSize(index);
 }
 }  // namespace
 
@@ -53,14 +52,14 @@ void Fb2ReaderActivity::loadProgress() {
   HalFile f;
   if (Storage.openFileForRead("FBR", fb2->getCachePath() + "/progress.bin", f)) {
     uint8_t data[6];
-    const int dataSize = f.read(data, 6);
-    if (dataSize == 4 || dataSize == 6) {
-      currentSectionIndex = data[0] | (data[1] << 8);
-      nextPageNumber = data[2] | (data[3] << 8);
+    const auto progress = fb2_reader::decodeProgress(data, f.read(data, 6));
+    if (progress.valid) {
+      currentSectionIndex = progress.sectionIndex;
+      nextPageNumber = progress.page;
       cachedSectionIndex = currentSectionIndex;
     }
-    if (dataSize == 6) {
-      cachedSectionTotalPageCount = data[4] | (data[5] << 8);
+    if (progress.hasPageCount) {
+      cachedSectionTotalPageCount = progress.pageCount;
     }
     LOG_DBG("FBR", "Loaded progress: section %d page %d", currentSectionIndex, nextPageNumber);
   }
@@ -103,7 +102,7 @@ bool Fb2ReaderActivity::handleFormatInput() {
 void Fb2ReaderActivity::openReaderMenu() {
   const int currentPage = section ? section->currentPage + 1 : 0;
   const int totalPages = section ? section->pageCount : 0;
-  const int progressPercent = clampPercent(static_cast<int>(bookProgressPercent() + 0.5f));
+  const int progressPercent = fb2_reader::roundedPercent(bookProgressPercent());
   startActivityForResult(
       std::make_unique<EpubReaderMenuActivity>(renderer, mappedInput, fb2->getTitle(), currentPage, totalPages,
                                                progressPercent, SETTINGS.orientation, /*hasFootnotes=*/false,
@@ -171,7 +170,7 @@ void Fb2ReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
       break;
     }
     case EpubReaderMenuActivity::MenuAction::GO_TO_PERCENT: {
-      const int initialPercent = clampPercent(static_cast<int>(bookProgressPercent() + 0.5f));
+      const int initialPercent = fb2_reader::roundedPercent(bookProgressPercent());
       startActivityForResult(
           std::make_unique<EpubReaderPercentSelectionActivity>(renderer, mappedInput, initialPercent),
           [this](const ActivityResult& result) {
@@ -230,40 +229,16 @@ void Fb2ReaderActivity::applyOrientation(const uint8_t orientation) {
   section.reset();
 }
 
-void Fb2ReaderActivity::jumpToPercent(int percent) {
+void Fb2ReaderActivity::jumpToPercent(const int percent) {
   if (!fb2) return;
 
-  const size_t bookSize = fb2->getBookSize();
-  if (bookSize == 0) return;
-
-  percent = clampPercent(percent);
-  size_t targetSize =
-      (bookSize / 100) * static_cast<size_t>(percent) + (bookSize % 100) * static_cast<size_t>(percent) / 100;
-  if (percent >= 100) targetSize = bookSize - 1;
-
-  const int sectionCount = fb2->getSectionCount();
-  if (sectionCount == 0) return;
-
-  int targetIdx = sectionCount - 1;
-  size_t prevCumulative = 0;
-
-  for (int i = 0; i < sectionCount; i++) {
-    const size_t cumulative = fb2->getCumulativeSectionSize(i);
-    if (targetSize <= cumulative) {
-      targetIdx = i;
-      prevCumulative = (i > 0) ? fb2->getCumulativeSectionSize(i - 1) : 0;
-      break;
-    }
-  }
-
-  const size_t cumulative = fb2->getCumulativeSectionSize(targetIdx);
-  const size_t sectionSize = (cumulative > prevCumulative) ? (cumulative - prevCumulative) : 0;
-  pendingSectionProgress =
-      (sectionSize == 0) ? 0.0f : static_cast<float>(targetSize - prevCumulative) / static_cast<float>(sectionSize);
-  pendingSectionProgress = std::clamp(pendingSectionProgress, 0.0f, 1.0f);
+  const fb2_reader::SectionSizes sizes{fb2.get(), &cumulativeSectionSize, fb2->getSectionCount(), fb2->getBookSize()};
+  const auto target = fb2_reader::percentToSection(percent, sizes);
+  if (!target.valid) return;
+  pendingSectionProgress = target.sectionProgress;
 
   RenderLock lock;
-  currentSectionIndex = targetIdx;
+  currentSectionIndex = target.sectionIndex;
   nextPageNumber = 0;
   pendingPercentJump = true;
   section.reset();
@@ -394,18 +369,15 @@ void Fb2ReaderActivity::renderBook() {
 
     if (cachedSectionTotalPageCount > 0) {
       // Re-paginated section: rescale the saved page into the new page count.
-      if (currentSectionIndex == cachedSectionIndex && section->pageCount != cachedSectionTotalPageCount) {
-        const float progress =
-            static_cast<float>(section->currentPage) / static_cast<float>(cachedSectionTotalPageCount);
-        section->currentPage = static_cast<int>(progress * section->pageCount);
+      if (currentSectionIndex == cachedSectionIndex) {
+        section->currentPage =
+            fb2_reader::rescalePage(section->currentPage, cachedSectionTotalPageCount, section->pageCount);
       }
       cachedSectionTotalPageCount = 0;
     }
 
     if (pendingPercentJump && section->pageCount > 0) {
-      int newPage = static_cast<int>(pendingSectionProgress * static_cast<float>(section->pageCount));
-      if (newPage >= section->pageCount) newPage = section->pageCount - 1;
-      section->currentPage = newPage;
+      section->currentPage = fb2_reader::percentJumpPage(pendingSectionProgress, section->pageCount);
       pendingPercentJump = false;
     }
   }
@@ -494,6 +466,6 @@ ScreenshotInfo Fb2ReaderActivity::getScreenshotInfo() const {
   }
   info.currentPage = section ? section->currentPage + 1 : 0;
   info.totalPages = section ? section->pageCount : 0;
-  info.progressPercent = clampPercent(static_cast<int>(bookProgressPercent() + 0.5f));
+  info.progressPercent = fb2_reader::roundedPercent(bookProgressPercent());
   return info;
 }
