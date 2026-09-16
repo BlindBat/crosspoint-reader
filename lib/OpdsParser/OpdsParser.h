@@ -76,7 +76,6 @@ class OpdsParser final : public Print {
    * Get only book entries (legacy compatibility).
    * @return Vector of book entries
    */
-  std::vector<OpdsEntry> getBooks() const;
 
   /**
    * Clear all parsed entries.

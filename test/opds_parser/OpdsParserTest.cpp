@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string>
 
 #include "OpdsParser.h"
@@ -63,7 +64,9 @@ TEST(OpdsParser, ParsesEntriesAuthorsLinksAndPaginationFromMinimalFeed) {
   EXPECT_EQ(parser.getNextPageUrl(), "/catalog?page=2");
   EXPECT_EQ(parser.getPrevPageUrl(), "/catalog?page=0");
   EXPECT_EQ(parser.getSearchTemplate(), "/search?q={searchTerms}");
-  EXPECT_EQ(parser.getBooks().size(), 1u);
+  EXPECT_EQ(
+      std::count_if(entries.begin(), entries.end(), [](const OpdsEntry& e) { return e.type == OpdsEntryType::BOOK; }),
+      1);
 }
 
 TEST(OpdsParser, ByteAtATimeStreamingMatchesBulkWrite) {

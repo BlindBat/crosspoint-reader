@@ -56,7 +56,6 @@ class KOReaderCredentialStore : public PersistableStore<KOReaderCredentialStore>
   bool hasCredentials() const;
 
   // Clear credentials
-  void clearCredentials();
 
   // Server URL management
   void setServerUrl(const std::string& url);
