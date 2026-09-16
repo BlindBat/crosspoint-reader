@@ -1,3 +1,4 @@
+#include <Memory.h>
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -26,6 +27,11 @@
 // can be re-baselined deliberately instead of being bumped blindly when they fire.
 
 namespace fs = std::filesystem;
+
+// ForOverwriteReturnsNullForAnUnsatisfiableRequest relies on a failing allocation returning
+// nullptr. AddressSanitizer aborts on an oversized request unless it is told it may return null;
+// that setting only affects allocation failure, not memory-error detection.
+extern "C" const char* __asan_default_options() { return "allocator_may_return_null=1"; }
 
 namespace {
 
@@ -65,6 +71,13 @@ const std::vector<std::string>& englishHyphenatableWords() {
   };
   return kWords;
 }
+
+// Release builds may elide a new/delete pair whose pointer never escapes (C++14 allocation
+// elision), which would silently make every allocation budget below read zero. Routing the
+// pointer through a volatile store makes the allocation observable again.
+volatile void* g_escapeSink = nullptr;
+
+void escape(void* pointer) { g_escapeSink = pointer; }
 
 bool wallTimeCeilingsEnabled() {
   const char* flag = std::getenv("CROSSPOINT_PERF_TIME");
@@ -386,6 +399,94 @@ TEST_F(CssAllocGuardTest, ResolveStyleLookupsAreAllocationFree) {
   EXPECT_EQ(resolved.fontStyle, CssFontStyle::Italic);
   ASSERT_TRUE(resolved.hasTextIndent());
   EXPECT_FLOAT_EQ(resolved.textIndent.value, 0.0f);
+}
+
+// ---------------------------------------------------------------------------------------------
+// lib/Memory/Memory.h — makeUniqueNoThrowForOverwrite. AllocCounter.cpp replaces the global
+// operator new[], including the non-throwing form the helpers use, so the helper's heap
+// footprint can be pinned exactly instead of inferred.
+// ---------------------------------------------------------------------------------------------
+
+// Budget: exactly one operator-new[] call of exactly the requested byte count. uint8_t has a
+// trivial destructor, so there is no array cookie and the request is the raw buffer size, which
+// is the number the 380KB device budget is reasoned about in.
+TEST(MemoryAllocGuard, ForOverwriteArrayIsOneAllocationOfExactlyTheRequestedBytes) {
+  constexpr size_t kBytes = 4096;
+  size_t allocations = 0;
+  size_t bytes = 0;
+  bool allocated = false;
+  {
+    alloc_counter::CountingScope scope;
+    auto buf = makeUniqueNoThrowForOverwrite<uint8_t[]>(kBytes);
+    escape(buf.get());
+    allocated = buf != nullptr;
+    if (allocated) buf[kBytes - 1] = 0xAB;  // touch the far end inside the measured scope
+    allocations = scope.count();
+    bytes = scope.bytes();
+  }
+
+  EXPECT_TRUE(allocated);
+  EXPECT_EQ(allocations, 1u);
+  EXPECT_EQ(bytes, kBytes);
+}
+
+// The two siblings must be interchangeable from an allocation-budget point of view: skipping
+// value-initialisation changes what is written into the block, never how much is requested.
+TEST(MemoryAllocGuard, ForOverwriteAndValueInitialisingSiblingRequestTheSameBytes) {
+  constexpr size_t kCount = 1024;  // 4096 bytes as uint32_t
+  size_t zeroedAllocations = 0;
+  size_t zeroedBytes = 0;
+  size_t rawAllocations = 0;
+  size_t rawBytes = 0;
+  {
+    alloc_counter::CountingScope scope;
+    auto zeroed = makeUniqueNoThrow<uint32_t[]>(kCount);
+    escape(zeroed.get());
+    zeroedAllocations = scope.count();
+    zeroedBytes = scope.bytes();
+  }
+  {
+    alloc_counter::CountingScope scope;
+    auto raw = makeUniqueNoThrowForOverwrite<uint32_t[]>(kCount);
+    escape(raw.get());
+    rawAllocations = scope.count();
+    rawBytes = scope.bytes();
+  }
+
+  EXPECT_EQ(rawAllocations, zeroedAllocations);
+  EXPECT_EQ(rawBytes, zeroedBytes);
+  EXPECT_EQ(rawBytes, kCount * sizeof(uint32_t));
+}
+
+// Destroying the unique_ptr must free the block and allocate nothing of its own; a repeated
+// allocate/destroy cycle therefore costs exactly one allocation per iteration.
+TEST(MemoryAllocGuard, ForOverwriteScopeExitFreesWithoutAllocating) {
+  constexpr int kIterations = 8;
+  constexpr size_t kBytes = 512;
+  size_t allocations = 0;
+  size_t bytes = 0;
+  {
+    alloc_counter::CountingScope scope;
+    for (int i = 0; i < kIterations; ++i) {
+      auto buf = makeUniqueNoThrowForOverwrite<uint8_t[]>(kBytes);
+      escape(buf.get());
+      buf[0] = static_cast<uint8_t>(i);
+    }
+    allocations = scope.count();
+    bytes = scope.bytes();
+  }
+
+  EXPECT_EQ(allocations, static_cast<size_t>(kIterations));
+  EXPECT_EQ(bytes, kIterations * kBytes);
+}
+
+// An unsatisfiable request must come back as nullptr (the device's OOM contract) rather than
+// aborting or wrapping around to a short buffer.
+TEST(MemoryAllocGuard, ForOverwriteReturnsNullForAnUnsatisfiableRequest) {
+  auto absurd = makeUniqueNoThrowForOverwrite<uint8_t[]>(SIZE_MAX / 2);
+  EXPECT_EQ(absurd, nullptr);
+  auto overflowing = makeUniqueNoThrowForOverwrite<uint32_t[]>(SIZE_MAX / 2 + 1);
+  EXPECT_EQ(overflowing, nullptr);
 }
 
 // ---------------------------------------------------------------------------------------------

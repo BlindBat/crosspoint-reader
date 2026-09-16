@@ -635,15 +635,17 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& b
   ctx.blocksSinceYield = 0;
   ctx.error = false;
 
-  // MCU row buffer: MAX_MCU_HEIGHT rows × decoded srcWidth columns of grayscale
-  ctx.mcuBuf = makeUniqueNoThrow<uint8_t[]>(MAX_MCU_HEIGHT * ctx.srcWidth);
+  // MCU row buffer: MAX_MCU_HEIGHT rows × decoded srcWidth columns of grayscale.
+  // Zeroed once below because edge MCUs leave gaps the draw callback never fills.
+  ctx.mcuBuf = makeUniqueNoThrowForOverwrite<uint8_t[]>(MAX_MCU_HEIGHT * ctx.srcWidth);
   if (!ctx.mcuBuf) {
     LOG_ERR("JPG", "OOM: MCU buffer (%d bytes)", MAX_MCU_HEIGHT * ctx.srcWidth);
     return false;
   }
   memset(ctx.mcuBuf.get(), 0, MAX_MCU_HEIGHT * ctx.srcWidth);
 
-  ctx.bmpRow = makeUniqueNoThrow<uint8_t[]>(bytesPerRow);
+  // Fully memset() at the top of every writeOutputRow()/flushScaledRow() pass.
+  ctx.bmpRow = makeUniqueNoThrowForOverwrite<uint8_t[]>(bytesPerRow);
   if (!ctx.bmpRow) {
     LOG_ERR("JPG", "OOM: BMP row buffer");
     return false;
@@ -652,7 +654,8 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& b
   if (smoothUpscale) {
     // One contiguous allocation avoids three heap blocks while keeping smoothing line-buffered.
     const size_t smoothRowsBytes = static_cast<size_t>(outWidth) * 3;
-    ctx.smoothRows = makeUniqueNoThrow<uint8_t[]>(smoothRowsBytes);
+    // Each of the three rows is written in full before it is read.
+    ctx.smoothRows = makeUniqueNoThrowForOverwrite<uint8_t[]>(smoothRowsBytes);
     if (!ctx.smoothRows) {
       LOG_ERR("JPG", "OOM: progressive smoothing buffers");
       return false;
@@ -663,6 +666,7 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& b
     LOG_DBG("JPG", "Progressive smoothing: %dx%d -> %dx%d, buffers=%u bytes", ctx.srcWidth, ctx.srcHeight, outWidth,
             outHeight, static_cast<unsigned>(smoothRowsBytes));
   } else if (needsScaling) {
+    // Value-initialised on purpose: both are accumulated into with += before any reset.
     ctx.rowAccum = makeUniqueNoThrow<uint32_t[]>(outWidth);
     ctx.rowCount = makeUniqueNoThrow<uint32_t[]>(outWidth);
     if (!ctx.rowAccum || !ctx.rowCount) {
