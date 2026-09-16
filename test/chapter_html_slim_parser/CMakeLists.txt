@@ -7,10 +7,16 @@ add_executable(ChapterHtmlSlimParserTest
   ${REPO_ROOT}/lib/Epub/Epub/ParsedText.cpp
   ${REPO_ROOT}/lib/Epub/Epub/converters/ImageDimsProbe.cpp
   ${REPO_ROOT}/lib/Utf8/Utf8.cpp
+  ${REPO_ROOT}/lib/expat/xmlparse.c
+  ${REPO_ROOT}/lib/expat/xmlrole.c
+  ${REPO_ROOT}/lib/expat/xmltok.c
 )
 
+# In-tree expat at device-parity flags (XML_GE=0, XML_CONTEXT_BYTES=1024): the
+# html corpus pins depend on the firmware's parser, not the host system's.
 target_include_directories(ChapterHtmlSlimParserTest PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/stubs
+  ${REPO_ROOT}/lib/expat
   ${REPO_ROOT}/lib
   ${REPO_ROOT}/lib/Epub
   ${REPO_ROOT}/lib/Epub/Epub
@@ -27,10 +33,11 @@ target_include_directories(ChapterHtmlSlimParserTest PRIVATE
 target_link_libraries(ChapterHtmlSlimParserTest PRIVATE
   crosspoint_test_common
   GTest::gtest_main
-  expat
 )
 
 target_compile_definitions(ChapterHtmlSlimParserTest PRIVATE
+  XML_GE=0
+  XML_CONTEXT_BYTES=1024
   CORPUS_HTML_DIR="${REPO_ROOT}/test/corpus/html"
 )
 

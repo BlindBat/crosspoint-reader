@@ -476,7 +476,7 @@ This list is retrospective: every task above is delivered. The value of the list
 
 ### CRITICAL — Platform Constraints (expat parity)
 
-- [ ] T147 CRITICAL: Switch `test/opds_parser/CMakeLists.txt` and `test/chapter_html_slim_parser/CMakeLists.txt` from the host system expat to the in-tree expat compiled with `XML_GE=0` and `XML_CONTEXT_BYTES=1024`, update the html-corpus pins accordingly, and fix `test/corpus/README.md` per Constitution "Platform Constraints & Standards" (XML) and FR-192 (contradicts)
+- [X] T147 CRITICAL: Switch `test/opds_parser/CMakeLists.txt` and `test/chapter_html_slim_parser/CMakeLists.txt` from the host system expat to the in-tree expat compiled with `XML_GE=0` and `XML_CONTEXT_BYTES=1024`, update the html-corpus pins accordingly, and fix `test/corpus/README.md` per Constitution "Platform Constraints & Standards" (XML) and FR-192 (contradicts)
 
 ### HIGH
 
