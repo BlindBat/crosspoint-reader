@@ -18,11 +18,60 @@
 #include <fontIds.h>
 #include <gtest/gtest.h>
 
+#include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <new>
 #include <string>
 
 #include "FontSystemFixtures.h"
+
+// --- Scalar allocation counting -----------------------------------------
+//
+// test/support/AllocCounter.cpp cannot be linked into this suite: it replaces both the
+// scalar and the array forms of the global allocator, and FontArenaTest.cpp in this same
+// binary already replaces the array forms for its failure injection. It deliberately
+// leaves the scalar forms to the platform, so the counter the render-path guard below
+// needs is taken here instead, in the same shape as AllocCounter (forward to
+// malloc/free, plain counters, SINGLE-THREADED ONLY). The two shims together replace
+// each form exactly once. Over-aligned allocations are not intercepted by either.
+namespace scalar_alloc {
+
+size_t count = 0;
+bool enabled = false;
+
+// RAII guard: zeroes the counter and starts counting; stops on scope exit. Keep gtest
+// assertions outside the scope — the EXPECT machinery allocates.
+class CountingScope {
+ public:
+  CountingScope() {
+    count = 0;
+    enabled = true;
+  }
+  ~CountingScope() { enabled = false; }
+  CountingScope(const CountingScope&) = delete;
+  CountingScope& operator=(const CountingScope&) = delete;
+
+  size_t observed() const { return count; }
+};
+
+}  // namespace scalar_alloc
+
+void* operator new(const std::size_t size) {
+  if (scalar_alloc::enabled) scalar_alloc::count++;
+  if (void* allocation = std::malloc(size ? size : 1)) return allocation;
+  throw std::bad_alloc();
+}
+
+void* operator new(const std::size_t size, const std::nothrow_t&) noexcept {
+  if (scalar_alloc::enabled) scalar_alloc::count++;
+  return std::malloc(size ? size : 1);
+}
+
+void operator delete(void* allocation) noexcept { std::free(allocation); }
+void operator delete(void* allocation, std::size_t) noexcept { std::free(allocation); }
+void operator delete(void* allocation, const std::nothrow_t&) noexcept { std::free(allocation); }
 
 namespace {
 
@@ -313,6 +362,35 @@ TEST_F(SdCardFontSystemTest, BeginInstallsTheSettingsResolverTrampoline) {
   const int viaTrampoline = SETTINGS.sdFontIdResolver(SETTINGS.sdFontResolverCtx, "Alpha", 14);
   EXPECT_EQ(viaTrampoline, system.resolveFontId("Alpha", 14));
   EXPECT_NE(viaTrampoline, 0);
+}
+
+// CrossPointSettings::getReaderFontId() reaches resolveFontId through the trampoline on
+// every page render, and documents itself as allocation-free. Fails before resolveFontId
+// stopped materialising a std::string for getFontId(const std::string&): both the hit and
+// the miss cost one heap block per call for any name past the small-buffer capacity.
+TEST_F(SdCardFontSystemTest, ResolvingTheReaderFontIdPerRenderAllocatesNothing) {
+  // 25 characters: past std::string's small buffer on either standard library, and still
+  // inside the 32-byte SETTINGS.sdFontFamilyName field.
+  constexpr const char* kFamily = "AlphaSerifDisplayExtended";
+  fontfx::installFont(kFamily, 14, "valid_basic.cpfont");
+  SETTINGS.setSdFontFamily(kFamily);
+  SETTINGS.fontPointSize = 14;
+  GfxRenderer renderer;
+  SdCardFontSystem system;
+
+  system.begin(renderer);
+  ASSERT_NE(system.resolveFontId(kFamily, 14), 0);
+
+  size_t count = 0;
+  {
+    scalar_alloc::CountingScope scope;
+    for (int i = 0; i < 10; ++i) {
+      (void)system.resolveFontId(kFamily, 14);                    // the loaded family
+      (void)system.resolveFontId("SomeOtherFamilyEntirely", 14);  // and a miss
+    }
+    count = scope.observed();
+  }
+  EXPECT_EQ(count, 0u);
 }
 
 TEST_F(SdCardFontSystemTest, BeginLoadsTheSavedFamilyAndSnapsThePointSize) {

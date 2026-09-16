@@ -36,10 +36,14 @@ const char* resolveVisualText(const char* text, std::string& visualBuffer, BidiU
 // glyph metadata + bitmap into the 8-slot overflow ring, once per glyph.
 // Tokens without RTL lead bytes (0xD6-0xDB) are skipped with a byte scan, so
 // pure-LTR text pays almost nothing.
-void appendShapedRtlTokens(const char* text, std::string& shapedOut) {
+//
+// `token` and `visual` are caller-owned scratch. A paragraph hands this function one
+// word at a time, and a fresh pair per word meant a heap block per word once the word
+// outgrew std::string's small buffer: applyBidiVisual() reserves into an empty `visual`,
+// and assign() into an empty `token`. Reused buffers keep the capacity the longest word
+// so far bought. Both are fully overwritten per token, so reuse changes no result.
+void appendShapedRtlTokens(const char* text, std::string& shapedOut, std::string& token, std::string& visual) {
   const auto isBreak = [](const char c) { return c == ' ' || c == '\n' || c == '\r' || c == '\t'; };
-  std::string token;
-  std::string visual;
   const char* p = text;
   while (*p) {
     while (*p && isBreak(*p)) ++p;
@@ -91,7 +95,9 @@ void GfxRenderer::ensureSdCardFontReady(int fontId, const char* utf8Text, uint8_
   auto it = sdCardFonts_.find(fontId);
   if (it != sdCardFonts_.end()) {
     std::string shaped;
-    appendShapedRtlTokens(utf8Text, shaped);
+    std::string token;
+    std::string visual;
+    appendShapedRtlTokens(utf8Text, shaped, token, visual);
     int missed = it->second->buildAdvanceTable(utf8Text, styleMask, shaped.empty() ? nullptr : shaped.c_str());
     if (missed > 0) {
       LOG_DBG("GFX", "ensureSdCardFontReady: %d glyph(s) not found", missed);
@@ -107,8 +113,10 @@ void GfxRenderer::ensureSdCardFontReady(int fontId, const std::deque<std::string
     // The table survives across paragraphs/sections (capped per font), so
     // repeated indexing of the same SD font amortizes glyph-metric SD reads.
     std::string shaped;
+    std::string token;
+    std::string visual;
     for (const auto& w : words) {
-      appendShapedRtlTokens(w.c_str(), shaped);
+      appendShapedRtlTokens(w.c_str(), shaped, token, visual);
     }
     int missed =
         it->second->buildAdvanceTable(words, includeHyphen, styleMask, shaped.empty() ? nullptr : shaped.c_str());
@@ -1754,18 +1762,26 @@ std::string GfxRenderer::truncatedText(const int fontId, const char* text, const
 
   std::string item = text;
   // U+2026 HORIZONTAL ELLIPSIS (UTF-8: 0xE2 0x80 0xA6)
-  const char* ellipsis = "\xe2\x80\xa6";
-  int textWidth = getTextWidth(fontId, item.c_str(), style);
+  static constexpr char ellipsis[] = "\xe2\x80\xa6";
+  const int textWidth = getTextWidth(fontId, item.c_str(), style);
   if (textWidth <= maxWidth) {
     // Text fits, return as is
     return item;
   }
 
-  while (!item.empty() && getTextWidth(fontId, (item + ellipsis).c_str(), style) >= maxWidth) {
+  // One reused candidate buffer instead of a fresh `item + ellipsis` per step: `item`
+  // only ever shrinks, so the first assign buys the capacity every later iteration
+  // needs and the shrink loop stops touching the heap.
+  std::string candidate;
+  while (!item.empty()) {
+    candidate.assign(item);
+    candidate.append(ellipsis);
+    if (getTextWidth(fontId, candidate.c_str(), style) < maxWidth) break;
     utf8RemoveLastChar(item);
   }
 
-  return item.empty() ? ellipsis : item + ellipsis;
+  if (item.empty()) return ellipsis;
+  return candidate;
 }
 
 std::vector<std::string> GfxRenderer::wrappedText(const int fontId, const char* text, const int maxWidth,
@@ -1774,31 +1790,43 @@ std::vector<std::string> GfxRenderer::wrappedText(const int fontId, const char* 
 
   if (!text || maxWidth <= 0 || maxLines <= 0) return lines;
 
+  // Bounded pre-allocation: one block instead of the push_back doubling chain.
+  // Capped so an absurd maxLines cannot turn a two-line label into a large reserve.
+  lines.reserve(static_cast<size_t>(std::min(maxLines, 8)));
+
   std::string remaining = text;
   std::string currentLine;
+  // `word` and `testLine` are reused across the word loop: assign()/append() keep the
+  // capacity the longest word so far bought, so the per-word temporaries that used to
+  // be built fresh each iteration stop hitting the heap.
+  std::string word;
+  std::string testLine;
 
   while (!remaining.empty()) {
     if (static_cast<int>(lines.size()) == maxLines - 1) {
       // Last available line: combine any word already started on this line with
       // the rest of the text, then let truncatedText fit it with an ellipsis.
-      std::string lastContent = currentLine.empty() ? remaining : currentLine + " " + remaining;
-      lines.push_back(truncatedText(fontId, lastContent.c_str(), maxWidth, style));
+      testLine.assign(currentLine);
+      if (!currentLine.empty()) testLine.push_back(' ');
+      testLine.append(remaining);
+      lines.push_back(truncatedText(fontId, testLine.c_str(), maxWidth, style));
       return lines;
     }
 
     // Find next word
-    size_t spacePos = remaining.find(' ');
-    std::string word;
+    const size_t spacePos = remaining.find(' ');
 
     if (spacePos == std::string::npos) {
-      word = remaining;
+      word.assign(remaining);
       remaining.clear();
     } else {
-      word = remaining.substr(0, spacePos);
+      word.assign(remaining, 0, spacePos);
       remaining.erase(0, spacePos + 1);
     }
 
-    std::string testLine = currentLine.empty() ? word : currentLine + " " + word;
+    testLine.assign(currentLine);
+    if (!currentLine.empty()) testLine.push_back(' ');
+    testLine.append(word);
 
     if (getTextWidth(fontId, testLine.c_str(), style) <= maxWidth) {
       currentLine = testLine;

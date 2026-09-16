@@ -134,37 +134,7 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
 
   const bool scanning = renderer.isFontCacheScanning();
   const int ascender = renderer.getFontAscenderSize(fontId);
-
-  // Resolve ruby positions. Layout (extractLine) has already reserved extraStartOffset on the
-  // left and extraEndOffset on the right, so the centered rubyX is always within the page margins.
-  struct RubyDrawInfo {
-    int x;
-    std::string text;
-    BidiUtils::BidiBaseDir baseDir;
-  };
   const bool blockHasRuby = hasRuby();
-  std::vector<RubyDrawInfo> rubies;
-  if (blockHasRuby) {
-    rubies.resize(numWords);
-    for (uint16_t i = 0; i < numWords; i++) {
-      if (i < rubyTexts.size() && !rubyTexts[i].empty() && (wordStyle(i) & EpdFontFamily::RUBY_CONTINUE) == 0) {
-        int groupWordCount = 1;
-        while (i + groupWordCount < numWords && (wordStyle(i + groupWordCount) & EpdFontFamily::RUBY_CONTINUE) != 0) {
-          groupWordCount++;
-        }
-        int groupActualWidth = 0;
-        for (int k = 0; k < groupWordCount; ++k) {
-          groupActualWidth += renderer.getTextAdvanceX(fontId, wordText(i + k), wordStyle(i + k));
-        }
-        const int rubyWidth = renderer.getTextAdvanceX(fontId, rubyTexts[i].c_str(), EpdFontFamily::SUP);
-        const int leaderWordX = xposArr[i] + x;
-        const auto baseDir =
-            static_cast<BidiUtils::BidiBaseDir>(BidiUtils::detectParagraphLevel(wordText(i), blockStyle.isRtl ? 1 : 0));
-        rubies[i] = {leaderWordX - (rubyWidth - groupActualWidth) / 2, rubyTexts[i], baseDir};
-        i += groupWordCount - 1;
-      }
-    }
-  }
 
   struct DecorationLineTracker {
     EpdFontFamily::Style style;
@@ -244,12 +214,24 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
       renderer.drawText(fontId, drawX, wordY, word, true, currentStyle, baseDir);
     }
 
-    // Horizontal ruby text rendering
+    // Horizontal ruby text rendering. The annotation is centered over its whole group --
+    // this word plus the RUBY_CONTINUE words that follow it. Layout (extractLine) already
+    // reserved extraStartOffset on the left and extraEndOffset on the right, so the
+    // centered rubyX stays within the page margins.
     if (blockHasRuby && i < rubyTexts.size() && !rubyTexts[i].empty() &&
-        (wordStyle(i) & EpdFontFamily::RUBY_CONTINUE) == 0) {
+        (currentStyle & EpdFontFamily::RUBY_CONTINUE) == 0) {
+      int groupWordCount = 1;
+      while (i + groupWordCount < numWords && (wordStyle(i + groupWordCount) & EpdFontFamily::RUBY_CONTINUE) != 0) {
+        groupWordCount++;
+      }
+      int groupActualWidth = 0;
+      for (int k = 0; k < groupWordCount; ++k) {
+        groupActualWidth += renderer.getTextAdvanceX(fontId, wordText(i + k), wordStyle(i + k));
+      }
+      const int rubyWidth = renderer.getTextAdvanceX(fontId, rubyTexts[i].c_str(), EpdFontFamily::SUP);
+      const int rubyX = wordX - (rubyWidth - groupActualWidth) / 2;
       const int rubyY = wordY - ascender;
-      renderer.drawText(fontId, rubies[i].x, rubyY, rubies[i].text.c_str(), true, EpdFontFamily::SUP,
-                        rubies[i].baseDir);
+      renderer.drawText(fontId, rubyX, rubyY, rubyTexts[i].c_str(), true, EpdFontFamily::SUP, baseDir);
     }
 
     if (scanning) {

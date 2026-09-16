@@ -10,6 +10,8 @@ add_executable(GfxRendererTest
   GfxRendererTest.cpp
   BitmapTest.cpp
   BidiUtf8Test.cpp
+  GfxRendererAllocTest.cpp
+  ${REPO_ROOT}/test/support/AllocCounter.cpp
   ${REPO_ROOT}/lib/GfxRenderer/GfxRenderer.cpp
   ${REPO_ROOT}/lib/GfxRenderer/Bitmap.cpp
   ${REPO_ROOT}/lib/GfxRenderer/BitmapHelpers.cpp
@@ -33,6 +35,7 @@ add_executable(GfxRendererTest
 # <Logging.h> and <Arduino.h> resolve to the host stand-ins.
 target_include_directories(GfxRendererTest PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/stubs
+  ${REPO_ROOT}/test/support
   ${REPO_ROOT}/lib/GfxRenderer
   ${REPO_ROOT}/lib/EpdFont
   ${REPO_ROOT}/lib/InflateReader
@@ -43,9 +46,27 @@ target_include_directories(GfxRendererTest PRIVATE
 )
 
 set(GFX_SANDBOX_DIR ${CMAKE_CURRENT_BINARY_DIR}/sandbox)
+set(GFX_CPFONT_DIR ${CMAKE_CURRENT_BINARY_DIR}/resources)
 target_compile_definitions(GfxRendererTest PRIVATE
   GFX_SANDBOX_DIR="${GFX_SANDBOX_DIR}"
+  GFX_CPFONT_DIR="${GFX_CPFONT_DIR}"
 )
+
+# A real .cpfont so the SD-font branches of the renderer (ensureSdCardFontReady)
+# run against SdCardFont rather than being skipped. Same generator and
+# deterministic output as test/sdcard_font; *.cpfont is gitignored.
+find_program(CROSSPOINT_PYTHON3 python3 REQUIRED)
+add_custom_command(
+  OUTPUT ${GFX_CPFONT_DIR}/valid_basic.cpfont
+  COMMAND ${CROSSPOINT_PYTHON3} ${REPO_ROOT}/scripts/generate_test_cpfonts.py ${GFX_CPFONT_DIR}
+  DEPENDS
+    ${REPO_ROOT}/scripts/generate_test_cpfonts.py
+    ${REPO_ROOT}/lib/EpdFont/scripts/cpfont_version.py
+  COMMENT "Generating .cpfont fixtures for the renderer suite"
+  VERBATIM
+)
+add_custom_target(gfx_renderer_fixtures DEPENDS ${GFX_CPFONT_DIR}/valid_basic.cpfont)
+add_dependencies(GfxRendererTest gfx_renderer_fixtures)
 
 target_link_libraries(GfxRendererTest PRIVATE
   crosspoint_test_common

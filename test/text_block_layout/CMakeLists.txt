@@ -6,7 +6,9 @@
 # break and x-position in the tests is hand-computable.
 add_executable(TextBlockLayoutTest
   TextBlockLayoutTest.cpp
+  TextBlockRenderTest.cpp
   LayoutLinkStubs.cpp
+  ${REPO_ROOT}/test/support/AllocCounter.cpp
   ${REPO_ROOT}/lib/Epub/Epub/ParsedText.cpp
   ${REPO_ROOT}/lib/Epub/Epub/blocks/TextBlock.cpp
   ${REPO_ROOT}/lib/Epub/Epub/hyphenation/Hyphenator.cpp
@@ -19,6 +21,7 @@ add_executable(TextBlockLayoutTest
 target_include_directories(TextBlockLayoutTest PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/stubs
   ${REPO_ROOT}/test/fb2_common/stubs
+  ${REPO_ROOT}/test/support
   ${REPO_ROOT}/lib
   ${REPO_ROOT}/lib/Epub
   ${REPO_ROOT}/lib/EpdFont

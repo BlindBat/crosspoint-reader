@@ -1,7 +1,9 @@
 add_executable(ChapterHtmlSlimParserTest
   ChapterHtmlSlimParserTest.cpp
   ChapterHtmlSlimParserCorpusTest.cpp
+  ChapterHtmlSlimParserAllocTest.cpp
   ParserLinkStubs.cpp
+  ${REPO_ROOT}/test/support/AllocCounter.cpp
   ${REPO_ROOT}/lib/Epub/Epub/parsers/ChapterHtmlSlimParser.cpp
   ${REPO_ROOT}/lib/Epub/Epub/css/CssParser.cpp
   ${REPO_ROOT}/lib/Epub/Epub/ParsedText.cpp
@@ -16,6 +18,7 @@ add_executable(ChapterHtmlSlimParserTest
 # html corpus pins depend on the firmware's parser, not the host system's.
 target_include_directories(ChapterHtmlSlimParserTest PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/stubs
+  ${REPO_ROOT}/test/support
   ${REPO_ROOT}/lib/expat
   ${REPO_ROOT}/lib
   ${REPO_ROOT}/lib/Epub

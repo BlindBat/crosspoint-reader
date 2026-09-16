@@ -711,10 +711,12 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     self->xpathListItemIndex++;
   }
 
-  // Extract class, style, id, and dir attributes for CSS/RTL processing
-  std::string classAttr;
-  std::string styleAttr;
-  std::string dirAttr;
+  // Extract class, style, id, and dir attributes for CSS/RTL processing.
+  // These are borrowed pointers into expat's `atts` array, which stays valid for the
+  // whole callback; nothing below outlives startElement, so no copy is needed.
+  const char* classAttr = nullptr;
+  const char* styleAttr = nullptr;
+  const char* dirAttr = nullptr;
   if (atts != nullptr) {
     for (int i = 0; atts[i]; i += 2) {
       if (strcmp(atts[i], "class") == 0) {
@@ -757,19 +759,19 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   // before tag-specific branches emit any content or metadata.
   CssStyle cssStyle;
   if (self->cssParser) {
-    cssStyle = self->cssParser->resolveStyle(name, classAttr);
-    if (!styleAttr.empty()) {
+    cssStyle = self->cssParser->resolveStyle(name, classAttr != nullptr ? classAttr : "");
+    if (styleAttr != nullptr && *styleAttr != '\0') {
       CssStyle inlineStyle = CssParser::parseInlineStyle(styleAttr);
       cssStyle.applyOver(inlineStyle);
     }
   }
 
   // HTML dir attribute overrides CSS direction (case-insensitive per HTML spec)
-  if (!dirAttr.empty()) {
-    if (strcasecmp(dirAttr.c_str(), "rtl") == 0) {
+  if (dirAttr != nullptr && *dirAttr != '\0') {
+    if (strcasecmp(dirAttr, "rtl") == 0) {
       cssStyle.direction = CssTextDirection::Rtl;
       cssStyle.defined.direction = 1;
-    } else if (strcasecmp(dirAttr.c_str(), "ltr") == 0) {
+    } else if (strcasecmp(dirAttr, "ltr") == 0) {
       cssStyle.direction = CssTextDirection::Ltr;
       cssStyle.defined.direction = 1;
     }

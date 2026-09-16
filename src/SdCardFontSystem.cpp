@@ -174,5 +174,13 @@ int SdCardFontSystem::resolveFontId(const char* familyName, uint8_t /*pointSize*
   // The manager holds exactly one reader-size font, already selected for
   // SETTINGS.fontPointSize, so the size argument is implicit — always return
   // that font's ID. ensureLoaded() must have run for the current settings first.
-  return manager_.getFontId(familyName);
+  //
+  // CrossPointSettings::getReaderFontId() reaches this through the resolver trampoline
+  // on every page render, so the name match runs against the manager's own string:
+  // comparing it to the char* in place, then handing that same string to
+  // getFontId(const std::string&), keeps a per-render temporary off the heap.
+  if (familyName == nullptr) return 0;
+  const std::string& loaded = manager_.currentFamilyName();
+  if (loaded != familyName) return 0;
+  return manager_.getFontId(loaded);
 }

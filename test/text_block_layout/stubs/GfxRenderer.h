@@ -11,6 +11,7 @@
 
 #include <EpdFontFamily.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <string>
@@ -18,6 +19,16 @@
 namespace BidiUtils {
 enum class BidiBaseDir : signed char { AUTO = -1, LTR = 0, RTL = 1 };
 }  // namespace BidiUtils
+
+// One recorded drawText call. Declared outside GfxRenderer so its default member
+// initializers are complete where the stub declares the static recording buffer.
+struct StubDrawCall {
+  int x = 0;
+  int y = 0;
+  char text[64] = {};
+  uint8_t style = 0;
+  int baseDir = 0;
+};
 
 class GfxRenderer {
  public:
@@ -71,8 +82,35 @@ class GfxRenderer {
   bool isSdCardFont(int) const { return false; }
   void ensureSdCardFontReady(int, const std::deque<std::string>&, bool, uint8_t) const {}
   bool isFontCacheScanning() const { return false; }
-  void drawText(int, int, int, const char*, bool = true, EpdFontFamily::Style = EpdFontFamily::REGULAR,
-                BidiUtils::BidiBaseDir = BidiUtils::BidiBaseDir::AUTO) const {}
+
+  // Draw recording. TextBlock::render is a hot path guarded by allocation counts, so the
+  // recorder stores into fixed static storage and never touches the heap: a test may open
+  // an alloc_counter::CountingScope around render() and still read back what was drawn.
+  using DrawCall = StubDrawCall;
+  static constexpr size_t kMaxDrawCalls = 128;
+  static inline DrawCall drawCalls[kMaxDrawCalls] = {};
+  static inline size_t drawCallCount = 0;
+
+  static void resetDrawCalls() { drawCallCount = 0; }
+
+  void drawText(int, const int x, const int y, const char* text, bool = true,
+                const EpdFontFamily::Style style = EpdFontFamily::REGULAR,
+                const BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO) const {
+    if (drawCallCount < kMaxDrawCalls) {
+      DrawCall& call = drawCalls[drawCallCount];
+      call.x = x;
+      call.y = y;
+      call.style = static_cast<uint8_t>(style);
+      call.baseDir = static_cast<int>(baseDir);
+      size_t n = 0;
+      while (text != nullptr && text[n] != '\0' && n + 1 < sizeof(call.text)) {
+        call.text[n] = text[n];
+        ++n;
+      }
+      call.text[n] = '\0';
+    }
+    ++drawCallCount;
+  }
   void drawLine(int, int, int, int, bool = true) const {}
   void drawLine(int, int, int, int, int, bool) const {}
 };
