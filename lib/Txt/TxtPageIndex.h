@@ -15,6 +15,12 @@ constexpr uint32_t CACHE_MAGIC = 0x54585449;  // "TXTI"
 constexpr uint8_t CACHE_VERSION = 3;          // Increment when cache format changes
 constexpr size_t PROGRESS_SIZE = 4;           // u16 page + two zero bytes
 
+// index.bin header: magic, version, fileSize, viewportWidth, linesPerPage,
+// fontId, screenMargin, paragraphAlignment, numPages. Every page start that
+// follows is a fixed-size u32 record.
+constexpr size_t INDEX_HEADER_BYTES = 30;
+constexpr size_t INDEX_ENTRY_BYTES = sizeof(uint32_t);
+
 // Text width oracle for the reader font (GfxRenderer::getTextAdvanceX on the device).
 class TextMeasurer {
  public:
@@ -79,8 +85,9 @@ class ByteWriter {
   virtual size_t write(const void* buffer, size_t count) = 0;
 };
 
-// Parses index.bin. Returns false when the header does not match `key`, leaving
-// pageOffsets untouched; on success pageOffsets holds the stored page starts.
+// Parses index.bin. Returns false when the header does not match `key` or the
+// file is truncated, inconsistent with `key.fileSize` or not strictly ordered,
+// leaving pageOffsets untouched; on success pageOffsets holds the page starts.
 bool loadPageIndexCache(ByteReader& in, const CacheKey& key, std::vector<size_t>& pageOffsets);
 
 void savePageIndexCache(ByteWriter& out, const CacheKey& key, const std::vector<size_t>& pageOffsets);

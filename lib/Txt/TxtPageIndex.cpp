@@ -5,6 +5,7 @@
 #include <PlatformSeam.h>
 
 #include <algorithm>
+#include <utility>
 
 namespace TxtPageIndex {
 
@@ -23,8 +24,7 @@ void writePod(ByteWriter& out, const T& value) {
 }  // namespace
 
 bool layoutPage(const uint8_t* chunk, const size_t chunkSize, const size_t offset, const size_t fileSize,
-                const Layout& layout, TextMeasurer& measurer, std::vector<std::string>& outLines,
-                size_t& nextOffset) {
+                const Layout& layout, TextMeasurer& measurer, std::vector<std::string>& outLines, size_t& nextOffset) {
   outLines.clear();
   const int linesPerPage = layout.linesPerPage;
   const int viewportWidth = layout.viewportWidth;
@@ -181,73 +181,140 @@ int buildPageIndex(ContentReader& content, const size_t fileSize, const Layout& 
 
 bool loadPageIndexCache(ByteReader& in, const CacheKey& key, std::vector<size_t>& pageOffsets) {
   uint32_t magic = 0;
-  readPod(in, magic);
+  if (!readPod(in, magic)) {
+    LOG_ERR("TRS", "Cache header truncated at magic, rebuilding");
+    return false;
+  }
   if (magic != CACHE_MAGIC) {
     LOG_DBG("TRS", "Cache magic mismatch, rebuilding");
     return false;
   }
 
   uint8_t version = 0;
-  readPod(in, version);
+  if (!readPod(in, version)) {
+    LOG_ERR("TRS", "Cache header truncated at version, rebuilding");
+    return false;
+  }
   if (version != CACHE_VERSION) {
     LOG_DBG("TRS", "Cache version mismatch (%d != %d), rebuilding", version, CACHE_VERSION);
     return false;
   }
 
   uint32_t fileSize = 0;
-  readPod(in, fileSize);
+  if (!readPod(in, fileSize)) {
+    LOG_ERR("TRS", "Cache header truncated at file size, rebuilding");
+    return false;
+  }
   if (fileSize != key.fileSize) {
     LOG_DBG("TRS", "Cache file size mismatch, rebuilding");
     return false;
   }
 
   int32_t cachedWidth = 0;
-  readPod(in, cachedWidth);
+  if (!readPod(in, cachedWidth)) {
+    LOG_ERR("TRS", "Cache header truncated at viewport width, rebuilding");
+    return false;
+  }
   if (cachedWidth != key.viewportWidth) {
     LOG_DBG("TRS", "Cache viewport width mismatch, rebuilding");
     return false;
   }
 
   int32_t cachedLines = 0;
-  readPod(in, cachedLines);
+  if (!readPod(in, cachedLines)) {
+    LOG_ERR("TRS", "Cache header truncated at lines per page, rebuilding");
+    return false;
+  }
   if (cachedLines != key.linesPerPage) {
     LOG_DBG("TRS", "Cache lines per page mismatch, rebuilding");
     return false;
   }
 
   int32_t fontId = 0;
-  readPod(in, fontId);
+  if (!readPod(in, fontId)) {
+    LOG_ERR("TRS", "Cache header truncated at font ID, rebuilding");
+    return false;
+  }
   if (fontId != key.fontId) {
     LOG_DBG("TRS", "Cache font ID mismatch (%d != %d), rebuilding", fontId, key.fontId);
     return false;
   }
 
   int32_t margin = 0;
-  readPod(in, margin);
+  if (!readPod(in, margin)) {
+    LOG_ERR("TRS", "Cache header truncated at screen margin, rebuilding");
+    return false;
+  }
   if (margin != key.screenMargin) {
     LOG_DBG("TRS", "Cache screen margin mismatch, rebuilding");
     return false;
   }
 
   uint8_t alignment = 0;
-  readPod(in, alignment);
+  if (!readPod(in, alignment)) {
+    LOG_ERR("TRS", "Cache header truncated at alignment, rebuilding");
+    return false;
+  }
   if (alignment != key.paragraphAlignment) {
     LOG_DBG("TRS", "Cache paragraph alignment mismatch, rebuilding");
     return false;
   }
 
   uint32_t numPages = 0;
-  readPod(in, numPages);
-
-  pageOffsets.clear();
-  pageOffsets.reserve(numPages);
-
-  for (uint32_t i = 0; i < numPages; i++) {
-    uint32_t offset = 0;
-    readPod(in, offset);
-    pageOffsets.push_back(offset);
+  if (!readPod(in, numPages)) {
+    LOG_ERR("TRS", "Cache header truncated at page count, rebuilding");
+    return false;
   }
 
+  // Bound the count before reserving: the entries are fixed-size records, so a
+  // cache file of N bytes cannot hold more than (N - header) / record of them.
+  const size_t cacheBytes = in.size();
+  if (cacheBytes < INDEX_HEADER_BYTES) {
+    LOG_ERR("TRS", "Cache shorter than its header (%zu bytes), rebuilding", cacheBytes);
+    return false;
+  }
+  const size_t maxEntries = (cacheBytes - INDEX_HEADER_BYTES) / INDEX_ENTRY_BYTES;
+  if (numPages > maxEntries) {
+    LOG_ERR("TRS", "Cache claims %u pages but holds %zu, rebuilding", numPages, maxEntries);
+    return false;
+  }
+
+  // A page starts at a distinct byte of the text, so the text bounds the count.
+  const size_t maxPages = key.fileSize > 0 ? key.fileSize : 1;
+  if (numPages > maxPages) {
+    LOG_ERR("TRS", "Cache claims %u pages for %u bytes of text, rebuilding", numPages, key.fileSize);
+    return false;
+  }
+  if (numPages == 0 && key.fileSize > 0) {
+    LOG_ERR("TRS", "Cache has no pages for %u bytes of text, rebuilding", key.fileSize);
+    return false;
+  }
+
+  std::vector<size_t> offsets;
+  offsets.reserve(numPages);
+
+  size_t previous = 0;
+  for (uint32_t i = 0; i < numPages; i++) {
+    uint32_t offset = 0;
+    if (!readPod(in, offset)) {
+      LOG_ERR("TRS", "Cache truncated at page %u of %u, rebuilding", i, numPages);
+      return false;
+    }
+    // The writer emits page 0 at offset 0 and only advances, so anything that
+    // repeats, goes backwards or starts past the text is corrupt.
+    if (i == 0 ? offset != 0 : offset <= previous) {
+      LOG_ERR("TRS", "Cache page %u offset %u out of order, rebuilding", i, offset);
+      return false;
+    }
+    if (key.fileSize > 0 && offset >= key.fileSize) {
+      LOG_ERR("TRS", "Cache page %u offset %u past %u bytes of text, rebuilding", i, offset, key.fileSize);
+      return false;
+    }
+    previous = offset;
+    offsets.push_back(offset);
+  }
+
+  pageOffsets = std::move(offsets);
   return true;
 }
 

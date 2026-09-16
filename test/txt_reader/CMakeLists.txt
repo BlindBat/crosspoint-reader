@@ -8,6 +8,7 @@ add_executable(TxtReaderTest
   ${REPO_ROOT}/lib/Txt/Txt.cpp
   ${REPO_ROOT}/lib/FsHelpers/FsHelpers.cpp
   ${REPO_ROOT}/test/support/PlatformHost.cpp
+  ${REPO_ROOT}/test/support/AllocCounter.cpp
 )
 
 # stubs/ first so <HalStorage.h>, <Logging.h>, <WString.h> and

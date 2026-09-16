@@ -17,12 +17,15 @@
 #include <gtest/gtest.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
 #include <vector>
+
+#include "AllocCounter.h"
 
 namespace {
 
@@ -447,6 +450,8 @@ TEST(TxtBuildIndex, StopsAtFirstUnreadablePage) {
 // ---------------------------------------------------------------------------
 
 constexpr size_t INDEX_HEADER_SIZE = 4 + 1 + 4 + 4 + 4 + 4 + 4 + 1 + 4;  // through numPages
+static_assert(INDEX_HEADER_SIZE == INDEX_HEADER_BYTES, "index.bin header size drifted from the contract");
+static_assert(INDEX_ENTRY_BYTES == 4, "index.bin page starts are u32 records");
 
 CacheKey referenceKey() {
   CacheKey k;
@@ -456,6 +461,14 @@ CacheKey referenceKey() {
   k.fontId = 7;
   k.screenMargin = 10;
   k.paragraphAlignment = 2;
+  return k;
+}
+
+// The loader checks page starts against the text they index, so a key whose
+// fileSize covers the offsets under test.
+CacheKey keyForText(const uint32_t textBytes) {
+  CacheKey k = referenceKey();
+  k.fileSize = textBytes;
   return k;
 }
 
@@ -508,11 +521,28 @@ TEST(TxtIndexBin, SaveWritesContractLayout) {
 
 TEST(TxtIndexBin, RoundTrip) {
   const std::vector<size_t> offsets{0, 8190, 16380, 20000};
+  const CacheKey key = keyForText(24000);
   MemoryBytes io;
-  savePageIndexCache(io, referenceKey(), offsets);
+  savePageIndexCache(io, key, offsets);
   std::vector<size_t> loaded;
-  ASSERT_TRUE(loadPageIndexCache(io, referenceKey(), loaded));
+  ASSERT_TRUE(loadPageIndexCache(io, key, loaded));
   EXPECT_EQ(loaded, offsets);
+}
+
+// The index a real pagination run produces must survive a save/load cycle.
+TEST(TxtIndexBin, BuiltIndexRoundTrips) {
+  MemoryContent content;
+  for (int i = 0; i < 40; ++i) content.data += "line of text here\n";
+  CodePointMeasurer measurer;
+  std::vector<size_t> built;
+  ASSERT_GT(buildPageIndex(content, content.data.size(), layoutOf(3), measurer, built), 1);
+
+  const CacheKey key = keyForText(static_cast<uint32_t>(content.data.size()));
+  MemoryBytes io;
+  savePageIndexCache(io, key, built);
+  std::vector<size_t> loaded;
+  ASSERT_TRUE(loadPageIndexCache(io, key, loaded));
+  EXPECT_EQ(loaded, built);
 }
 
 TEST(TxtIndexBin, LoadsValidFile) {
@@ -522,12 +552,36 @@ TEST(TxtIndexBin, LoadsValidFile) {
   EXPECT_EQ(loaded, (std::vector<size_t>{0, 120, 250, 377}));
 }
 
-TEST(TxtIndexBin, ZeroPagesLoadsEmptyIndex) {
+// An empty TXT has no pages to index, so a zero count is only legal there.
+TEST(TxtIndexBin, ZeroPagesForEmptyTextLoadsEmptyIndex) {
+  IndexBinBuilder ib;
+  ib.key = keyForText(0);
+  MemoryBytes in(ib.build());
+  std::vector<size_t> loaded{99};
+  ASSERT_TRUE(loadPageIndexCache(in, keyForText(0), loaded));
+  EXPECT_TRUE(loaded.empty());
+}
+
+// The single page buildPageIndex() emits for an empty TXT round-trips.
+TEST(TxtIndexBin, SinglePageAtZeroForEmptyTextLoads) {
+  IndexBinBuilder ib;
+  ib.key = keyForText(0);
+  ib.offsets = {0};
+  ib.numPages = 1;
+  MemoryBytes in(ib.build());
+  std::vector<size_t> loaded;
+  ASSERT_TRUE(loadPageIndexCache(in, keyForText(0), loaded));
+  EXPECT_EQ(loaded, (std::vector<size_t>{0}));
+}
+
+// Changed at T141: a book with text but no pages is a corrupt index, not an
+// empty one. Before it loaded as zero pages and the reader showed nothing.
+TEST(TxtIndexBin, ZeroPagesWithNonEmptyTextRejects) {
   IndexBinBuilder ib;
   MemoryBytes in(ib.build());
   std::vector<size_t> loaded{99};
-  ASSERT_TRUE(loadPageIndexCache(in, referenceKey(), loaded));
-  EXPECT_TRUE(loaded.empty());
+  EXPECT_FALSE(loadPageIndexCache(in, referenceKey(), loaded));
+  EXPECT_EQ(loaded, (std::vector<size_t>{99}));
 }
 
 TEST(TxtIndexBin, WrongMagicRejectsAndLeavesOffsetsUntouched) {
@@ -593,77 +647,219 @@ TEST(TxtIndexBin, EmptyFileRejects) {
   EXPECT_EQ(loaded, (std::vector<size_t>{99}));
 }
 
-// Pinned current behaviour (T141 will add the short-read / numPages validation).
-TEST(TxtIndexBin, TruncatedAtNumPagesLoadsAsZeroPages) {
+// Changed at T141: the page count field must be read in full. Before a file
+// that stopped right in front of it loaded as an empty index.
+TEST(TxtIndexBin, TruncatedAtNumPagesRejects) {
   const auto full = validIndex().build();
   MemoryBytes in(std::vector<uint8_t>(full.begin(), full.begin() + static_cast<long>(INDEX_HEADER_SIZE - 4)));
   std::vector<size_t> loaded{99};
-  EXPECT_TRUE(loadPageIndexCache(in, referenceKey(), loaded));
-  EXPECT_TRUE(loaded.empty());
+  EXPECT_FALSE(loadPageIndexCache(in, referenceKey(), loaded));
+  EXPECT_EQ(loaded, (std::vector<size_t>{99}));
 }
 
-// Pinned current behaviour (T141): a numPages larger than the payload is
-// accepted and the missing offsets read as 0.
-TEST(TxtIndexBin, NumPagesBeyondPayloadLoadsZeroFilled) {
+// Changed at T141: a count larger than the payload is rejected. Before the
+// missing offsets read back as 0.
+TEST(TxtIndexBin, NumPagesBeyondPayloadRejects) {
   auto ib = validIndex();
   ib.numPages = 8;  // only 4 offsets follow
   MemoryBytes in(ib.build());
-  std::vector<size_t> loaded;
-  EXPECT_TRUE(loadPageIndexCache(in, referenceKey(), loaded));
-  EXPECT_EQ(loaded, (std::vector<size_t>{0, 120, 250, 377, 0, 0, 0, 0}));
+  std::vector<size_t> loaded{99};
+  EXPECT_FALSE(loadPageIndexCache(in, referenceKey(), loaded));
+  EXPECT_EQ(loaded, (std::vector<size_t>{99}));
 }
 
-// Pinned current behaviour (T141): numPages is never checked against the bytes
-// that remain, so a lying count is reserved and materialised in full. On the
-// device this is an unbounded allocation driven by SD-card content -- a 4-byte
-// header field asks for numPages * sizeof(size_t) bytes of the ~380 KB heap.
-TEST(TxtIndexBin, NumPagesLargerThanTheFileCouldHoldIsMaterialisedInFull) {
+// Changed at T141: the count is bounded by the records the file can hold, so a
+// lying header no longer drives an unbounded allocation. Before, a 4-byte field
+// asked for numPages * sizeof(size_t) bytes of the ~380 KB device heap.
+TEST(TxtIndexBin, NumPagesLargerThanTheFileCouldHoldRejects) {
   auto ib = validIndex();
   ib.offsets.clear();
   ib.numPages = 200000;  // header claims 200k pages, zero bytes of payload
   MemoryBytes in(ib.build());
   ASSERT_EQ(in.size(), INDEX_HEADER_SIZE);
-  std::vector<size_t> loaded;
-  EXPECT_TRUE(loadPageIndexCache(in, referenceKey(), loaded));
-  ASSERT_EQ(loaded.size(), 200000u);
-  EXPECT_EQ(loaded.front(), 0u);
-  EXPECT_EQ(loaded.back(), 0u);
+  std::vector<size_t> loaded{99};
+  EXPECT_FALSE(loadPageIndexCache(in, referenceKey(), loaded));
+  EXPECT_EQ(loaded, (std::vector<size_t>{99}));
 }
 
-// Pinned: a short read inside an offset leaves the bytes that were not read at
-// their initial zero, so the entry is silently corrupted rather than rejected.
-TEST(TxtIndexBin, OffsetTruncatedMidEntryKeepsTheBytesItGot) {
+// The payload is exactly (size - header) / 4 records; one more is a lie.
+TEST(TxtIndexBin, NumPagesExactlyFillingThePayloadLoads) {
+  auto ib = validIndex();
+  MemoryBytes in(ib.build());
+  ASSERT_EQ(in.size(), INDEX_HEADER_SIZE + 4 * INDEX_ENTRY_BYTES);
+  std::vector<size_t> loaded;
+  EXPECT_TRUE(loadPageIndexCache(in, referenceKey(), loaded));
+  EXPECT_EQ(loaded.size(), 4u);
+}
+
+// Changed at T141: a count above the number of text bytes cannot be honest --
+// every page starts at a distinct byte -- so it is rejected before reserving.
+TEST(TxtIndexBin, NumPagesAboveTheTextSizeRejects) {
+  auto ib = validIndex();
+  ib.key = keyForText(3);
+  ib.offsets = {0, 1, 2, 3, 4, 5};
+  ib.numPages = 6;  // the payload holds all six, but a 3-byte text cannot
+  MemoryBytes in(ib.build());
+  std::vector<size_t> loaded{99};
+  EXPECT_FALSE(loadPageIndexCache(in, keyForText(3), loaded));
+  EXPECT_EQ(loaded, (std::vector<size_t>{99}));
+}
+
+// Rejecting a lying count is not the same as rejecting it BEFORE sizing the
+// offsets vector: the per-entry short-read check returns false either way, so
+// only the allocation that must not happen pins the ordering. Here the count is
+// legal for the text (200000 <= fileSize) and the payload bound alone can
+// reject it. Sizing first would ask for 200000 * sizeof(size_t) -- 800 KB on
+// the ~380 KB device heap, where -fno-exceptions turns the failure into abort().
+TEST(TxtIndexBin, ACountBeyondThePayloadIsRejectedBeforeTheOffsetsAreSized) {
+  auto ib = validIndex();
+  ib.key = keyForText(200000);
+  ib.offsets.clear();
+  ib.numPages = 200000;  // header claims 200k pages, zero bytes of payload
+  MemoryBytes in(ib.build());
+  ASSERT_EQ(in.size(), INDEX_HEADER_SIZE);
+
+  const CacheKey key = keyForText(200000);
+  std::vector<size_t> loaded{99};
+  bool ok = true;
+  size_t allocations = 0;
+  {
+    alloc_counter::CountingScope scope;
+    ok = loadPageIndexCache(in, key, loaded);
+    allocations = scope.count();
+  }
+  EXPECT_FALSE(ok);
+  EXPECT_EQ(loaded, (std::vector<size_t>{99}));
+  EXPECT_EQ(allocations, 0u);
+}
+
+// The mirror case: the payload really does hold every record it claims, so the
+// text-size bound is the only one that can reject the count, and it too must
+// run before the vector is sized.
+TEST(TxtIndexBin, ACountTheTextCannotHoldIsRejectedBeforeTheOffsetsAreSized) {
+  auto ib = validIndex();
+  ib.key = keyForText(100);  // a 100-byte text cannot start 20000 pages
+  ib.offsets.resize(20000);
+  for (uint32_t i = 0; i < 20000; ++i) ib.offsets[i] = i;
+  ib.numPages = 20000;
+  MemoryBytes in(ib.build());
+  ASSERT_EQ(in.size(), INDEX_HEADER_SIZE + 20000 * INDEX_ENTRY_BYTES);
+
+  const CacheKey key = keyForText(100);
+  std::vector<size_t> loaded{99};
+  bool ok = true;
+  size_t allocations = 0;
+  {
+    alloc_counter::CountingScope scope;
+    ok = loadPageIndexCache(in, key, loaded);
+    allocations = scope.count();
+  }
+  EXPECT_FALSE(ok);
+  EXPECT_EQ(loaded, (std::vector<size_t>{99}));
+  EXPECT_EQ(allocations, 0u);
+}
+
+// Changed at T141: a half-written entry is rejected. Before, the bytes that
+// were not read stayed at their initial zero and silently corrupted the entry.
+TEST(TxtIndexBin, OffsetTruncatedMidEntryRejects) {
   auto bytes = validIndex().build();
   bytes.resize(INDEX_HEADER_SIZE + 4 + 2);  // one whole offset, then two bytes
   bytes[INDEX_HEADER_SIZE + 4] = 0x11;
   bytes[INDEX_HEADER_SIZE + 5] = 0x22;
   MemoryBytes in(bytes);
-  std::vector<size_t> loaded;
-  EXPECT_TRUE(loadPageIndexCache(in, referenceKey(), loaded));
-  EXPECT_EQ(loaded, (std::vector<size_t>{0, 0x2211, 0, 0}));
+  std::vector<size_t> loaded{99};
+  EXPECT_FALSE(loadPageIndexCache(in, referenceKey(), loaded));
+  EXPECT_EQ(loaded, (std::vector<size_t>{99}));
 }
 
-// Pinned: page starts are not validated against fileSize. The reader survives
-// because loadPageAtOffset() refuses an offset at or past EOF.
-TEST(TxtIndexBin, OffsetsPastEofAreAcceptedAndRenderNothing) {
+// A file whose size() promises more than read() delivers (an SD read error part
+// way through) is caught by the per-entry check, not by the count bound.
+TEST(TxtIndexBin, ShortReadInsideThePayloadRejects) {
+  class ShortReadBytes final : public ByteReader {
+   public:
+    std::vector<uint8_t> bytes;
+    size_t deliver;  // bytes read() will hand out before it starts failing
+    size_t pos = 0;
+    ShortReadBytes(std::vector<uint8_t> b, const size_t deliver) : bytes(std::move(b)), deliver(deliver) {}
+    size_t read(void* buffer, const size_t count) override {
+      const size_t n = std::min(count, pos >= deliver ? 0 : deliver - pos);
+      std::memcpy(buffer, bytes.data() + pos, n);
+      pos += n;
+      return n;
+    }
+    size_t size() override { return bytes.size(); }
+  };
+
+  ShortReadBytes in(validIndex().build(), INDEX_HEADER_SIZE + 2 * INDEX_ENTRY_BYTES);
+  std::vector<size_t> loaded{99};
+  EXPECT_FALSE(loadPageIndexCache(in, referenceKey(), loaded));
+  EXPECT_EQ(loaded, (std::vector<size_t>{99}));
+}
+
+// Changed at T141: page starts are validated against the text they index.
+// Before they were accepted and the reader only survived because
+// loadPageAtOffset() refuses an offset at or past EOF.
+TEST(TxtIndexBin, OffsetsPastEofReject) {
   auto ib = validIndex();
-  ib.key.fileSize = 16;
+  ib.key = keyForText(16);
   ib.offsets = {0, 9999};
   ib.numPages = 2;
   MemoryBytes in(ib.build());
-  CacheKey key = referenceKey();
-  key.fileSize = 16;
-  std::vector<size_t> loaded;
-  ASSERT_TRUE(loadPageIndexCache(in, key, loaded));
-  EXPECT_EQ(loaded, (std::vector<size_t>{0, 9999}));
+  std::vector<size_t> loaded{99};
+  EXPECT_FALSE(loadPageIndexCache(in, keyForText(16), loaded));
+  EXPECT_EQ(loaded, (std::vector<size_t>{99}));
 
+  // The renderer-side guard that used to absorb this is still in place.
   MemoryContent content;
   content.data = "0123456789abcdef";
   CodePointMeasurer measurer;
   std::vector<std::string> lines;
   size_t next = 0;
-  EXPECT_FALSE(loadPageAtOffset(content, content.data.size(), loaded[1], layoutOf(5), measurer, lines, next));
+  EXPECT_FALSE(loadPageAtOffset(content, content.data.size(), 9999, layoutOf(5), measurer, lines, next));
   EXPECT_TRUE(lines.empty());
+}
+
+// The last byte of the text is a legal page start; one past it is not.
+TEST(TxtIndexBin, OffsetAtTheLastTextByteLoadsButOneMoreRejects) {
+  auto ib = validIndex();
+  ib.key = keyForText(16);
+  ib.offsets = {0, 15};
+  ib.numPages = 2;
+  MemoryBytes ok(ib.build());
+  std::vector<size_t> loaded;
+  ASSERT_TRUE(loadPageIndexCache(ok, keyForText(16), loaded));
+  EXPECT_EQ(loaded, (std::vector<size_t>{0, 15}));
+
+  ib.offsets = {0, 16};
+  MemoryBytes atEof(ib.build());
+  std::vector<size_t> rejected{99};
+  EXPECT_FALSE(loadPageIndexCache(atEof, keyForText(16), rejected));
+  EXPECT_EQ(rejected, (std::vector<size_t>{99}));
+}
+
+// Changed at T141: buildPageIndex() emits strictly increasing starts from 0, so
+// a repeat, a step backwards or a non-zero first page is corrupt.
+TEST(TxtIndexBin, NonMonotonicOffsetsReject) {
+  auto ib = validIndex();
+  ib.offsets = {0, 250, 120, 377};
+  MemoryBytes backwards(ib.build());
+  std::vector<size_t> loaded{99};
+  EXPECT_FALSE(loadPageIndexCache(backwards, referenceKey(), loaded));
+  EXPECT_EQ(loaded, (std::vector<size_t>{99}));
+
+  ib.offsets = {0, 120, 120, 377};
+  MemoryBytes repeated(ib.build());
+  EXPECT_FALSE(loadPageIndexCache(repeated, referenceKey(), loaded));
+  EXPECT_EQ(loaded, (std::vector<size_t>{99}));
+}
+
+TEST(TxtIndexBin, FirstOffsetOtherThanZeroRejects) {
+  auto ib = validIndex();
+  ib.offsets = {1, 120, 250, 377};
+  MemoryBytes in(ib.build());
+  std::vector<size_t> loaded{99};
+  EXPECT_FALSE(loadPageIndexCache(in, referenceKey(), loaded));
+  EXPECT_EQ(loaded, (std::vector<size_t>{99}));
 }
 
 TEST(TxtIndexBin, TrailingBytesAfterOffsetsAreIgnored) {
@@ -679,21 +875,24 @@ TEST(TxtIndexBin, TrailingBytesAfterOffsetsAreIgnored) {
   EXPECT_EQ(in.size(), in.pos + 4);
 }
 
-// A stored offset is a u32; widening it must not sign-extend.
+// A stored offset is a u32; widening it must not sign-extend. The 2 GB start
+// is in range for the 4 GB-1 text this key describes.
 TEST(TxtIndexBin, LargeOffsetsAreWidenedUnsigned) {
   auto ib = validIndex();
-  ib.offsets = {0, 0x80000000u, 0xFFFFFFFFu};
+  ib.key = keyForText(0xFFFFFFFFu);
+  ib.offsets = {0, 0x80000000u, 0xFFFFFFFEu};
   ib.numPages = 3;
   MemoryBytes in(ib.build());
   std::vector<size_t> loaded;
-  ASSERT_TRUE(loadPageIndexCache(in, referenceKey(), loaded));
-  EXPECT_EQ(loaded, (std::vector<size_t>{0u, 2147483648u, 4294967295u}));
+  ASSERT_TRUE(loadPageIndexCache(in, keyForText(0xFFFFFFFFu), loaded));
+  EXPECT_EQ(loaded, (std::vector<size_t>{0u, 2147483648u, 4294967294u}));
 }
 
-// Pinned: writes are fire-and-forget, so a sink that runs out of room (a full
-// SD card) leaves a truncated index.bin that the loader still accepts, with the
-// offsets it never got reading back as 0.
-TEST(TxtIndexBin, SaveIgnoresShortWritesAndTheResultStillLoads) {
+// Changed at T141: writes are still fire-and-forget, so a sink that runs out of
+// room (a full SD card) leaves a truncated index.bin -- but the loader now
+// rejects it and the caller rebuilds. Before, the offsets it never got read
+// back as 0 and the book paginated to the wrong places.
+TEST(TxtIndexBin, SaveIgnoresShortWritesAndTheResultNoLongerLoads) {
   class ShortWriter final : public ByteWriter {
    public:
     std::vector<uint8_t> bytes;
@@ -709,13 +908,13 @@ TEST(TxtIndexBin, SaveIgnoresShortWritesAndTheResultStillLoads) {
   };
 
   ShortWriter out(INDEX_HEADER_SIZE + 4);  // room for the header and one offset
-  savePageIndexCache(out, referenceKey(), {11, 22, 33, 44});
+  savePageIndexCache(out, referenceKey(), {0, 22, 33, 44});
   EXPECT_EQ(out.bytes.size(), INDEX_HEADER_SIZE + 4);
 
   MemoryBytes in(out.bytes);
-  std::vector<size_t> loaded;
-  EXPECT_TRUE(loadPageIndexCache(in, referenceKey(), loaded));
-  EXPECT_EQ(loaded, (std::vector<size_t>{11, 0, 0, 0}));
+  std::vector<size_t> loaded{99};
+  EXPECT_FALSE(loadPageIndexCache(in, referenceKey(), loaded));
+  EXPECT_EQ(loaded, (std::vector<size_t>{99}));
 }
 
 // ---------------------------------------------------------------------------
@@ -1025,13 +1224,14 @@ class HalFileBytes final : public ByteReader, public ByteWriter {
 
 TEST_F(TxtFixture, IndexBinRoundTripsThroughAFileHandle) {
   const std::vector<size_t> offsets{0, 8190, 16380, 20000};
+  const CacheKey key = keyForText(24000);
   const std::string path = "/.crosspoint/txt_1/index.bin";
   std::filesystem::create_directories(root + "/.crosspoint/txt_1");
   {
     HalFile out;
     ASSERT_TRUE(Storage.openFileForWrite("TRS", path, out));
     HalFileBytes bytes(out);
-    savePageIndexCache(bytes, referenceKey(), offsets);
+    savePageIndexCache(bytes, key, offsets);
   }
   EXPECT_EQ(readFile(path).size(), INDEX_HEADER_SIZE + 4 * 4);
 
@@ -1040,8 +1240,24 @@ TEST_F(TxtFixture, IndexBinRoundTripsThroughAFileHandle) {
   HalFileBytes bytes(in);
   EXPECT_EQ(bytes.size(), INDEX_HEADER_SIZE + 4 * 4);
   std::vector<size_t> loaded;
-  ASSERT_TRUE(loadPageIndexCache(bytes, referenceKey(), loaded));
+  ASSERT_TRUE(loadPageIndexCache(bytes, key, loaded));
   EXPECT_EQ(loaded, offsets);
+}
+
+// A cache file the size() of which outruns its payload -- an index.bin the
+// device truncated on a power loss -- is rejected through the real handle.
+TEST_F(TxtFixture, IndexBinTruncatedInsideThePayloadOnDiskIsRejected) {
+  auto full = validIndex().build();
+  full.resize(INDEX_HEADER_SIZE + 2 * INDEX_ENTRY_BYTES);  // header claims 4
+  const std::string path = "/.crosspoint/txt_1/index.bin";
+  writeFile(path, std::string(reinterpret_cast<const char*>(full.data()), full.size()));
+
+  HalFile in;
+  ASSERT_TRUE(Storage.openFileForRead("TRS", path, in));
+  HalFileBytes bytes(in);
+  std::vector<size_t> loaded{99};
+  EXPECT_FALSE(loadPageIndexCache(bytes, referenceKey(), loaded));
+  EXPECT_EQ(loaded, (std::vector<size_t>{99}));
 }
 
 TEST_F(TxtFixture, TruncatedIndexBinOnDiskIsRejected) {
