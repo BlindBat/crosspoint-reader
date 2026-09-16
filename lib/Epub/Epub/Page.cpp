@@ -8,6 +8,14 @@
 
 namespace {
 
+// Largest on-page image edge a valid section cache can describe. Layout always
+// fits an image inside the viewport, and the viewport never exceeds the panel's
+// long edge (800 px on every supported panel), so a cached size outside
+// 0..MAX_PAGE_IMAGE_EDGE is corruption, not content. Fixed here rather than read
+// from the renderer because deserialization has no renderer: this is a format
+// sanity gate, not a layout constant.
+constexpr int16_t MAX_PAGE_IMAGE_EDGE = 800;
+
 template <typename Predicate>
 void renderFilteredPageElements(const std::vector<std::shared_ptr<PageElement>>& elements, GfxRenderer& renderer,
                                 const int fontId, const int xOffset, const int yOffset, Predicate&& predicate) {
@@ -70,13 +78,41 @@ bool PageImage::serialize(HalFile& file) {
 }
 
 std::unique_ptr<PageImage> PageImage::deserialize(HalFile& file) {
-  int16_t xPos;
-  int16_t yPos;
-  serialization::readPod(file, xPos);
-  serialization::readPod(file, yPos);
+  int16_t xPos = 0;
+  int16_t yPos = 0;
+  if (!serialization::readPod(file, xPos) || !serialization::readPod(file, yPos)) {
+    LOG_ERR("PGE", "Deserialization failed: truncated PageImage position");
+    return nullptr;
+  }
 
   auto ib = ImageBlock::deserialize(file);
-  return std::unique_ptr<PageImage>(new PageImage(std::move(ib), xPos, yPos));
+  if (!ib) {
+    LOG_ERR("PGE", "Deserialization failed: null ImageBlock");
+    return nullptr;
+  }
+
+  // Every render path dereferences imageBlock and trusts its extent, so a block
+  // the cache describes with an impossible size is rejected here instead of
+  // reaching the framebuffer. A zero edge is NOT impossible: the layout's
+  // fit-to-container scaling truncates, so a full-width 1 px divider image
+  // becomes width x 0, and the section cache stores that for real content. Such
+  // a block draws nothing (fillRect and ImageBlock::render both no-op on a
+  // non-positive extent), while rejecting it would discard the whole page of
+  // text around it.
+  const int16_t width = ib->getWidth();
+  const int16_t height = ib->getHeight();
+  if (width < 0 || height < 0 || width > MAX_PAGE_IMAGE_EDGE || height > MAX_PAGE_IMAGE_EDGE) {
+    LOG_ERR("PGE", "Deserialization failed: invalid image dimensions (%dx%d)", static_cast<int>(width),
+            static_cast<int>(height));
+    return nullptr;
+  }
+
+  auto* image = new (std::nothrow) PageImage(std::move(ib), xPos, yPos);
+  if (!image) {
+    LOG_ERR("PGE", "Deserialization failed: could not allocate PageImage");
+    return nullptr;
+  }
+  return std::unique_ptr<PageImage>(image);
 }
 
 void PageHorizontalRule::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset) {
@@ -185,8 +221,11 @@ bool Page::serialize(HalFile& file) const {
 std::unique_ptr<Page> Page::deserialize(HalFile& file) {
   auto page = std::unique_ptr<Page>(new Page());
 
-  uint16_t count;
-  serialization::readPod(file, count);
+  uint16_t count = 0;
+  if (!serialization::readPod(file, count)) {
+    LOG_ERR("PGE", "Deserialization failed: truncated element count");
+    return nullptr;
+  }
 
   // Reserve up front so a page load costs one allocation for the element vector
   // instead of a grow-copy-free cycle every doubling. `count` is untrusted (it
@@ -227,8 +266,11 @@ std::unique_ptr<Page> Page::deserialize(HalFile& file) {
   }
 
   // Deserialize footnotes
-  uint16_t fnCount;
-  serialization::readPod(file, fnCount);
+  uint16_t fnCount = 0;
+  if (!serialization::readPod(file, fnCount)) {
+    LOG_ERR("PGE", "Deserialization failed: truncated footnote count");
+    return nullptr;
+  }
   if (fnCount > MAX_FOOTNOTES_PER_PAGE) {
     LOG_ERR("PGE", "Invalid footnote count %u", fnCount);
     return nullptr;
@@ -245,8 +287,11 @@ std::unique_ptr<Page> Page::deserialize(HalFile& file) {
     entry.href[sizeof(entry.href) - 1] = '\0';
   }
 
-  uint16_t linkCount;
-  serialization::readPod(file, linkCount);
+  uint16_t linkCount = 0;
+  if (!serialization::readPod(file, linkCount)) {
+    LOG_ERR("PGE", "Deserialization failed: truncated link count");
+    return nullptr;
+  }
   if (linkCount > MAX_LINKS_PER_PAGE) {
     LOG_ERR("PGE", "Invalid link count %u", linkCount);
     return nullptr;

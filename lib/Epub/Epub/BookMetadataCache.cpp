@@ -71,6 +71,32 @@ BookMetadataCache::TocEntry readTocEntryFrom(F& file) {
   readTocEntryInto(file, entry);
   return entry;
 }
+
+// Validate `count` consecutive u32 LUT slots starting at the file's current
+// position: every slot must address a byte inside [lo, hi), the block that LUT
+// indexes. getSpineEntry/getTocEntry seek straight to these offsets, so an
+// unchecked slot lets a corrupt cache steer a read anywhere in the file.
+// Slots are read in batches (128 B of stack) so a 2000-entry LUT costs a
+// handful of SD transfers rather than one 4-byte read per slot.
+bool lutSlotsWithin(HalFile& file, const uint16_t count, const uint32_t lo, const uint32_t hi) {
+  constexpr uint16_t SLOT_BATCH = 32;
+  uint32_t slots[SLOT_BATCH];
+  uint16_t remaining = count;
+  while (remaining > 0) {
+    const uint16_t batch = remaining < SLOT_BATCH ? remaining : SLOT_BATCH;
+    const size_t wanted = batch * sizeof(uint32_t);
+    if (file.read(slots, wanted) != static_cast<int>(wanted)) {
+      return false;
+    }
+    for (uint16_t i = 0; i < batch; i++) {
+      if (slots[i] < lo || slots[i] >= hi) {
+        return false;
+      }
+    }
+    remaining -= batch;
+  }
+  return true;
+}
 }  // namespace
 
 /* ============= WRITING / BUILDING FUNCTIONS ================ */
@@ -518,7 +544,8 @@ bool BookMetadataCache::load() {
   // them in a single sequential pass -- which also verifies the whole spine block.
   cumulativeSizes.clear();
   cumulativeSizes.reserve(spineCount);
-  if (!bookFile.seek(lutOffset + lutSize)) {
+  const uint32_t spineBlockStart = lutOffset + lutSize;
+  if (!bookFile.seek(spineBlockStart)) {
     return failLoad("seek to spine entries failed");
   }
   for (uint16_t i = 0; i < spineCount; i++) {
@@ -527,6 +554,25 @@ bool BookMetadataCache::load() {
       return failLoad("truncated spine entry");
     }
     cumulativeSizes.push_back(entry.cumulativeSize);
+  }
+
+  // Spine entries are contiguous in index order, so where they end is where the
+  // TOC block begins. Both LUTs are validated against those bounds now: the
+  // accessors seek blindly to whatever a slot holds, and a slot that lands in
+  // the header, in the other block, or past the end would have them decode
+  // unrelated bytes into an entry.
+  const auto tocBlockStart = static_cast<uint32_t>(bookFile.position());
+  if (tocBlockStart > fileSize) {
+    return failLoad("spine block extends past end of file");
+  }
+  if (!bookFile.seek(lutOffset)) {
+    return failLoad("seek to LUT failed");
+  }
+  if (!lutSlotsWithin(bookFile, spineCount, spineBlockStart, tocBlockStart)) {
+    return failLoad("spine LUT slot outside the spine block");
+  }
+  if (!lutSlotsWithin(bookFile, tocCount, tocBlockStart, static_cast<uint32_t>(fileSize))) {
+    return failLoad("TOC LUT slot outside the TOC block");
   }
 
   // The TOC block sits last; reading the final entry through its LUT slot proves
@@ -566,12 +612,22 @@ BookMetadataCache::SpineEntry BookMetadataCache::getSpineEntry(const int index) 
     return {};
   }
 
-  // Seek to spine LUT item, read from LUT and get out data
-  bookFile.seek(lutOffset + sizeof(uint32_t) * index);
-  uint32_t spineEntryPos;
-  serialization::readPod(bookFile, spineEntryPos);
-  bookFile.seek(spineEntryPos);
-  return readSpineEntry(bookFile);
+  // Seek to spine LUT item, read from LUT and get out data. The slot range was
+  // validated in load(); a failure here means the card changed underneath us, so
+  // return a default entry rather than a half-decoded one.
+  uint32_t spineEntryPos = 0;
+  if (!bookFile.seek(lutOffset + sizeof(uint32_t) * index) || !serialization::readPod(bookFile, spineEntryPos) ||
+      !bookFile.seek(spineEntryPos)) {
+    LOG_ERR("BMC", "getSpineEntry %d: unreadable LUT slot", index);
+    return {};
+  }
+
+  SpineEntry entry;
+  if (!readSpineEntryInto(bookFile, entry)) {
+    LOG_ERR("BMC", "getSpineEntry %d: truncated entry at %u", index, spineEntryPos);
+    return {};
+  }
+  return entry;
 }
 
 BookMetadataCache::TocEntry BookMetadataCache::getTocEntry(const int index) {
@@ -585,12 +641,22 @@ BookMetadataCache::TocEntry BookMetadataCache::getTocEntry(const int index) {
     return {};
   }
 
-  // Seek to TOC LUT item, read from LUT and get out data
-  bookFile.seek(lutOffset + sizeof(uint32_t) * spineCount + sizeof(uint32_t) * index);
-  uint32_t tocEntryPos;
-  serialization::readPod(bookFile, tocEntryPos);
-  bookFile.seek(tocEntryPos);
-  return readTocEntry(bookFile);
+  // Seek to TOC LUT item, read from LUT and get out data. As in getSpineEntry, a
+  // read that fails after load() validated the slot means the file changed under
+  // us; serve a default entry instead of partially decoded fields.
+  uint32_t tocEntryPos = 0;
+  if (!bookFile.seek(lutOffset + sizeof(uint32_t) * spineCount + sizeof(uint32_t) * index) ||
+      !serialization::readPod(bookFile, tocEntryPos) || !bookFile.seek(tocEntryPos)) {
+    LOG_ERR("BMC", "getTocEntry %d: unreadable LUT slot", index);
+    return {};
+  }
+
+  TocEntry entry;
+  if (!readTocEntryInto(bookFile, entry)) {
+    LOG_ERR("BMC", "getTocEntry %d: truncated entry at %u", index, tocEntryPos);
+    return {};
+  }
+  return entry;
 }
 
 BookMetadataCache::SpineEntry BookMetadataCache::readSpineEntry(HalFile& file) const {

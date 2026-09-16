@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "EpubSectionTestSupport.h"
+#include "SectionLinkStubs.h"
 
 namespace {
 
@@ -274,6 +275,126 @@ TEST_F(EpubSectionCacheTest, StaleTmpFromInterruptedBuildIsReplacedByRebuild) {
   auto loaded = makeSection();
   EXPECT_TRUE(loaded->loadSectionFile(makeSpec()));
   EXPECT_EQ(loaded->pageCount, section->pageCount);
+}
+
+/* ---------- PageImage deserialization guards ---------- */
+
+// A section cache is untrusted input, and every image render path dereferences
+// PageImage's ImageBlock and draws the rectangle the block reports. A page whose
+// image block is missing, or whose stored extent cannot describe anything the
+// panel could hold, must fail the whole page load rather than be handed to the
+// renderer.
+
+// Force ImageBlock::deserialize to yield nullptr for the scope's duration,
+// standing in for the production nothrow allocation failing under memory
+// pressure (see SectionLinkStubs.cpp).
+class NullImageBlockScope {
+ public:
+  NullImageBlockScope() { gImageBlockDeserializeFails = true; }
+  ~NullImageBlockScope() { gImageBlockDeserializeFails = false; }
+};
+
+template <typename T>
+void appendPod(std::string& out, const T& value) {
+  char raw[sizeof(T)];
+  std::memcpy(raw, &value, sizeof(T));
+  out.append(raw, sizeof(T));
+}
+
+void appendString(std::string& out, const std::string& value) {
+  appendPod(out, static_cast<uint32_t>(value.size()));
+  out.append(value);
+}
+
+// One-element page holding a single PageImage, laid out exactly as
+// Page::serialize writes it (see contracts/cache-formats.md).
+std::string imagePageBytes(const int16_t width, const int16_t height) {
+  std::string out;
+  appendPod<uint16_t>(out, 1);  // element count
+  appendPod<uint8_t>(out, static_cast<uint8_t>(TAG_PageImage));
+  appendPod<int16_t>(out, 40);                           // xPos
+  appendPod<int16_t>(out, 12);                           // yPos
+  appendString(out, "/.crosspoint/epub_1/img_0_0.png");  // ImageBlock::imagePath
+  appendString(out, "OEBPS/images/cover.png");           // ImageBlock::srcPath
+  appendPod(out, width);
+  appendPod(out, height);
+  appendPod<uint16_t>(out, 0);  // footnote count
+  appendPod<uint16_t>(out, 0);  // link count
+  return out;
+}
+
+class PageImageDeserializeTest : public ::testing::Test {
+ protected:
+  void SetUp() override { ASSERT_TRUE(tmp.valid()); }
+
+  std::unique_ptr<Page> deserialize(const std::string& bytes) {
+    const std::string path = tmp.path() + "/page.bin";
+    EXPECT_TRUE(writeAll(path, bytes));
+    HalFile file;
+    EXPECT_TRUE(Storage.openFileForRead("TST", path, file));
+    return Page::deserialize(file);
+  }
+
+  TempDir tmp;
+};
+
+TEST_F(PageImageDeserializeTest, PanelSizedImageRoundTrips) {
+  const auto page = deserialize(imagePageBytes(200, 150));
+  ASSERT_NE(page, nullptr);
+  ASSERT_EQ(page->elements.size(), 1u);
+  ASSERT_EQ(page->elements[0]->getTag(), TAG_PageImage);
+  const auto& block = static_cast<const PageImage&>(*page->elements[0]).getImageBlock();
+  EXPECT_EQ(block.getWidth(), 200);
+  EXPECT_EQ(block.getHeight(), 150);
+}
+
+TEST_F(PageImageDeserializeTest, MissingImageBlockFailsThePage) {
+  const NullImageBlockScope forceNull;
+  EXPECT_EQ(deserialize(imagePageBytes(200, 150)), nullptr);
+}
+
+TEST_F(PageImageDeserializeTest, NegativeDimensionsFailThePage) {
+  EXPECT_EQ(deserialize(imagePageBytes(-200, 150)), nullptr);
+  EXPECT_EQ(deserialize(imagePageBytes(200, -1)), nullptr);
+  EXPECT_EQ(deserialize(imagePageBytes(-1, -1)), nullptr);
+}
+
+// A zero edge is something the layout really produces: fit-to-container scaling
+// truncates, so a full-width 1 px divider image is cached as width x 0. The
+// block draws nothing, but the page around it is real text and must survive the
+// load -- rejecting it would silently drop a page on every visit.
+TEST_F(PageImageDeserializeTest, ZeroExtentImageKeepsThePage) {
+  const auto flat = deserialize(imagePageBytes(760, 0));
+  ASSERT_NE(flat, nullptr);
+  ASSERT_EQ(flat->elements.size(), 1u);
+  const auto thin = deserialize(imagePageBytes(0, 300));
+  ASSERT_NE(thin, nullptr);
+  ASSERT_EQ(thin->elements.size(), 1u);
+}
+
+TEST_F(PageImageDeserializeTest, DimensionsBeyondThePanelFailThePage) {
+  // Layout fits every image inside the viewport, which never exceeds the
+  // panel's long edge; 801 px and INT16_MAX can only come from corruption.
+  EXPECT_EQ(deserialize(imagePageBytes(801, 150)), nullptr);
+  EXPECT_EQ(deserialize(imagePageBytes(200, 801)), nullptr);
+  EXPECT_EQ(deserialize(imagePageBytes(INT16_MAX, INT16_MAX)), nullptr);
+}
+
+TEST_F(PageImageDeserializeTest, TruncatedImageBlockFailsThePage) {
+  // Cut the file so the block's width/height never arrive: the page must be
+  // rejected because the footnote/link counts behind them cannot be read, not
+  // because of whatever those truncated fields happened to hold.
+  std::string bytes = imagePageBytes(200, 150);
+  bytes.resize(bytes.size() - (2 * sizeof(int16_t) + 2 * sizeof(uint16_t)));
+  EXPECT_EQ(deserialize(bytes), nullptr);
+
+  // Cut only the trailer: the image itself is intact and valid.
+  std::string noTrailer = imagePageBytes(200, 150);
+  noTrailer.resize(noTrailer.size() - 2 * sizeof(uint16_t));
+  EXPECT_EQ(deserialize(noTrailer), nullptr);
+
+  // Empty file: not even the element count arrives.
+  EXPECT_EQ(deserialize(std::string()), nullptr);
 }
 
 }  // namespace
