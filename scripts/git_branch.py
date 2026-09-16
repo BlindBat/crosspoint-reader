@@ -76,10 +76,13 @@ def get_base_version(project_dir):
     return config.get('crosspoint', 'version')
 
 
+# Development environments: one per board. Release (gh_release, gh_release_rc)
+# and slim envs set CROSSPOINT_VERSION in platformio.ini and are left alone.
+DEV_ENVS = ('default', 'sticky', 'x4pro', 'x4c', 'papermono')
+
+
 def inject_version(env):
-    # Only applies to development environments; release envs set the
-    # version via build_flags in platformio.ini and are unaffected.
-    if env['PIOENV'] not in ('default', 'sticky'):
+    if env['PIOENV'] not in DEV_ENVS:
         return
 
     project_dir = env['PROJECT_DIR']
