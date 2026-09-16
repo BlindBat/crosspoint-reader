@@ -247,8 +247,8 @@ TEST(SortFileList, MatchesTheOrderTheFileBrowserDraws) {
   std::vector<std::string> list = {"notes.txt", "Zebra/",   "cover.png",  "Book 10.epub", "book 2.epub",
                                    "a.md",      "archive/", "10 Series/", "2 Series/",    "Book 1.epub"};
   FsHelpers::sortFileList(list);
-  const std::vector<std::string> expected = {"2 Series/",   "10 Series/",   "archive/",  "Zebra/",   "a.md",
-                                             "Book 1.epub", "book 2.epub",  "Book 10.epub", "cover.png", "notes.txt"};
+  const std::vector<std::string> expected = {"2 Series/",   "10 Series/",  "archive/",     "Zebra/",    "a.md",
+                                             "Book 1.epub", "book 2.epub", "Book 10.epub", "cover.png", "notes.txt"};
   EXPECT_EQ(list, expected);
 }
 
@@ -410,8 +410,15 @@ TEST(SanitizeFat32, ReplacesReservedCharactersAndSpaces) {
 }
 
 TEST(SanitizeFat32, ReplacesControlCharsButKeepsDelAndHighBitBytes) {
-  EXPECT_EQ(sanitize("a\x01\t\x1f" "b", 64), "a---b");
-  EXPECT_EQ(sanitize("a\x7f" "b", 64), "a\x7f" "b");
+  EXPECT_EQ(sanitize("a\x01\t\x1f"
+                     "b",
+                     64),
+            "a---b");
+  EXPECT_EQ(sanitize("a\x7f"
+                     "b",
+                     64),
+            "a\x7f"
+            "b");
   EXPECT_EQ(sanitize("caf\xC3\xA9.epub", 64), "caf\xC3\xA9.epub");
 }
 
@@ -1025,11 +1032,16 @@ TEST_F(ClearBookCacheTest, TxtDispatchesToTxt) {
   expectSingleCall("txt", "/books/a.txt");
 }
 
-TEST_F(ClearBookCacheTest, MarkdownIsCurrentlyNotCleared) {
-  // Pins today's behaviour: .md opens through the TXT reader but clearBookCache
-  // skips it (tracked separately as T171).
+TEST_F(ClearBookCacheTest, MarkdownDispatchesToTxt) {
+  // Markdown opens through the TXT reader and caches under the same txt_ prefix,
+  // so clearing its cache must go through Txt as well.
   clearBookCache("/books/a.md");
-  EXPECT_TRUE(bookStubCalls().empty());
+  expectSingleCall("txt", "/books/a.md");
+}
+
+TEST_F(ClearBookCacheTest, MarkdownExtensionMatchIsCaseInsensitive) {
+  clearBookCache("/books/README.MD");
+  expectSingleCall("txt", "/books/README.MD");
 }
 
 TEST_F(ClearBookCacheTest, TheFinalExtensionDecidesTheCacheKind) {
@@ -1120,7 +1132,7 @@ TEST_F(NextBookFinderTest, ReturnsUpToMaxCountInNaturalOrderAfterCurrent) {
 TEST_F(NextBookFinderTest, LargeMaxCountReturnsEverySupportedSuccessor) {
   makeLibrary();
   const auto result = NextBookFinder::findNextBooks("/books/Book 1.epub", 50);
-  const std::vector<std::string> expected = {"Book 2.epub", "Book 3.fb2", "Book 4.xtc", "Book 5.xtch",
+  const std::vector<std::string> expected = {"Book 2.epub", "Book 3.fb2", "Book 4.xtc",  "Book 5.xtch",
                                              "Book 6.txt",  "Book 7.md",  "Book 10.epub"};
   EXPECT_EQ(result, expected);
 }
@@ -1186,7 +1198,7 @@ TEST_F(NextBookFinderTest, EmptyFolderReturnsEmpty) {
 TEST_F(NextBookFinderTest, MaxCountEqualToTheSuccessorCountReturnsThemAll) {
   makeLibrary();
   const auto result = NextBookFinder::findNextBooks("/books/Book 1.epub", 7);
-  const std::vector<std::string> expected = {"Book 2.epub", "Book 3.fb2", "Book 4.xtc", "Book 5.xtch",
+  const std::vector<std::string> expected = {"Book 2.epub", "Book 3.fb2", "Book 4.xtc",  "Book 5.xtch",
                                              "Book 6.txt",  "Book 7.md",  "Book 10.epub"};
   EXPECT_EQ(result, expected);
 }

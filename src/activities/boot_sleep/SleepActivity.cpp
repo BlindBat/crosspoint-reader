@@ -622,8 +622,9 @@ void SleepActivity::renderCoverSleepScreen() const {
     }
 
     coverBmpPath = lastXtc.getCoverBmpPath();
-  } else if (FsHelpers::hasTxtExtension(APP_STATE.openEpubPath)) {
-    // Handle TXT file - looks for cover image in the same folder
+  } else if (FsHelpers::hasTxtExtension(APP_STATE.openEpubPath) ||
+             FsHelpers::hasMarkdownExtension(APP_STATE.openEpubPath)) {
+    // TXT and Markdown - looks for a cover image in the same folder
     Txt lastTxt(APP_STATE.openEpubPath, "/.crosspoint");
     if (!lastTxt.load()) {
       LOG_ERR("SLP", "Failed to load last TXT");

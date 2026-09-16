@@ -33,7 +33,8 @@ void clearBookCache(const std::string& path) {
     Fb2(path, "/.crosspoint").clearCache();
   } else if (FsHelpers::hasXtcExtension(path)) {
     Xtc(path, "/.crosspoint").clearCache();
-  } else if (FsHelpers::hasTxtExtension(path)) {
+  } else if (FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path)) {
+    // Markdown is read by the TXT engine, so it caches under the same txt_ prefix.
     Txt(path, "/.crosspoint").clearCache();
   } else {
     return;
