@@ -22,6 +22,7 @@
 #include "network/HttpDownloader.h"
 #include "util/BookCacheUtils.h"
 #include "util/OpdsFilename.h"
+#include "util/OpdsUiUtils.h"
 #include "util/StringUtils.h"
 #include "util/UrlUtils.h"
 
@@ -388,13 +389,7 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   listNav.reset();
   entries = std::move(parser).getEntries();
 
-  entries.reserve(entries.size() + (prevUrl.empty() ? 0 : 1) + (nextUrl.empty() ? 0 : 1));
-  if (!prevUrl.empty()) {
-    entries.insert(entries.begin(), OpdsEntry{OpdsEntryType::NAVIGATION, tr(STR_PREV_PAGE), "", prevUrl, ""});
-  }
-  if (!nextUrl.empty()) {
-    entries.push_back(OpdsEntry{OpdsEntryType::NAVIGATION, tr(STR_NEXT_PAGE), "", nextUrl, ""});
-  }
+  opds_ui::addPaginationRows(entries, prevUrl, nextUrl, tr(STR_PREV_PAGE), tr(STR_NEXT_PAGE));
   if (feedTruncated) {
     LOG_INF("OPDS", "Feed truncated to fit memory");
   }
@@ -592,25 +587,7 @@ void OpdsBookBrowserActivity::performSearch(const std::string& query) {
     return;
   }
 
-  auto urlEncode = [](const std::string& s) {
-    std::string out;
-    out.reserve(s.size() * 3);
-    for (unsigned char c : s) {
-      if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
-        out += static_cast<char>(c);
-      else {
-        char buf[4];
-        snprintf(buf, sizeof(buf), "%%%02X", c);
-        out += buf;
-      }
-    }
-    return out;
-  };
-
-  std::string url = searchTemplate;
-  const std::string placeholder = "{searchTerms}";
-  const size_t pos = url.find(placeholder);
-  if (pos != std::string::npos) url.replace(pos, placeholder.length(), urlEncode(query));
+  const std::string url = opds_ui::buildSearchUrl(searchTemplate, query);
 
   navigationHistory.push_back(currentPath);
   currentPath = url;

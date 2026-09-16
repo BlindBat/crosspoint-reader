@@ -3,7 +3,10 @@
 #include <Memory.h>
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <memory>
 #include <string>
 
 #include "Serialization.h"  // MAX_STRING_LENGTH shared with the unbuffered overloads

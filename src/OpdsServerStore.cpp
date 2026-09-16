@@ -4,7 +4,7 @@
 #include <ObfuscationUtils.h>
 
 #include <algorithm>
-#include <cstring>
+#include <cstddef>
 
 void OpdsServerStore::toJson(JsonDocument& doc) const {
   JsonArray arr = doc["servers"].to<JsonArray>();
