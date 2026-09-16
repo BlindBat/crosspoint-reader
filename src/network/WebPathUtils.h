@@ -20,6 +20,25 @@ std::string normalizeWebPath(std::string_view inputPath);
 // True for dot-prefixed names and every HIDDEN_ITEMS entry (exact, case-sensitive).
 bool isProtectedItemName(std::string_view name);
 
+// True when ANY component of a path is protected, not just the last one.
+// Checking only the final name would expose /.crosspoint/settings.json and every
+// other file inside a hidden folder, so every client-supplied path goes through
+// this after normalizeWebPath().
+bool pathHasProtectedComponent(std::string_view path);
+
+// Verdict for a client-supplied file or folder name.
+enum class NameCheck : uint8_t {
+  Ok,
+  Empty,         // empty or whitespace only
+  HasSeparator,  // contains '/' or '\\', so it could escape the target folder
+  Protected,     // dot-prefixed or a HIDDEN_ITEMS entry
+};
+
+NameCheck checkItemName(std::string_view name);
+
+// Human-readable reason for a rejected name, for the HTTP body and the WS error.
+const char* nameCheckMessage(NameCheck check);
+
 // Parsed WebSocket upload command "START:<filename>:<size>:<path>".
 struct WsStartCommand {
   std::string fileName;

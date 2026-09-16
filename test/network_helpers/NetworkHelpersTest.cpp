@@ -431,18 +431,32 @@ TEST(ParseWsStart, HandlesVeryLongFilenamesAndPaths) {
 
 TEST(ParseWsStart, AcceptsUtf8FilenamesAndPathsVerbatim) {
   WsStartCommand cmd;
-  ASSERT_EQ(WebPathUtils::parseWsStart("START:caf\xC3\xA9.epub:42:/B\xC3\xBC" "cher", cmd), WsStartParseResult::OK);
+  ASSERT_EQ(WebPathUtils::parseWsStart("START:caf\xC3\xA9.epub:42:/B\xC3\xBC"
+                                       "cher",
+                                       cmd),
+            WsStartParseResult::OK);
   EXPECT_EQ(cmd.fileName, "caf\xC3\xA9.epub");
   EXPECT_EQ(cmd.size, 42u);
-  EXPECT_EQ(cmd.path, "/B\xC3\xBC" "cher");
-  EXPECT_EQ(cmd.filePath, "/B\xC3\xBC" "cher/caf\xC3\xA9.epub");
+  EXPECT_EQ(cmd.path,
+            "/B\xC3\xBC"
+            "cher");
+  EXPECT_EQ(cmd.filePath,
+            "/B\xC3\xBC"
+            "cher/caf\xC3\xA9.epub");
 }
 
 TEST(ParseWsStart, AcceptsFourByteUtf8Filenames) {
   WsStartCommand cmd;
-  ASSERT_EQ(WebPathUtils::parseWsStart("START:\xF0\x9F\x93\x96" ".epub:1:/", cmd), WsStartParseResult::OK);
-  EXPECT_EQ(cmd.fileName, "\xF0\x9F\x93\x96" ".epub");
-  EXPECT_EQ(cmd.filePath, "/\xF0\x9F\x93\x96" ".epub");
+  ASSERT_EQ(WebPathUtils::parseWsStart("START:\xF0\x9F\x93\x96"
+                                       ".epub:1:/",
+                                       cmd),
+            WsStartParseResult::OK);
+  EXPECT_EQ(cmd.fileName,
+            "\xF0\x9F\x93\x96"
+            ".epub");
+  EXPECT_EQ(cmd.filePath,
+            "/\xF0\x9F\x93\x96"
+            ".epub");
 }
 
 TEST(ParseWsStart, DistinguishesAMissingThirdFieldFromAnEmptySize) {
@@ -903,3 +917,83 @@ TEST(SortScannedNetworks, KeepsEveryRowAndTheGroupInvariantOnLargeLists) {
     if (a.hasSavedPassword == b.hasSavedPassword) ASSERT_GE(a.rssi, b.rssi);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Component-wide path protection and name validation (T145). Checking only the
+// final component let /.crosspoint/settings.json through /download.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+using WebPathUtils::NameCheck;
+
+TEST(PathHasProtectedComponent, HiddenParentProtectsEverythingBeneathIt) {
+  EXPECT_TRUE(WebPathUtils::pathHasProtectedComponent("/.crosspoint/settings.json"));
+  EXPECT_TRUE(WebPathUtils::pathHasProtectedComponent("/.crosspoint/wifi.json"));
+  EXPECT_TRUE(WebPathUtils::pathHasProtectedComponent("/.crosspoint/epub_123/progress.bin"));
+  EXPECT_TRUE(WebPathUtils::pathHasProtectedComponent("/books/.hidden/secret.epub"));
+}
+
+TEST(PathHasProtectedComponent, NamedHiddenItemsAreProtectedAtAnyDepth) {
+  EXPECT_TRUE(WebPathUtils::pathHasProtectedComponent("/System Volume Information"));
+  EXPECT_TRUE(WebPathUtils::pathHasProtectedComponent("/System Volume Information/IndexerVolumeGuid"));
+  EXPECT_TRUE(WebPathUtils::pathHasProtectedComponent("/books/XTCache/page0"));
+}
+
+TEST(PathHasProtectedComponent, OrdinaryPathsPass) {
+  EXPECT_FALSE(WebPathUtils::pathHasProtectedComponent("/"));
+  EXPECT_FALSE(WebPathUtils::pathHasProtectedComponent("/books"));
+  EXPECT_FALSE(WebPathUtils::pathHasProtectedComponent("/books/dune.epub"));
+  EXPECT_FALSE(WebPathUtils::pathHasProtectedComponent("/books/a.b.c/x.epub"));
+  EXPECT_FALSE(WebPathUtils::pathHasProtectedComponent(""));
+}
+
+TEST(PathHasProtectedComponent, MatchIsExactAndCaseSensitive) {
+  // A name that merely starts with a protected one is not protected.
+  EXPECT_FALSE(WebPathUtils::pathHasProtectedComponent("/XTCache2/x"));
+  EXPECT_FALSE(WebPathUtils::pathHasProtectedComponent("/xtcache/x"));
+  EXPECT_FALSE(WebPathUtils::pathHasProtectedComponent("/books/file.hidden"));
+}
+
+TEST(PathHasProtectedComponent, NormalisedTraversalIsStillCaught) {
+  // A client sending "/books/../.crosspoint/wifi.json" normalises to the hidden
+  // path, which is what the endpoints check.
+  const std::string normalised = WebPathUtils::normalizeWebPath("/books/../.crosspoint/wifi.json");
+  EXPECT_EQ(normalised, "/.crosspoint/wifi.json");
+  EXPECT_TRUE(WebPathUtils::pathHasProtectedComponent(normalised));
+}
+
+TEST(CheckItemName, AcceptsOrdinaryNames) {
+  EXPECT_EQ(WebPathUtils::checkItemName("dune.epub"), NameCheck::Ok);
+  EXPECT_EQ(WebPathUtils::checkItemName("My Books"), NameCheck::Ok);
+  EXPECT_EQ(WebPathUtils::checkItemName("a"), NameCheck::Ok);
+}
+
+TEST(CheckItemName, RejectsEmptyAndBlank) {
+  EXPECT_EQ(WebPathUtils::checkItemName(""), NameCheck::Empty);
+  EXPECT_EQ(WebPathUtils::checkItemName("   "), NameCheck::Empty);
+  EXPECT_EQ(WebPathUtils::checkItemName("\t"), NameCheck::Empty);
+}
+
+TEST(CheckItemName, RejectsSeparatorsThatWouldEscapeTheFolder) {
+  EXPECT_EQ(WebPathUtils::checkItemName("../evil"), NameCheck::HasSeparator);
+  EXPECT_EQ(WebPathUtils::checkItemName("sub/child"), NameCheck::HasSeparator);
+  EXPECT_EQ(WebPathUtils::checkItemName("..\\evil"), NameCheck::HasSeparator);
+  EXPECT_EQ(WebPathUtils::checkItemName("/absolute"), NameCheck::HasSeparator);
+}
+
+TEST(CheckItemName, RejectsProtectedNames) {
+  EXPECT_EQ(WebPathUtils::checkItemName(".crosspoint"), NameCheck::Protected);
+  EXPECT_EQ(WebPathUtils::checkItemName(".hidden"), NameCheck::Protected);
+  EXPECT_EQ(WebPathUtils::checkItemName("XTCache"), NameCheck::Protected);
+  EXPECT_EQ(WebPathUtils::checkItemName("System Volume Information"), NameCheck::Protected);
+}
+
+TEST(CheckItemName, EveryRejectionHasAMessageAndOkHasNone) {
+  EXPECT_STREQ(WebPathUtils::nameCheckMessage(NameCheck::Ok), "");
+  for (const auto check : {NameCheck::Empty, NameCheck::HasSeparator, NameCheck::Protected}) {
+    EXPECT_STRNE(WebPathUtils::nameCheckMessage(check), "");
+  }
+}
+
+}  // namespace

@@ -31,6 +31,49 @@ bool isProtectedItemName(std::string_view name) {
                      [name](const char* item) { return name == item; });
 }
 
+bool pathHasProtectedComponent(std::string_view path) {
+  size_t start = 0;
+  while (start <= path.size()) {
+    const size_t slash = path.find('/', start);
+    const size_t end = slash == std::string_view::npos ? path.size() : slash;
+    if (end > start && isProtectedItemName(path.substr(start, end - start))) {
+      return true;
+    }
+    if (slash == std::string_view::npos) break;
+    start = slash + 1;
+  }
+  return false;
+}
+
+NameCheck checkItemName(std::string_view name) {
+  size_t first = 0;
+  while (first < name.size() && (name[first] == ' ' || name[first] == '\t')) ++first;
+  if (first == name.size()) {
+    return NameCheck::Empty;
+  }
+  if (name.find('/') != std::string_view::npos || name.find('\\') != std::string_view::npos) {
+    return NameCheck::HasSeparator;
+  }
+  if (isProtectedItemName(name)) {
+    return NameCheck::Protected;
+  }
+  return NameCheck::Ok;
+}
+
+const char* nameCheckMessage(NameCheck check) {
+  switch (check) {
+    case NameCheck::Empty:
+      return "Name cannot be empty";
+    case NameCheck::HasSeparator:
+      return "Name cannot contain a path separator";
+    case NameCheck::Protected:
+      return "Name is reserved";
+    case NameCheck::Ok:
+      break;
+  }
+  return "";
+}
+
 WsStartParseResult parseWsStart(std::string_view msg, WsStartCommand& out) {
   constexpr std::string_view PREFIX = "START:";
   if (msg.substr(0, PREFIX.size()) != PREFIX) {
