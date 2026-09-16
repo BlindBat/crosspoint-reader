@@ -1,5 +1,6 @@
 #include "WebPathUtils.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdint>
 
@@ -26,12 +27,8 @@ bool isProtectedItemName(std::string_view name) {
   if (!name.empty() && name[0] == '.') {
     return true;
   }
-  for (const auto* item : HIDDEN_ITEMS) {
-    if (name == item) {
-      return true;
-    }
-  }
-  return false;
+  return std::any_of(std::begin(HIDDEN_ITEMS), std::end(HIDDEN_ITEMS),
+                     [name](const char* item) { return name == item; });
 }
 
 WsStartParseResult parseWsStart(std::string_view msg, WsStartCommand& out) {

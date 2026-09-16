@@ -1,5 +1,7 @@
 #include "XtcReaderMath.h"
 
+#include <algorithm>
+
 namespace xtc_reader {
 
 StatusBarLayout statusBarLayout(const bool bottom, const int screenHeight, const int statusBarHeight,
@@ -29,12 +31,10 @@ float progressPercent(const uint32_t currentPage, const uint32_t pageCount) {
 }
 
 const xtc::ChapterInfo* findChapter(const std::vector<xtc::ChapterInfo>& chapters, const uint32_t page) {
-  for (const auto& chapter : chapters) {
-    if (page >= chapter.startPage && page <= chapter.endPage) {
-      return &chapter;
-    }
-  }
-  return nullptr;
+  const auto it = std::find_if(chapters.begin(), chapters.end(), [page](const xtc::ChapterInfo& chapter) {
+    return page >= chapter.startPage && page <= chapter.endPage;
+  });
+  return it != chapters.end() ? &*it : nullptr;
 }
 
 int findChapterIndexForPage(const std::vector<xtc::ChapterInfo>& chapters, const uint32_t page) {
