@@ -104,8 +104,10 @@ Open the BMP. It should show a double-line frame with the title in bold above th
 
 Then vary the fixture: a one-word title (single line, unchanged from today), a title of ~300
 characters (ellipsis on the last line, nothing clipped), a title with no spaces (ellipsised, no
-overflow), `dc:creator` removed (title-only card, still balanced), and a Cyrillic or Arabic title
-(script renders, RTL keeps its direction).
+overflow), `dc:creator` removed (title-only card, still balanced), a Cyrillic or Arabic title
+(script renders, RTL keeps its direction), and — for FR-018 and SC-006 — a title carrying a lone
+UTF-8 continuation byte plus embedded control characters, and a 10 KB title. The last two must
+sleep the device without a restart; how they *look* does not matter.
 
 ## 5. Also confirm what must NOT change
 
