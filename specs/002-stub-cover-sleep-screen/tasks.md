@@ -175,3 +175,12 @@ One low-severity gap. The card's requirements are otherwise met in the tree; thi
 corner of the "no title" guard.
 
 - [X] T012 Widen the no-title guard in `renderCoverSleepScreen()` (`src/activities/boot_sleep/SleepActivity.cpp:699`) so `DEL` (0x7F) counts as a control character alongside the C0 range: `c > ' ' && c != 0x7F`. A title of nothing but `DEL` currently passes `c > ' '`, draws no glyphs, and leaves the empty frame the edge case forbids, per FR-005 and spec Edge Cases "Whitespace-only or control-character title" (partial). One condition — do not add a trimming helper. UTF-8 continuation bytes (0x80-0xBF) must keep passing.
+
+---
+
+## Phase 9: Convergence
+
+One low-severity gap, the same class as T012: the no-title guard reads bytes, so a title made
+only of *multi-byte* blanks still draws an empty frame.
+
+- [ ] T013 Make the no-title guard in `renderCoverSleepScreen()` (`src/activities/boot_sleep/SleepActivity.cpp:699`) codepoint-aware instead of byte-aware, so a title of nothing but non-ASCII blanks counts as no title, per FR-005 and spec Edge Cases "Whitespace-only or control-character title" (partial). Today the lambda tests raw bytes: a title of one U+00A0 encodes as `0xC2 0xA0`, the lead byte passes `c > ' '`, and the font *has* that glyph (interval `{0xA0, 0x17F, 0x64}`, `lib/EpdFont/builtinFonts/ubuntu_12_bold.h:3344`), so it renders as a blank advance inside an otherwise empty frame. U+2009, U+200B and U+202F are covered by the font's intervals too and behave the same. Walk the title with the existing `utf8NextCodepoint()` from `lib/Utf8/Utf8.h` and reject `cp <= ' '`, `0x7F`, `0xA0`, `0x2000`-`0x200B`, `0x202F`, `0x3000` and `0xFEFF`. Reuse that helper — do not add a trimming helper or a new file. U+FEFF alone already renders as the replacement glyph rather than a blank, but is cheapest to include in the same set. Latin, Cyrillic, CJK and combining-mark titles must keep passing.
