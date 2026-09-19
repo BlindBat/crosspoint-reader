@@ -156,3 +156,13 @@ granularity, not one-task-one-commit.
   class, a new file or a setting, stop and re-read [research.md](research.md).
 - Do not add a test for the `coverReadable ? art : (title.empty() ? fallback : stub)` branch; that
   decision is recorded and justified in the plan's Constitution Check.
+
+---
+
+## Phase 7: Convergence
+
+Both items are evidence gaps, not code gaps: the branches exist and are correct by inspection,
+but neither has been seen on screen. No source file should need to change.
+
+- [ ] T010 Capture a sleep where the book's cached `cover.bmp` exists but is corrupt (truncate or scribble over `fs_branches/<branch>/.crosspoint/epub_<hash>/cover.bmp` for a book that has cover art), and confirm the stub card is drawn rather than the generic sleep screen, per US1/AC3 (partial). Every capture so far reached the stub via `generateCoverBmp()` failing, never via `Bitmap::parseHeaders()` rejecting a present file.
+- [ ] T011 Capture a stub card whose author name is wider than one line, and confirm the author wraps within its own 2-line budget, stays inside the inner frame and keeps the title-to-author gap, per FR-010 and US2/AC3 (partial). Use a coverless EPUB fixture with a long `dc:creator`; the two-line author branch has never rendered.
