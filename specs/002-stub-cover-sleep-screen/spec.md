@@ -162,7 +162,7 @@ the card is light-on-dark and that the screen updates exactly once.
   line budget; a title that exceeds the budget MUST end with an ellipsis.
 - **FR-010**: The author MUST wrap the same way within its own, smaller line budget.
 - **FR-011**: Wrapped text MUST stay within the inner frame's horizontal bounds, and a word longer
-  than one line MUST be broken rather than overflow.
+  than one line MUST be truncated with an ellipsis rather than overflow.
 - **FR-012**: The title-and-author block MUST remain vertically balanced on the card as the number
   of lines changes, and MUST NOT overlap or cross the frame at any line count.
 - **FR-013**: The stub cover MUST honour the sleep-screen cover filter setting, at minimum
