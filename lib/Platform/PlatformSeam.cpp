@@ -8,6 +8,8 @@ namespace platform {
 
 uint32_t millis() { return ::millis(); }
 
+uint32_t micros() { return ::micros(); }
+
 void yield() { vTaskDelay(1); }
 
 size_t freeHeap() { return ESP.getFreeHeap(); }

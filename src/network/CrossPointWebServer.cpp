@@ -40,6 +40,12 @@ constexpr uint16_t LOCAL_UDP_PORT = 8134;
 // anything larger is a mistake or an attempt to exhaust the 380 KB heap.
 constexpr size_t MAX_JSON_BODY_BYTES = 8 * 1024;
 
+// Scratch buffers that would otherwise dominate the web-server task's stack.
+// They live on the heap for the duration of one request (see WebDAVHandler.cpp:22-24).
+constexpr size_t DOWNLOAD_CHUNK_BYTES = 4096;  // GET /download streaming chunk
+constexpr size_t MAX_ENTRY_NAME_BYTES = 500;   // SdFat long directory-entry name
+constexpr size_t JSON_ENTRY_BYTES = 512;       // one serialized JSON array element
+
 // Reads a body field as a string of at most maxLength bytes; an over-long or
 // non-string field yields an empty string, never a truncated one.
 std::string boundedBodyField(JsonVariantConst doc, const char* key, const size_t maxLength) {
@@ -184,8 +190,15 @@ void CrossPointWebServer::begin() {
   // Collect WebDAV headers and register handler
   const char* davHeaders[] = {"Depth", "Destination", "Overwrite", "If", "Lock-Token", "Timeout"};
   server->collectHeaders(davHeaders, 6);
-  server->addHandler(new WebDAVHandler());  // Note: WebDAVHandler will be deleted by WebServer when server is stopped
-  LOG_DBG("WEB", "WebDAV handler initialized");
+  // addHandler takes ownership -- the WebServer deletes the handler when it stops --
+  // so the raw nothrow allocation is correct here; only the null check is ours.
+  auto* davHandler = new (std::nothrow) WebDAVHandler();
+  if (davHandler) {
+    server->addHandler(davHandler);
+    LOG_DBG("WEB", "WebDAV handler initialized");
+  } else {
+    LOG_ERR("WEB", "OOM: WebDAV handler, WebDAV disabled");
+  }
 
   server->begin();
 
@@ -426,7 +439,7 @@ void CrossPointWebServer::handleStatus() const {
   server->send(200, "application/json", response);
 }
 
-void CrossPointWebServer::scanFiles(const char* path, const std::function<void(FileInfo)>& callback) const {
+void CrossPointWebServer::scanFiles(const char* path, const FileEntryFn& callback) const {
   HalFile root = Storage.open(path);
   if (!root) {
     LOG_DBG("WEB", "Failed to open directory: %s", path);
@@ -441,19 +454,27 @@ void CrossPointWebServer::scanFiles(const char* path, const std::function<void(F
 
   LOG_DBG("WEB", "Scanning files in: %s", path);
 
+  // One heap allocation for the whole scan; the loop reuses it per entry.
+  auto name = makeUniqueNoThrowForOverwrite<char[]>(MAX_ENTRY_NAME_BYTES);
+  if (!name) {
+    LOG_ERR("WEB", "OOM: %u bytes of entry name buffer", static_cast<unsigned>(MAX_ENTRY_NAME_BYTES));
+    root.close();
+    return;
+  }
+
   HalFile file = root.openNextFile();
-  char name[500];
   while (file) {
-    file.getName(name, sizeof(name));
-    auto fileName = String(name);
+    name[0] = '\0';
+    file.getName(name.get(), MAX_ENTRY_NAME_BYTES);
+    const char* fileName = name.get();
 
     // Skip hidden items (starting with ".")
-    bool shouldHide = !SETTINGS.showHiddenFiles && fileName.startsWith(".");
+    bool shouldHide = !SETTINGS.showHiddenFiles && fileName[0] == '.';
 
     // Check against explicitly hidden items list
     if (!shouldHide) {
       for (const auto* item : WebPathUtils::HIDDEN_ITEMS) {
-        if (fileName.equals(item)) {
+        if (strcmp(fileName, item) == 0) {
           shouldHide = true;
           break;
         }
@@ -470,7 +491,7 @@ void CrossPointWebServer::scanFiles(const char* path, const std::function<void(F
         info.isEpub = false;
       } else {
         info.size = file.size();
-        info.isEpub = isEpubFile(info.name);
+        info.isEpub = FsHelpers::hasEpubExtension(std::string_view{fileName});
       }
 
       callback(info);
@@ -484,10 +505,35 @@ void CrossPointWebServer::scanFiles(const char* path, const std::function<void(F
   root.close();
 }
 
-bool CrossPointWebServer::isEpubFile(const String& filename) const { return FsHelpers::hasEpubExtension(filename); }
+bool CrossPointWebServer::isEpubFile(std::string_view filename) const { return FsHelpers::hasEpubExtension(filename); }
 
 void CrossPointWebServer::handleFileList() const {
   sendHtmlContent(server.get(), FilesPageHtml, sizeof(FilesPageHtml));
+}
+
+// FileEntryFn trampoline for the /api/files listing: streams one JSON object per
+// directory entry into the caller's buffer, which is reused for every entry.
+void CrossPointWebServer::sendFileListEntry(void* ctx, const FileInfo& info) {
+  auto* listCtx = static_cast<FileListContext*>(ctx);
+  JsonDocument doc;
+  doc["name"] = info.name;
+  doc["size"] = info.size;
+  doc["isDirectory"] = info.isDirectory;
+  doc["isEpub"] = info.isEpub;
+
+  const size_t written = serializeJson(doc, listCtx->output, JSON_ENTRY_BYTES);
+  if (written >= JSON_ENTRY_BYTES) {
+    // JSON output truncated; skip this entry to avoid sending malformed JSON
+    LOG_DBG("WEB", "Skipping file entry with oversized JSON for name: %s", info.name);
+    return;
+  }
+
+  if (listCtx->seenFirst) {
+    listCtx->server->server->sendContent(",");
+  } else {
+    listCtx->seenFirst = true;
+  }
+  listCtx->server->server->sendContent(listCtx->output);
 }
 
 void CrossPointWebServer::handleFileListData() const {
@@ -504,32 +550,15 @@ void CrossPointWebServer::handleFileListData() const {
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
   server->send(200, "application/json", "");
   server->sendContent("[");
-  char output[512];
-  constexpr size_t outputSize = sizeof(output);
-  bool seenFirst = false;
-  JsonDocument doc;
-
-  scanFiles(currentPath.c_str(), [this, &output, &doc, seenFirst](const FileInfo& info) mutable {
-    doc.clear();
-    doc["name"] = info.name;
-    doc["size"] = info.size;
-    doc["isDirectory"] = info.isDirectory;
-    doc["isEpub"] = info.isEpub;
-
-    const size_t written = serializeJson(doc, output, outputSize);
-    if (written >= outputSize) {
-      // JSON output truncated; skip this entry to avoid sending malformed JSON
-      LOG_DBG("WEB", "Skipping file entry with oversized JSON for name: %s", info.name.c_str());
-      return;
-    }
-
-    if (seenFirst) {
-      server->sendContent(",");
-    } else {
-      seenFirst = true;
-    }
-    server->sendContent(output);
-  });
+  auto output = makeUniqueNoThrowForOverwrite<char[]>(JSON_ENTRY_BYTES);
+  if (!output) {
+    LOG_ERR("WEB", "OOM: %u bytes of JSON entry buffer", static_cast<unsigned>(JSON_ENTRY_BYTES));
+    server->sendContent("]");
+    server->sendContent("");
+    return;
+  }
+  FileListContext listCtx{this, output.get(), false};
+  scanFiles(currentPath.c_str(), FileEntryFn{&CrossPointWebServer::sendFileListEntry, &listCtx});
   server->sendContent("]");
   // End of streamed response, empty chunk to signal client
   server->sendContent("");
@@ -570,7 +599,7 @@ void CrossPointWebServer::handleDownload() const {
   }
 
   String contentType = "application/octet-stream";
-  if (isEpubFile(itemPath)) {
+  if (isEpubFile(std::string_view{itemPath.c_str(), itemPath.length()})) {
     contentType = "application/epub+zip";
   }
 
@@ -585,18 +614,22 @@ void CrossPointWebServer::handleDownload() const {
   server->send(200, contentType.c_str(), "");
 
   NetworkClient client = server->client();
-  const size_t chunkSize = 4096;
-  uint8_t buffer[chunkSize];
+  auto buffer = makeUniqueNoThrowForOverwrite<uint8_t[]>(DOWNLOAD_CHUNK_BYTES);
+  if (!buffer) {
+    LOG_ERR("WEB", "OOM: %u bytes of download buffer", static_cast<unsigned>(DOWNLOAD_CHUNK_BYTES));
+    file.close();
+    return;
+  }
 
   bool downloadOk = true;
   while (downloadOk && file.available()) {
-    int result = file.read(buffer, chunkSize);
+    int result = file.read(buffer.get(), DOWNLOAD_CHUNK_BYTES);
     if (result <= 0) break;
     size_t bytesRead = static_cast<size_t>(result);
     size_t totalWritten = 0;
     while (totalWritten < bytesRead) {
       resetTaskWatchdogIfSubscribed();
-      size_t wrote = client.write(buffer + totalWritten, bytesRead - totalWritten);
+      size_t wrote = client.write(buffer.get() + totalWritten, bytesRead - totalWritten);
       if (wrote == 0) {
         downloadOk = false;
         break;
@@ -1137,8 +1170,14 @@ void CrossPointWebServer::handleGetSettings() const {
   server->send(200, "application/json", "");
   server->sendContent("[");
 
-  char output[512];
-  constexpr size_t outputSize = sizeof(output);
+  auto output = makeUniqueNoThrowForOverwrite<char[]>(JSON_ENTRY_BYTES);
+  if (!output) {
+    LOG_ERR("WEB", "OOM: %u bytes of JSON entry buffer", static_cast<unsigned>(JSON_ENTRY_BYTES));
+    server->sendContent("]");
+    server->sendContent("");
+    return;
+  }
+  constexpr size_t outputSize = JSON_ENTRY_BYTES;
   bool seenFirst = false;
   JsonDocument doc;
 
@@ -1209,7 +1248,7 @@ void CrossPointWebServer::handleGetSettings() const {
         continue;
     }
 
-    const size_t written = serializeJson(doc, output, outputSize);
+    const size_t written = serializeJson(doc, output.get(), outputSize);
     if (written >= outputSize) {
       LOG_DBG("WEB", "Skipping oversized setting JSON for: %s", s.key);
       continue;
@@ -1220,7 +1259,7 @@ void CrossPointWebServer::handleGetSettings() const {
     } else {
       seenFirst = true;
     }
-    server->sendContent(output);
+    server->sendContent(output.get());
     yield();                          // Yield to allow WiFi and other tasks to process during a slow send
     resetTaskWatchdogIfSubscribed();  // Reset watchdog: each sendContent() is a blocking network write
   }
@@ -1330,8 +1369,14 @@ void CrossPointWebServer::handleGetOpdsServers() const {
   server->send(200, "application/json", "");
   server->sendContent("[");
 
-  char output[512];
-  constexpr size_t outputSize = sizeof(output);
+  auto output = makeUniqueNoThrowForOverwrite<char[]>(JSON_ENTRY_BYTES);
+  if (!output) {
+    LOG_ERR("WEB", "OOM: %u bytes of JSON entry buffer", static_cast<unsigned>(JSON_ENTRY_BYTES));
+    server->sendContent("]");
+    server->sendContent("");
+    return;
+  }
+  constexpr size_t outputSize = JSON_ENTRY_BYTES;
   JsonDocument doc;
 
   for (size_t i = 0; i < servers.size(); i++) {
@@ -1343,11 +1388,11 @@ void CrossPointWebServer::handleGetOpdsServers() const {
     // Never expose passwords over the API — only indicate whether one is set
     doc["hasPassword"] = !servers[i].password.empty();
 
-    const size_t written = serializeJson(doc, output, outputSize);
+    const size_t written = serializeJson(doc, output.get(), outputSize);
     if (written >= outputSize) continue;
 
     if (i > 0) server->sendContent(",");
-    server->sendContent(output);
+    server->sendContent(output.get());
     yield();                          // Yield to allow WiFi and other tasks to process during a slow send
     resetTaskWatchdogIfSubscribed();  // Reset watchdog: each sendContent() is a blocking network write
   }
@@ -1456,8 +1501,14 @@ void CrossPointWebServer::handleGetWifiNetworks() const {
   server->send(200, "application/json", "");
   server->sendContent("[");
 
-  char output[320];
-  constexpr size_t outputSize = sizeof(output);
+  auto output = makeUniqueNoThrowForOverwrite<char[]>(JSON_ENTRY_BYTES);
+  if (!output) {
+    LOG_ERR("WEB", "OOM: %u bytes of JSON entry buffer", static_cast<unsigned>(JSON_ENTRY_BYTES));
+    server->sendContent("]");
+    server->sendContent("");
+    return;
+  }
+  constexpr size_t outputSize = JSON_ENTRY_BYTES;
   JsonDocument doc;
 
   for (size_t i = 0; i < credentials.size(); i++) {
@@ -1468,11 +1519,11 @@ void CrossPointWebServer::handleGetWifiNetworks() const {
     doc["hasPassword"] = credentials[i].hasPassword;
     doc["isLastConnected"] = credentials[i].isLastConnected;
 
-    const size_t written = serializeJson(doc, output, outputSize);
+    const size_t written = serializeJson(doc, output.get(), outputSize);
     if (written >= outputSize) continue;
 
     if (i > 0) server->sendContent(",");
-    server->sendContent(output);
+    server->sendContent(output.get());
     yield();                          // Yield to allow WiFi and other tasks to process during a slow send
     resetTaskWatchdogIfSubscribed();  // Reset watchdog: each sendContent() is a blocking network write
   }
@@ -1730,7 +1781,8 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
 
       // Send progress update (every 64KB or at end)
       if (wsUploadReceived - wsLastProgressSent >= 65536 || wsUploadReceived >= wsUploadSize) {
-        String progress = "PROGRESS:" + String(wsUploadReceived) + ":" + String(wsUploadSize);
+        char progress[48];
+        snprintf(progress, sizeof(progress), "PROGRESS:%zu:%zu", wsUploadReceived, wsUploadSize);
         wsServer->sendTXT(num, progress);
         wsLastProgressSent = wsUploadReceived;
       }

@@ -29,6 +29,7 @@ add_executable(EpubSectionTest
   ${REPO_ROOT}/lib/expat/xmlparse.c
   ${REPO_ROOT}/lib/expat/xmlrole.c
   ${REPO_ROOT}/lib/expat/xmltok.c
+  ${REPO_ROOT}/test/support/PlatformHost.cpp
 )
 
 target_include_directories(EpubSectionTest PRIVATE
@@ -46,6 +47,8 @@ target_include_directories(EpubSectionTest PRIVATE
   ${REPO_ROOT}/lib/MiniBidi
   ${REPO_ROOT}/lib/XmlParserUtils
   ${REPO_ROOT}/lib/Serialization
+  ${REPO_ROOT}/lib/Platform
+  ${REPO_ROOT}/test/support
 )
 
 target_compile_definitions(EpubSectionTest PRIVATE

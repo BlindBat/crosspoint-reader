@@ -82,6 +82,17 @@ ReaderRenderSpec makeSpec() {
   return spec;
 }
 
+// Collects finished pages behind an Fb2PageCompleteFn (function pointer + context).
+struct PageSink {
+  std::vector<std::unique_ptr<Page>>* pages;
+
+  Fb2PageCompleteFn fn() { return {&PageSink::append, this}; }
+
+  static void append(void* ctx, std::unique_ptr<Page> page) {
+    static_cast<PageSink*>(ctx)->pages->push_back(std::move(page));
+  }
+};
+
 // Drives the real parser against a fixture file and collects finished pages.
 struct ParseResult {
   std::vector<std::unique_ptr<Page>> pages;
@@ -91,9 +102,9 @@ struct ParseResult {
 ParseResult parseSection(const std::string& path, int targetSectionIndex, GfxRenderer& renderer,
                          const ReaderRenderSpec& spec) {
   ParseResult result;
+  PageSink sink{&result.pages};
   const std::string filepath = path;
-  Fb2SectionParser parser(filepath, 0, targetSectionIndex, renderer, spec,
-                          [&result](std::unique_ptr<Page> page) { result.pages.push_back(std::move(page)); });
+  Fb2SectionParser parser(filepath, 0, targetSectionIndex, renderer, spec, sink.fn());
   result.ok = parser.parseAndBuildPages();
   return result;
 }
@@ -109,8 +120,8 @@ class Fb2SectionParserHandlerTest : public ::testing::Test {
   GfxRenderer renderer;
   ReaderRenderSpec spec = makeSpec();
   std::vector<std::unique_ptr<Page>> pages;
-  Fb2SectionParser parser{filepath, 0,    -1,
-                          renderer, spec, [this](std::unique_ptr<Page> page) { pages.push_back(std::move(page)); }};
+  PageSink sink{&pages};
+  Fb2SectionParser parser{filepath, 0, -1, renderer, spec, sink.fn()};
 
   void SetUp() override { parser.currentTextBlock = std::make_unique<ParsedText>(false, false, false, BlockStyle()); }
 

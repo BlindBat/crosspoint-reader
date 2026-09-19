@@ -305,7 +305,7 @@ TEST_F(EpubSectionBuildTest, HtmlCacheIsPromotedAndReusedAcrossBuilds) {
 
 TEST_F(EpubSectionBuildTest, PopupFiresForLargeChaptersOnly) {
   int popups = 0;
-  const auto popupFn = [&popups]() { popups++; };
+  const BuildPopupFn popupFn{[](void* ctx) { ++*static_cast<int*>(ctx); }, &popups};
 
   // Main fixture is ~13KB of HTML: over the 10KB indexing-popup threshold.
   auto big = makeSection();

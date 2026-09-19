@@ -273,8 +273,11 @@ class BaseTheme {
                               MenuLabelFn buttonLabel, MenuIconFn rowIcon) const;
   virtual Rect drawPopup(const GfxRenderer& renderer, const char* message) const;
   virtual void fillPopupProgress(const GfxRenderer& renderer, const Rect& layout, const int progress) const;
+  // `title` is borrowed, not owned: it is drawn and never stored, so every reader
+  // hands over a pointer into text it already holds instead of copying a string
+  // into the status bar on each page render.
   void drawStatusBar(GfxRenderer& renderer, const float bookProgress, const int currentPage, const int pageCount,
-                     std::string title, const int paddingBottom = 0, const int textYOffset = 0,
+                     const char* title, const int paddingBottom = 0, const int textYOffset = 0,
                      const bool fillMargin = true, const bool isPageBookmarked = false,
                      const bool pageCountEstimated = false) const;
   void drawHelpText(const GfxRenderer& renderer, Rect rect, const char* label) const;

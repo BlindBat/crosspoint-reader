@@ -13,6 +13,7 @@ add_executable(LibraryHelpersTest
   ${REPO_ROOT}/src/util/NextBookFinder.cpp
   ${REPO_ROOT}/src/util/BookCacheUtils.cpp
   ${REPO_ROOT}/src/util/ButtonNavigator.cpp
+  ${REPO_ROOT}/test/support/PlatformHost.cpp
 )
 
 target_include_directories(LibraryHelpersTest PRIVATE
@@ -20,6 +21,8 @@ target_include_directories(LibraryHelpersTest PRIVATE
   ${REPO_ROOT}/src
   ${REPO_ROOT}/lib/FsHelpers
   ${REPO_ROOT}/lib/Memory
+  ${REPO_ROOT}/lib/Platform
+  ${REPO_ROOT}/test/support
 )
 
 target_link_libraries(LibraryHelpersTest PRIVATE

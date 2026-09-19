@@ -105,7 +105,14 @@ class KeyboardEntryActivity : public Activity {
   void onComplete(std::string text);
   void onCancel();
   bool cursorPositionFromPoint(int x, int y, size_t& position) const;
-  std::string displayTextForCurrentState() const;
+  // Fills and returns displayScratch_ rather than a fresh string: the keyboard
+  // repaints on every keypress, and the masked copy is rebuilt each time.
+  // cursorPositionFromPoint() and render() are the only callers and never overlap.
+  std::string& displayTextForCurrentState() const;
+  mutable std::string displayScratch_;
+  // Per-line slices reused across the render loop; assign() keeps their capacity.
+  mutable std::string lineScratch_;
+  mutable std::string cursorScratch_;
   // Advance of s[start, end) measured in place by temporarily null-terminating
   // at `end` — avoids a substr temporary per measurement.
   int measureRange(std::string& s, int start, int end) const;

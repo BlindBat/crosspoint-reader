@@ -105,6 +105,19 @@ struct ChapterInfo {
 };
 
 // Error codes
+// Streaming page-load sink: a context pointer plus a plain function taking it,
+// not std::function -- this runs per chunk on the page-load path, and each
+// std::function signature costs flash and heap-allocates its closure.
+struct PageChunkFn {
+  void (*fn)(void* ctx, const uint8_t* data, size_t size, size_t offset) = nullptr;
+  void* ctx = nullptr;
+
+  explicit operator bool() const { return fn != nullptr; }
+  void operator()(const uint8_t* data, const size_t size, const size_t offset) const {
+    if (fn != nullptr) fn(ctx, data, size, offset);
+  }
+};
+
 enum class XtcError {
   OK = 0,
   FILE_NOT_FOUND,

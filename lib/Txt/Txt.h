@@ -9,6 +9,9 @@ class Txt {
   std::string filepath;
   std::string cacheBasePath;
   std::string cachePath;
+  // Derived from filepath once in the constructor: the status bar asks for it on
+  // every page render, and rebuilding it there allocated twice per repaint.
+  std::string title;
   bool loaded = false;
   size_t fileSize = 0;
 
@@ -18,7 +21,7 @@ class Txt {
   bool load();
   [[nodiscard]] const std::string& getPath() const { return filepath; }
   [[nodiscard]] const std::string& getCachePath() const { return cachePath; }
-  [[nodiscard]] std::string getTitle() const;
+  [[nodiscard]] const std::string& getTitle() const { return title; }
   [[nodiscard]] size_t getFileSize() const { return fileSize; }
 
   void setupCacheDir() const;

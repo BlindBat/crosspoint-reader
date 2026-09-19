@@ -46,6 +46,7 @@ target_include_directories(EpubOrchestrationTest PRIVATE
   ${REPO_ROOT}/lib/Utf8
   ${REPO_ROOT}/lib/XmlParserUtils
   ${REPO_ROOT}/lib/ZipFile
+  ${REPO_ROOT}/test/support
 )
 
 target_compile_definitions(EpubOrchestrationTest PRIVATE

@@ -244,10 +244,15 @@ bool Xtc::generateCoverBmp() const {
         const size_t byteInCol = y / 8;
         const size_t bitInByte = 7 - (y % 8);  // MSB = topmost pixel
 
+        // colBytes rounds the height up to a byte, so the last column can index
+        // past a plane whenever the height is not a multiple of 8: treat that as white.
         const size_t byteOffset = colIndex * colBytes + byteInCol;
-        const uint8_t bit1 = (plane1[byteOffset] >> bitInByte) & 1;
-        const uint8_t bit2 = (plane2[byteOffset] >> bitInByte) & 1;
-        const uint8_t pixelValue = (bit1 << 1) | bit2;
+        uint8_t pixelValue = 0;
+        if (byteOffset < planeSize) {
+          const uint8_t bit1 = (plane1[byteOffset] >> bitInByte) & 1;
+          const uint8_t bit2 = (plane2[byteOffset] >> bitInByte) & 1;
+          pixelValue = (bit1 << 1) | bit2;
+        }
 
         const uint8_t bmpVal = kXthToBmp[pixelValue];
         rowBuffer[(x * 2) / 8] |= bmpVal << (6 - ((x * 2) % 8));
@@ -550,9 +555,7 @@ size_t Xtc::loadPage(uint32_t pageIndex, uint8_t* buffer, size_t bufferSize) con
   return const_cast<xtc::XtcParser*>(parser.get())->loadPage(pageIndex, buffer, bufferSize);
 }
 
-xtc::XtcError Xtc::loadPageStreaming(uint32_t pageIndex,
-                                     std::function<void(const uint8_t* data, size_t size, size_t offset)> callback,
-                                     size_t chunkSize) const {
+xtc::XtcError Xtc::loadPageStreaming(uint32_t pageIndex, const xtc::PageChunkFn& callback, size_t chunkSize) const {
   if (!loaded || !parser) {
     return xtc::XtcError::FILE_NOT_FOUND;
   }

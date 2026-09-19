@@ -18,6 +18,7 @@
 #include <string_view>
 #include <vector>
 
+#include "PlatformHost.h"
 #include "activities/home/HomeMenuMap.h"
 #include "components/UIThemeUtils.h"
 #include "util/BookCacheUtils.h"
@@ -25,11 +26,9 @@
 #include "util/NextBookFinder.h"
 
 namespace {
-unsigned long g_millis = 0;
+// Fake clock consumed by ButtonNavigator through the platform seam.
+unsigned long& g_millis = platform_host::clock();
 }  // namespace
-
-// Fake Arduino clock consumed by ButtonNavigator (declared in stubs/Arduino.h).
-unsigned long millis() { return g_millis; }
 
 namespace {
 
@@ -271,8 +270,22 @@ TEST(SortFileList, KeepsEveryEquivalentName) {
 }
 
 TEST(SortFileList, EmptyEntryName) {
-  GTEST_SKIP() << "sortFileList calls std::string::back() on an empty entry (undefined behaviour); "
-                  "FsHelpers.cpp sortFileList comparator has no empty guard";
+  // An empty entry name is not a directory: it sorts with the files, ahead of every
+  // non-empty one, and reading its last character must not be attempted.
+  std::vector<std::string> list = {"", "b.txt", "dir/", "a.txt"};
+  FsHelpers::sortFileList(list);
+  const std::vector<std::string> expected = {"dir/", "", "a.txt", "b.txt"};
+  EXPECT_EQ(list, expected);
+}
+
+TEST(SortFileList, OnlyEmptyEntryNames) {
+  // Every comparison in the sort touches two empty names; none may be reordered or lost.
+  std::vector<std::string> list = {"", "", ""};
+  FsHelpers::sortFileList(list);
+  EXPECT_EQ(list.size(), 3u);
+  for (const std::string& entry : list) {
+    EXPECT_TRUE(entry.empty());
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -358,13 +371,6 @@ TEST(FileExtension, ViewsAreNotAssumedNullTerminated) {
   const std::string buffer = "book.epubXXXX";
   EXPECT_TRUE(FsHelpers::hasEpubExtension(std::string_view{buffer}.substr(0, 9)));
   EXPECT_FALSE(FsHelpers::hasEpubExtension(std::string_view{buffer}.substr(0, 8)));
-}
-
-TEST(FileExtension, ArduinoStringOverloadsForwardToStringView) {
-  EXPECT_TRUE(FsHelpers::hasEpubExtension(String("Book.EPUB")));
-  EXPECT_TRUE(FsHelpers::hasTxtExtension(String("a.txt")));
-  EXPECT_FALSE(FsHelpers::hasPngExtension(String("a.txt")));
-  EXPECT_TRUE(FsHelpers::checkFileExtension(String("x.fb2"), ".fb2"));
 }
 
 // ---------------------------------------------------------------------------
@@ -555,8 +561,9 @@ TEST(FileIcon, NonAsciiNamesKeepTheirExtensionIcon) {
 }
 
 TEST(FileIcon, EmptyName) {
-  GTEST_SKIP() << "getFileIcon calls std::string::back() on an empty name (undefined behaviour); "
-                  "UIThemeUtils.h getFileIcon has no empty guard";
+  // A corrupt recent.json entry with "path": "" reaches getFileIcon through
+  // RecentBooksActivity; it must fall through to the generic icon, not read back().
+  EXPECT_EQ(UIThemeUtils::getFileIcon(""), File);
 }
 
 // ---------------------------------------------------------------------------

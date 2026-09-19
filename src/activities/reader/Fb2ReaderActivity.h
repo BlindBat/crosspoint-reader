@@ -46,6 +46,7 @@ class Fb2ReaderActivity final : public ReaderActivity {
   std::string getBookThumbBmpPath() const override { return fb2 ? fb2->getThumbBmpPath() : ""; }
   bool handleFormatInput() override;
   void renderBook() override;
+  static void showIndexingPopup(void* ctx);
 
  public:
   explicit Fb2ReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath,

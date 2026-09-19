@@ -50,6 +50,22 @@ XtcSpec twoBit(uint16_t w, uint16_t h, const std::function<int(int, int)>& value
   return spec;
 }
 
+// Collects streamed chunks behind an xtc::PageChunkFn (function pointer + context).
+struct ChunkSink {
+  std::vector<uint8_t> assembled;
+  size_t expectedOffset = 0;
+  bool offsetsContiguous = true;
+
+  xtc::PageChunkFn fn() { return {&ChunkSink::append, this}; }
+
+  static void append(void* ctx, const uint8_t* data, const size_t size, const size_t offset) {
+    auto* self = static_cast<ChunkSink*>(ctx);
+    if (offset != self->expectedOffset) self->offsetsContiguous = false;
+    self->assembled.insert(self->assembled.end(), data, data + size);
+    self->expectedOffset += size;
+  }
+};
+
 bool loadCover(const Xtc& xtc, Bmp& bmp) { return xtcfix::parseBmp(xtcfix::readFile(xtc.getCoverBmpPath()), bmp); }
 bool loadThumb(const Xtc& xtc, int height, Bmp& bmp) {
   return xtcfix::parseBmp(xtcfix::readFile(xtc.getThumbBmpPath(height)), bmp);
@@ -546,17 +562,11 @@ TEST(XtcBook, LoadPageRejectsAnIndexPastTheLastPage) {
 TEST(XtcBook, StreamingLoadDeliversTheWholeBitmapInOrder) {
   Book book(oneBit(32, 8, [](int x, int y) { return (x + y) % 3 == 0; }));
   ASSERT_TRUE(book.xtc->load());
-  std::vector<uint8_t> streamed;
-  size_t nextOffset = 0;
-  const auto err = book.xtc->loadPageStreaming(
-      0,
-      [&](const uint8_t* data, size_t size, size_t offset) {
-        EXPECT_EQ(offset, nextOffset);
-        nextOffset += size;
-        streamed.insert(streamed.end(), data, data + size);
-      },
-      16);
+  ChunkSink sink;
+  const auto err = book.xtc->loadPageStreaming(0, sink.fn(), 16);
   EXPECT_EQ(err, xtc::XtcError::OK);
+  EXPECT_TRUE(sink.offsetsContiguous);
+  const std::vector<uint8_t>& streamed = sink.assembled;
   std::vector<uint8_t> direct(32);
   ASSERT_EQ(book.xtc->loadPage(0, direct.data(), direct.size()), direct.size());
   EXPECT_EQ(streamed, direct);
@@ -693,6 +703,59 @@ TEST(XtcThumb, XthHeightNotAMultipleOfEightStaysInBounds) {
   ASSERT_TRUE(loadThumb(*book.xtc, 100, bmp));
   EXPECT_EQ(bmp.width, 60);
   EXPECT_EQ(bmp.heightRaw, -100);
+}
+
+TEST(XtcCover, XthHeightNotAMultipleOfEightStaysInBounds) {
+  // The cover path walks the same column-major planes as the thumbnail. The tail
+  // columns of a height that is not a multiple of 8 have no storage, so they must
+  // read as white instead of running off the end of the two-plane buffer.
+  ASSERT_FALSE(xtcfix::xthLayoutIsAddressable(kFullW, 804));
+  Book book(twoBit(kFullW, 804, [](int, int) { return 3; }));
+  ASSERT_TRUE(book.xtc->load());
+  ASSERT_TRUE(book.xtc->generateCoverBmp());
+  Bmp bmp;
+  ASSERT_TRUE(loadCover(*book.xtc, bmp));
+  EXPECT_EQ(bmp.bitCount, 2);
+  EXPECT_EQ(bmp.width, kFullW);
+  EXPECT_EQ(bmp.heightRaw, -804);
+}
+
+// ---------------------------------------------------------------- reader page pixels
+
+TEST(XtcReaderPixels, XthHeightNotAMultipleOfEightStaysInBounds) {
+  // Same defect on the reader's page-drawing path (XtcReaderActivity's
+  // getPixelValue): the rightmost columns index past the plane pair.
+  constexpr uint16_t kW = 480;
+  constexpr uint16_t kH = 804;
+  ASSERT_FALSE(xtcfix::xthLayoutIsAddressable(kW, kH));
+  const std::vector<uint8_t> planes = xtcfix::xthBitmap(kW, kH, [](int, int) { return 3; });
+  const size_t planeSize = planes.size() / 2;
+  // x = 0 is the rightmost column, whose bottom offsets fall past both planes.
+  EXPECT_EQ(xtc_reader::xthPixelValue(planes.data(), planeSize, kW, kH, 0, kH - 1), 0);
+  // x = width - 1 is column 0, always addressable, and decodes normally.
+  EXPECT_EQ(xtc_reader::xthPixelValue(planes.data(), planeSize, kW, kH, kW - 1, 0), 3);
+}
+
+TEST(XtcReaderPixels, XthDecodesBothPlanesOnAnAddressablePage) {
+  // Height a multiple of 8: every offset has storage and all four values round-trip.
+  constexpr uint16_t kW = 16;
+  constexpr uint16_t kH = 8;
+  ASSERT_TRUE(xtcfix::xthLayoutIsAddressable(kW, kH));
+  const std::vector<uint8_t> planes = xtcfix::xthBitmap(kW, kH, [](int x, int) { return x % 4; });
+  const size_t planeSize = planes.size() / 2;
+  for (uint16_t x = 0; x < kW; ++x) {
+    EXPECT_EQ(xtc_reader::xthPixelValue(planes.data(), planeSize, kW, kH, x, 3), x % 4) << "x=" << x;
+  }
+}
+
+TEST(XtcReaderPixels, CoordinatesOutsideThePageAndANullBufferAreWhite) {
+  constexpr uint16_t kW = 16;
+  constexpr uint16_t kH = 8;
+  const std::vector<uint8_t> planes = xtcfix::xthBitmap(kW, kH, [](int, int) { return 3; });
+  const size_t planeSize = planes.size() / 2;
+  EXPECT_EQ(xtc_reader::xthPixelValue(planes.data(), planeSize, kW, kH, kW, 0), 0);
+  EXPECT_EQ(xtc_reader::xthPixelValue(planes.data(), planeSize, kW, kH, 0, kH), 0);
+  EXPECT_EQ(xtc_reader::xthPixelValue(nullptr, planeSize, kW, kH, 0, 0), 0);
 }
 
 TEST(XtcThumb, NoUpscaleCopyFailsWhenTheCoverCannotBeBuilt) {

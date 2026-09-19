@@ -72,4 +72,17 @@ uint32_t skipTarget(const uint32_t currentPage, const int amount, const uint32_t
   return static_cast<uint32_t>(newPage);
 }
 
+uint8_t xthPixelValue(const uint8_t* planes, const size_t planeSize, const uint16_t width, const uint16_t height,
+                      const uint16_t x, const uint16_t y) {
+  if (!planes || x >= width || y >= height) return 0;
+  const size_t colIndex = static_cast<size_t>(width) - 1 - x;
+  const size_t colBytes = (static_cast<size_t>(height) + 7) / 8;
+  const size_t byteOffset = colIndex * colBytes + y / 8;
+  if (byteOffset >= planeSize) return 0;
+  const uint8_t bitInByte = static_cast<uint8_t>(7 - (y % 8));
+  const uint8_t bit1 = (planes[byteOffset] >> bitInByte) & 1;
+  const uint8_t bit2 = (planes[planeSize + byteOffset] >> bitInByte) & 1;
+  return static_cast<uint8_t>((bit1 << 1) | bit2);
+}
+
 }  // namespace xtc_reader

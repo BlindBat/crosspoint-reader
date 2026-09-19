@@ -2,13 +2,13 @@
 
 #include <Epub/Page.h>
 #include <Epub/ParsedText.h>
+#include <Epub/ReaderCallbacks.h>
 #include <Epub/ReaderRenderSpec.h>
 #include <Epub/blocks/BlockStyle.h>
 #include <Epub/blocks/TextBlock.h>
 #include <expat.h>
 
 #include <climits>
-#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,8 +24,8 @@ class Fb2SectionParser {
   size_t sectionLength;
   GfxRenderer& renderer;
   const ReaderRenderSpec spec;
-  std::function<void(std::unique_ptr<Page>)> completePageFn;
-  std::function<void()> popupFn;
+  Fb2PageCompleteFn completePageFn;
+  BuildPopupFn popupFn;
 
   int targetSectionIndex;
   int depth = 0;
@@ -73,8 +73,7 @@ class Fb2SectionParser {
  public:
   explicit Fb2SectionParser(const std::string& filepath, size_t sectionLength, int targetSectionIndex,
                             GfxRenderer& renderer, const ReaderRenderSpec& spec,
-                            const std::function<void(std::unique_ptr<Page>)>& completePageFn,
-                            const std::function<void()>& popupFn = nullptr)
+                            const Fb2PageCompleteFn& completePageFn, const BuildPopupFn& popupFn = {})
       : filepath(filepath),
         sectionLength(sectionLength),
         renderer(renderer),

@@ -325,10 +325,10 @@ bool KeyboardEntryActivity::clearAllOrAltOnSelected() {
   return false;
 }
 
-std::string KeyboardEntryActivity::displayTextForCurrentState() const {
-  std::string displayText = text;
+std::string& KeyboardEntryActivity::displayTextForCurrentState() const {
+  displayScratch_.assign(text);
   if (inputType != InputType::Password || passwordVisible) {
-    return displayText;
+    return displayScratch_;
   }
 
   size_t revealPos;
@@ -337,12 +337,12 @@ std::string KeyboardEntryActivity::displayTextForCurrentState() const {
   } else {
     revealPos = (text.length() > 0 && cursorPos > 0) ? cursorPos - 1 : std::string::npos;
   }
-  for (size_t i = 0; i < displayText.length(); i++) {
+  for (size_t i = 0; i < displayScratch_.length(); i++) {
     if (i != revealPos) {
-      displayText[i] = '*';
+      displayScratch_[i] = '*';
     }
   }
-  return displayText;
+  return displayScratch_;
 }
 
 int KeyboardEntryActivity::measureRange(std::string& s, const int start, const int end) const {
@@ -417,7 +417,7 @@ bool KeyboardEntryActivity::cursorPositionFromPoint(const int x, const int y, si
   const int textAreaWidth = pageWidth - 2 * effectiveMargin - toggleReserve;
   const int maxLineWidth = textAreaWidth;
   const bool centerText = metrics.keyboardCenteredText;
-  std::string displayText = displayTextForCurrentState();
+  std::string& displayText = displayTextForCurrentState();
 
   int lineStartIdx = 0;
   int lineY = inputStartY;
@@ -708,7 +708,7 @@ void KeyboardEntryActivity::render(RenderLock&&) {
                           metrics.verticalSpacing * 4 + metrics.keyboardVerticalOffset;
   int inputHeight = 0;
 
-  std::string displayText = displayTextForCurrentState();
+  std::string& displayText = displayTextForCurrentState();
 
   const bool isPassword = (inputType == InputType::Password);
   int availableWidth = pageWidth;
@@ -750,8 +750,8 @@ void KeyboardEntryActivity::render(RenderLock&&) {
 
   while (true) {
     const int lineEndIdx = lineBreakEnd(displayText, lineStartIdx, maxLineWidth);
-    const std::string lineText = displayText.substr(lineStartIdx, lineEndIdx - lineStartIdx);
-    textWidth = renderer.getTextAdvanceX(UI_12_FONT_ID, lineText.c_str(), EpdFontFamily::REGULAR);
+    lineScratch_.assign(displayText, lineStartIdx, lineEndIdx - lineStartIdx);
+    textWidth = renderer.getTextAdvanceX(UI_12_FONT_ID, lineScratch_.c_str(), EpdFontFamily::REGULAR);
     {
       const bool isRtl = rangeIsRtl(displayText, lineStartIdx, lineEndIdx);
       const int lineStartX = centerText ? effectiveMargin + (maxLineWidth - textWidth) / 2 : effectiveMargin;
@@ -759,18 +759,19 @@ void KeyboardEntryActivity::render(RenderLock&&) {
       bool isCursorLine = false;
       if (!cursorDrawn && cursorPos >= lineStartIdx &&
           (isLastLine ? cursorPos <= lineEndIdx : cursorPos < lineEndIdx)) {
-        std::string beforeCursor;
         if (isPassword && !passwordVisible && cursorMode) {
-          beforeCursor = std::string(cursorPos - lineStartIdx, '*');
+          cursorScratch_.assign(cursorPos - lineStartIdx, '*');
         } else {
-          beforeCursor = displayText.substr(lineStartIdx, cursorPos - lineStartIdx);
+          cursorScratch_.assign(displayText, lineStartIdx, cursorPos - lineStartIdx);
         }
-        int beforeWidth = renderer.getTextAdvanceX(UI_12_FONT_ID, beforeCursor.c_str(), EpdFontFamily::REGULAR);
+        const size_t beforeCursorLen = cursorScratch_.size();
+        int beforeWidth = renderer.getTextAdvanceX(UI_12_FONT_ID, cursorScratch_.c_str(), EpdFontFamily::REGULAR);
         int throughCursorWidth = beforeWidth;
         int kernOffset = 0;
         if (cursorCharBytes > 0) {
-          std::string beforeAndCursor = beforeCursor + displayCursorChar;
-          throughCursorWidth = renderer.getTextAdvanceX(UI_12_FONT_ID, beforeAndCursor.c_str(), EpdFontFamily::REGULAR);
+          cursorScratch_.append(displayCursorChar);
+          throughCursorWidth = renderer.getTextAdvanceX(UI_12_FONT_ID, cursorScratch_.c_str(), EpdFontFamily::REGULAR);
+          cursorScratch_.resize(beforeCursorLen);
           int charAdvance = renderer.getTextAdvanceX(UI_12_FONT_ID, displayCursorChar, EpdFontFamily::REGULAR);
           kernOffset = throughCursorWidth - beforeWidth - charAdvance;
         }
@@ -789,18 +790,19 @@ void KeyboardEntryActivity::render(RenderLock&&) {
         // Draw text in 3 parts to avoid block cursor overflowing onto next char.
         // displayText uses '*' for all chars; actual char may be wider than '*'.
         // Part 1: chars before cursor position
-        const std::string part1 = displayText.substr(lineStartIdx, cursorPos - lineStartIdx);
-        renderer.drawText(UI_12_FONT_ID, lineStartX, inputStartY + inputHeight, part1.c_str());
+        cursorScratch_.assign(displayText, lineStartIdx, cursorPos - lineStartIdx);
+        renderer.drawText(UI_12_FONT_ID, lineStartX, inputStartY + inputHeight, cursorScratch_.c_str());
         // Part 2: skip cursor slot (block + actual char drawn later)
         // Part 3: chars after cursor position (skip char under cursor), starting at cursorPixelX + cursorCharWidth
         const int afterStart = static_cast<int>(cursorPos + cursorCharBytes);
         const int afterEnd = lineEndIdx;
         if (afterStart < afterEnd) {
-          const std::string part3 = displayText.substr(afterStart, afterEnd - afterStart);
-          renderer.drawText(UI_12_FONT_ID, cursorPixelX + cursorCharWidth, inputStartY + inputHeight, part3.c_str());
+          cursorScratch_.assign(displayText, afterStart, afterEnd - afterStart);
+          renderer.drawText(UI_12_FONT_ID, cursorPixelX + cursorCharWidth, inputStartY + inputHeight,
+                            cursorScratch_.c_str());
         }
       } else {
-        renderer.drawText(UI_12_FONT_ID, lineStartX, inputStartY + inputHeight, lineText.c_str());
+        renderer.drawText(UI_12_FONT_ID, lineStartX, inputStartY + inputHeight, lineScratch_.c_str());
       }
       if (lineEndIdx == static_cast<int>(displayText.length())) {
         break;

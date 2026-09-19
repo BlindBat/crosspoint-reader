@@ -40,6 +40,7 @@ add_executable(FontSystemTest
   ${REPO_ROOT}/lib/EpdFont/SdCardFontRegistry.cpp
   ${REPO_ROOT}/lib/EpdFont/SdCardFontManager.cpp
   ${REPO_ROOT}/lib/Utf8/Utf8.cpp
+  ${REPO_ROOT}/test/support/PlatformHost.cpp
 )
 
 # stubs/ first so <GfxRenderer.h>, <HalStorage.h>, <Logging.h> and <Arduino.h>
@@ -50,6 +51,8 @@ target_include_directories(FontSystemTest PRIVATE
   ${REPO_ROOT}/lib/EpdFont
   ${REPO_ROOT}/lib/Utf8
   ${REPO_ROOT}/lib/Memory
+  ${REPO_ROOT}/lib/Platform
+  ${REPO_ROOT}/test/support
 )
 
 set(FONT_SYSTEM_RESOURCES_DIR ${CMAKE_CURRENT_BINARY_DIR}/resources)

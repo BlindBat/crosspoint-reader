@@ -1,8 +1,8 @@
 #include "CssParser.h"
 
-#include <Arduino.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <PlatformSeam.h>
 
 #include <algorithm>
 #include <array>
@@ -974,11 +974,11 @@ CssParser::ParseResult CssParser::loadFromStream(HalFile& source) {
 
 CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view classAttr) const {
   static bool lowHeapWarningLogged = false;
-  if (ESP.getFreeHeap() < MIN_FREE_HEAP_FOR_CSS) {
+  if (platform::freeHeap() < MIN_FREE_HEAP_FOR_CSS) {
     if (!lowHeapWarningLogged) {
       lowHeapWarningLogged = true;
       LOG_DBG("CSS", "Warning: low heap (%u bytes) below MIN_FREE_HEAP_FOR_CSS (%u), returning empty style",
-              ESP.getFreeHeap(), static_cast<unsigned>(MIN_FREE_HEAP_FOR_CSS));
+              platform::freeHeap(), static_cast<unsigned>(MIN_FREE_HEAP_FOR_CSS));
     }
     return CssStyle{};
   }

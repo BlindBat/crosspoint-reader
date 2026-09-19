@@ -325,12 +325,14 @@ bool TextBlock::serialize(HalFile& file) const {
 }
 
 std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
-  uint16_t wc;
-  uint8_t hasFocus;
-  uint16_t textBytes;
-  serialization::readPod(file, wc);
-  serialization::readPod(file, hasFocus);
-  serialization::readPod(file, textBytes);
+  uint16_t wc = 0;
+  uint8_t hasFocus = 0;
+  uint16_t textBytes = 0;
+  if (!serialization::readPod(file, wc) || !serialization::readPod(file, hasFocus) ||
+      !serialization::readPod(file, textBytes)) {
+    LOG_ERR("TXB", "Deserialization failed: truncated header");
+    return nullptr;
+  }
 
   // Sanity checks: cap the arena allocation and reject impossible geometry
   // (every word carries at least its NUL terminator).
@@ -394,7 +396,10 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
   // overwrites every byte, so a moved-from value carries nothing into the next iteration.
   std::string scratch;
   for (uint16_t i = 0; i < wc; i++) {
-    serialization::readString(file, scratch);
+    if (!serialization::readString(file, scratch)) {
+      LOG_ERR("TXB", "Deserialization failed: truncated ruby text %u", i);
+      return nullptr;
+    }
     if (scratch.empty()) continue;
     if (block->rubyTexts.empty()) {
       block->rubyTexts.resize(wc);
@@ -404,20 +409,18 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
 
   // Style (alignment + margins/padding/indent)
   BlockStyle& blockStyle = block->blockStyle;
-  serialization::readPod(file, blockStyle.alignment);
-  serialization::readPod(file, blockStyle.textAlignDefined);
-  serialization::readPod(file, blockStyle.marginTop);
-  serialization::readPod(file, blockStyle.marginBottom);
-  serialization::readPod(file, blockStyle.marginLeft);
-  serialization::readPod(file, blockStyle.marginRight);
-  serialization::readPod(file, blockStyle.paddingTop);
-  serialization::readPod(file, blockStyle.paddingBottom);
-  serialization::readPod(file, blockStyle.paddingLeft);
-  serialization::readPod(file, blockStyle.paddingRight);
-  serialization::readPod(file, blockStyle.textIndent);
-  serialization::readPod(file, blockStyle.textIndentDefined);
-  serialization::readPod(file, blockStyle.isRtl);
-  serialization::readPod(file, blockStyle.directionDefined);
+  if (!serialization::readPod(file, blockStyle.alignment) ||
+      !serialization::readPod(file, blockStyle.textAlignDefined) ||
+      !serialization::readPod(file, blockStyle.marginTop) || !serialization::readPod(file, blockStyle.marginBottom) ||
+      !serialization::readPod(file, blockStyle.marginLeft) || !serialization::readPod(file, blockStyle.marginRight) ||
+      !serialization::readPod(file, blockStyle.paddingTop) || !serialization::readPod(file, blockStyle.paddingBottom) ||
+      !serialization::readPod(file, blockStyle.paddingLeft) || !serialization::readPod(file, blockStyle.paddingRight) ||
+      !serialization::readPod(file, blockStyle.textIndent) ||
+      !serialization::readPod(file, blockStyle.textIndentDefined) || !serialization::readPod(file, blockStyle.isRtl) ||
+      !serialization::readPod(file, blockStyle.directionDefined)) {
+    LOG_ERR("TXB", "Deserialization failed: truncated block style");
+    return nullptr;
+  }
 
   return block;
 }

@@ -31,6 +31,23 @@ std::vector<uint8_t> expectedBitmap(uint8_t seed, size_t size) {
   return data;
 }
 
+// Collects streamed chunks behind an xtc::PageChunkFn (function pointer + context,
+// so the parser takes no std::function).
+struct ChunkSink {
+  std::vector<uint8_t> assembled;
+  size_t expectedOffset = 0;
+  bool offsetsContiguous = true;
+
+  xtc::PageChunkFn fn() { return {&ChunkSink::append, this}; }
+
+  static void append(void* ctx, const uint8_t* data, const size_t size, const size_t offset) {
+    auto* self = static_cast<ChunkSink*>(ctx);
+    if (offset != self->expectedOffset) self->offsetsContiguous = false;
+    self->assembled.insert(self->assembled.end(), data, data + size);
+    self->expectedOffset += size;
+  }
+};
+
 }  // namespace
 
 TEST(XtcParser, ParsesHeaderAndMetadataOfMinimalFile) {
@@ -94,16 +111,10 @@ TEST(XtcParser, StreamingLoadDeliversSameBytesInOrder) {
   xtc::XtcParser parser;
   ASSERT_EQ(parser.open(fixture("minimal.xtc").c_str()), xtc::XtcError::OK);
 
-  std::vector<uint8_t> assembled;
-  size_t expectedOffset = 0;
-  const xtc::XtcError err = parser.loadPageStreaming(
-      1,
-      [&](const uint8_t* data, size_t size, size_t offset) {
-        EXPECT_EQ(offset, expectedOffset);
-        assembled.insert(assembled.end(), data, data + size);
-        expectedOffset += size;
-      },
-      3 /* deliberately tiny chunk size */);
+  ChunkSink sink;
+  const xtc::XtcError err = parser.loadPageStreaming(1, sink.fn(), 3 /* deliberately tiny chunk size */);
+  EXPECT_TRUE(sink.offsetsContiguous);
+  const std::vector<uint8_t>& assembled = sink.assembled;
 
   EXPECT_EQ(err, xtc::XtcError::OK);
   EXPECT_EQ(assembled, expectedBitmap(0xB0, 8));
@@ -119,7 +130,7 @@ TEST(XtcParser, RejectsPageIndexOutOfRange) {
   uint8_t buffer[64];
   EXPECT_EQ(parser.loadPage(2, buffer, sizeof(buffer)), 0u);
   EXPECT_EQ(parser.getLastError(), xtc::XtcError::PAGE_OUT_OF_RANGE);
-  EXPECT_EQ(parser.loadPageStreaming(2, [](const uint8_t*, size_t, size_t) {}), xtc::XtcError::PAGE_OUT_OF_RANGE);
+  EXPECT_EQ(parser.loadPageStreaming(2, xtc::PageChunkFn{}), xtc::XtcError::PAGE_OUT_OF_RANGE);
 }
 
 TEST(XtcParser, LoadPageWithoutOpenFailsCleanly) {
@@ -202,7 +213,7 @@ TEST(XtcParser, PageOffsetPastEofFailsAtLoadWithoutCrash) {
   uint8_t buffer[64];
   EXPECT_EQ(parser.loadPage(0, buffer, sizeof(buffer)), 0u);
   EXPECT_EQ(parser.getLastError(), xtc::XtcError::READ_ERROR);
-  EXPECT_EQ(parser.loadPageStreaming(0, [](const uint8_t*, size_t, size_t) {}), xtc::XtcError::READ_ERROR);
+  EXPECT_EQ(parser.loadPageStreaming(0, xtc::PageChunkFn{}), xtc::XtcError::READ_ERROR);
 }
 
 TEST(XtcParser, OverlappingPageRangesAreToleratedToday) {

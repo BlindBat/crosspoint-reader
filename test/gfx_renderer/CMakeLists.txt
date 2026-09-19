@@ -29,6 +29,7 @@ add_executable(GfxRendererTest
   ${REPO_ROOT}/lib/MiniBidi/BidiUtils.cpp
   ${REPO_ROOT}/lib/MiniBidi/minibidi.c
   ${REPO_ROOT}/lib/Utf8/Utf8.cpp
+  ${REPO_ROOT}/test/support/PlatformHost.cpp
 )
 
 # stubs/ first so <HalDisplay.h>, <HalStorage.h>, <BoardConfig.h>, <HalGPIO.h>,
@@ -43,6 +44,7 @@ target_include_directories(GfxRendererTest PRIVATE
   ${REPO_ROOT}/lib/Memory
   ${REPO_ROOT}/lib/MiniBidi
   ${REPO_ROOT}/lib/Utf8
+  ${REPO_ROOT}/lib/Platform
 )
 
 set(GFX_SANDBOX_DIR ${CMAKE_CURRENT_BINARY_DIR}/sandbox)

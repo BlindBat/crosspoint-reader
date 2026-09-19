@@ -3,7 +3,7 @@
 //
 //   - the arena retry: the bitmap arena is one contiguous block, so when it
 //     fails to allocate prewarmStyle() reports PREWARM_ARENA_TOO_LARGE and
-//     prewarm() retries with the prefix that ESP.getMaxAllocHeap() says fits,
+//     prewarm() retries with the prefix that platform::maxAllocHeap() says fits,
 //     halving until it does;
 //   - the underuse hysteresis: a retained arena is released after several
 //     consecutive rebuilds that use less than three quarters of it.
@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "FontSystemFixtures.h"
+#include "PlatformHost.h"
 
 // --- Array-allocation failure injection ---------------------------------
 //
@@ -99,14 +100,14 @@ class SdCardFontArenaTest : public ::testing::Test {
  protected:
   void SetUp() override {
     halstub::root = FONT_SYSTEM_RESOURCES_DIR;
-    ESP = EspHostStub{};
+    platform_host::setHeap(0, 0);
     alloc_fail::disarm();
     ASSERT_TRUE(font.load("/wide.cpfont"));
   }
   void TearDown() override {
     alloc_fail::disarm();
     halstub::root.clear();
-    ESP = EspHostStub{};
+    platform_host::setHeap(0, 0);
   }
 
   uint32_t residentIntervals() { return font.getEpdFont(0)->data->intervalCount; }
@@ -136,7 +137,7 @@ TEST_F(SdCardFontArenaTest, ArenaFailureRetriesWithThePrefixMaxAllocHeapAllows) 
 
   // 4 KB of the largest block is reserved as working headroom; the rest sizes
   // the retry at 900 / 3 bytes-per-glyph = 300 glyphs.
-  ESP.maxAllocHeap = 4096 + 900;
+  platform_host::setHeap(0, 4096 + 900);
   alloc_fail::arm({arenaBytesFor(TALL, PAGE)});
   const int missed = font.prewarm(text.c_str());
   alloc_fail::disarm();
@@ -154,7 +155,7 @@ TEST_F(SdCardFontArenaTest, ArenaFailureRetriesWithThePrefixMaxAllocHeapAllows) 
 TEST_F(SdCardFontArenaTest, ArenaRetryHalvesUntilTheBlockFits) {
   const std::string text = textOf(TALL, PAGE);
 
-  ESP.maxAllocHeap = 4096 + 900;
+  platform_host::setHeap(0, 4096 + 900);
   // Both the full request and the first retry estimate fail; the retry halves
   // 300 -> 150, which fits.
   alloc_fail::arm({arenaBytesFor(TALL, PAGE), TALL * 300});
@@ -169,7 +170,7 @@ TEST_F(SdCardFontArenaTest, ArenaRetryGivesUpWhenNoBlockIsLargeEnough) {
   const std::string text = textOf(TALL, PAGE);
 
   // Largest block below the reserve: the retry cannot size even one glyph.
-  ESP.maxAllocHeap = 1024;
+  platform_host::setHeap(0, 1024);
   alloc_fail::arm({arenaBytesFor(TALL, PAGE)});
   const int missed = font.prewarm(text.c_str());
   alloc_fail::disarm();

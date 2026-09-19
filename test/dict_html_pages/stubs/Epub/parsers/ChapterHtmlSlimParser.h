@@ -6,10 +6,10 @@
 // which is how the page-count, element-count and retain-heap gates are hit.
 
 #include <Epub/Page.h>
+#include <Epub/ReaderCallbacks.h>
 #include <HalStorage.h>
 
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -42,12 +42,10 @@ inline void reset() {
 
 class ChapterHtmlSlimParser {
  public:
-  using CompletePageFn = std::function<void(std::unique_ptr<Page>, uint16_t, uint16_t, uint32_t)>;
-
   explicit ChapterHtmlSlimParser(std::shared_ptr<Epub>, const std::string& filepath, GfxRenderer&, int, float, bool,
-                                 uint8_t, uint16_t, uint16_t, bool, bool, const CompletePageFn& completePageFn, bool,
-                                 const std::string&, const std::string&, uint8_t = 0, std::vector<std::string> = {},
-                                 const std::function<void()>& = nullptr, const CssParser* = nullptr)
+                                 uint8_t, uint16_t, uint16_t, bool, bool, const EpubPageCompleteFn& completePageFn,
+                                 bool, const std::string&, const std::string&, uint8_t = 0,
+                                 std::vector<std::string> = {}, const BuildPopupFn& = {}, const CssParser* = nullptr)
       : filepath(filepath), completePageFn(completePageFn) {
     dhtstub::parsersConstructed++;
   }
@@ -75,5 +73,5 @@ class ChapterHtmlSlimParser {
 
  private:
   std::string filepath;
-  CompletePageFn completePageFn;
+  EpubPageCompleteFn completePageFn;
 };

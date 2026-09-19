@@ -8,6 +8,7 @@ add_executable(FontDecompressorTest
   ${REPO_ROOT}/lib/InflateReader/InflateReader.cpp
   ${REPO_ROOT}/lib/uzlib/src/tinflate.c
   ${REPO_ROOT}/lib/Utf8/Utf8.cpp
+  ${REPO_ROOT}/test/support/PlatformHost.cpp
 )
 
 target_include_directories(FontDecompressorTest PRIVATE
@@ -18,6 +19,8 @@ target_include_directories(FontDecompressorTest PRIVATE
   ${REPO_ROOT}/lib/uzlib/src
   ${REPO_ROOT}/lib/Utf8
   ${REPO_ROOT}/lib/Memory
+  ${REPO_ROOT}/lib/Platform
+  ${REPO_ROOT}/test/support
 )
 
 target_link_libraries(FontDecompressorTest PRIVATE

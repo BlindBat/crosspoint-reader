@@ -119,6 +119,8 @@ class EpubReaderActivity final : public ReaderActivity {
   static constexpr unsigned long BUILD_POPUP_DEADLINE_MS = 1000;
   bool buildPopupPending = false;
   void showBuildPopup(GfxRenderer& renderer, int& pagesUntilFullRefresh);
+  static void redrawIndexingPopup(void* ctx);
+  static void showBuildPopupTrampoline(void* ctx);
   bool applyDeferredReposition();
   void clearDeferredReposition();
   void rememberCurrentContentOffset();
@@ -137,6 +139,11 @@ class EpubReaderActivity final : public ReaderActivity {
   // Text panel rows (font, size, line spacing, alignment, focus reading).
   std::string textRowName(int row) const;
   std::string textRowValue(int row) const;
+  static std::string tocRowText(void* ctx, int index);
+  static std::string textRowNameTrampoline(void* ctx, int index);
+  static std::string textRowValueTrampoline(void* ctx, int index);
+  static std::string moreRowNameTrampoline(void* ctx, int index);
+  static std::string moreRowValueTrampoline(void* ctx, int index);
   void showTextRowPopup(int row);
   // Persist + re-paginate + re-render under the open panel (live preview).
   void applyTextSettingLive();

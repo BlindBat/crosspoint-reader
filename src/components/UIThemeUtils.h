@@ -19,8 +19,9 @@ inline std::string getCoverThumbPath(std::string coverBmpPath, const int coverHe
 }
 
 // List icon for a browser entry; directories carry a trailing '/'.
+// An empty name reaches here from a corrupt recent.json entry, so back() is guarded.
 inline UIIcon getFileIcon(const std::string& filename) {
-  if (filename.back() == '/') {
+  if (!filename.empty() && filename.back() == '/') {
     return Folder;
   }
   if (FsHelpers::hasEpubExtension(filename) || FsHelpers::hasFb2Extension(filename) ||

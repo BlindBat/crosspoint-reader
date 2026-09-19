@@ -683,6 +683,12 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& b
       LOG_ERR("JPG", "OOM: Atkinson1BitDitherer");
       return false;
     }
+    // The object fits but its error rows may not; dithering is an enhancement, so
+    // drop it and let the row loop fall back to plain quantisation.
+    if (!ctx.atkinson1BitDitherer->valid()) {
+      LOG_ERR("JPG", "OOM: dithering disabled for this image");
+      ctx.atkinson1BitDitherer.reset();
+    }
   } else if (!USE_8BIT_OUTPUT) {
     if (USE_ATKINSON) {
       ctx.atkinsonDitherer = makeUniqueNoThrow<AtkinsonDitherer>(outWidth);
@@ -690,11 +696,19 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& b
         LOG_ERR("JPG", "OOM: AtkinsonDitherer");
         return false;
       }
+      if (!ctx.atkinsonDitherer->valid()) {
+        LOG_ERR("JPG", "OOM: dithering disabled for this image");
+        ctx.atkinsonDitherer.reset();
+      }
     } else if (USE_FLOYD_STEINBERG) {
       ctx.fsDitherer = makeUniqueNoThrow<FloydSteinbergDitherer>(outWidth);
       if (!ctx.fsDitherer) {
         LOG_ERR("JPG", "OOM: FloydSteinbergDitherer");
         return false;
+      }
+      if (!ctx.fsDitherer->valid()) {
+        LOG_ERR("JPG", "OOM: dithering disabled for this image");
+        ctx.fsDitherer.reset();
       }
     }
   }

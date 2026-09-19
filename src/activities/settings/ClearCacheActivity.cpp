@@ -5,6 +5,8 @@
 #include <I18n.h>
 #include <Logging.h>
 
+#include <cstdio>
+
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -111,21 +113,24 @@ void ClearCacheActivity::clearCache() {
   char name[128];
 
   // Iterate through all entries in the directory
+  // One fixed buffer for the whole scan instead of two Arduino Strings per entry.
+  char fullPath[160];
+
   for (auto file = root.openNextFile(); file; file = root.openNextFile()) {
+    name[0] = '\0';
     file.getName(name, sizeof(name));
-    String itemName(name);
 
     // Only delete directories matching known book cache names.
-    if (file.isDirectory() && isBookCacheDirectoryName(itemName.c_str())) {
-      String fullPath = "/.crosspoint/" + itemName;
-      LOG_DBG("CLEAR_CACHE", "Removing cache: %s", fullPath.c_str());
+    if (file.isDirectory() && isBookCacheDirectoryName(name)) {
+      snprintf(fullPath, sizeof(fullPath), "/.crosspoint/%s", name);
+      LOG_DBG("CLEAR_CACHE", "Removing cache: %s", fullPath);
 
       file.close();  // Close before attempting to delete
 
-      if (Storage.removeDir(fullPath.c_str())) {
+      if (Storage.removeDir(fullPath)) {
         clearedCount++;
       } else {
-        LOG_ERR("CLEAR_CACHE", "Failed to remove: %s", fullPath.c_str());
+        LOG_ERR("CLEAR_CACHE", "Failed to remove: %s", fullPath);
         failedCount++;
       }
     } else {

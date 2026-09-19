@@ -381,9 +381,9 @@ TEST_F(PageImageDeserializeTest, DimensionsBeyondThePanelFailThePage) {
 }
 
 TEST_F(PageImageDeserializeTest, TruncatedImageBlockFailsThePage) {
-  // Cut the file so the block's width/height never arrive: the page must be
-  // rejected because the footnote/link counts behind them cannot be read, not
-  // because of whatever those truncated fields happened to hold.
+  // Cut the file so the block's width/height never arrive: ImageBlock::deserialize
+  // rejects the short read itself, so the page never sees whatever those truncated
+  // fields happened to hold.
   std::string bytes = imagePageBytes(200, 150);
   bytes.resize(bytes.size() - (2 * sizeof(int16_t) + 2 * sizeof(uint16_t)));
   EXPECT_EQ(deserialize(bytes), nullptr);
@@ -395,6 +395,38 @@ TEST_F(PageImageDeserializeTest, TruncatedImageBlockFailsThePage) {
 
   // Empty file: not even the element count arrives.
   EXPECT_EQ(deserialize(std::string()), nullptr);
+}
+
+TEST_F(PageImageDeserializeTest, EveryTruncationPointIsRejectedDeterministically) {
+  // Every prefix of a valid page is a cache a power cut could leave behind. None
+  // may yield a page: a read that comes up short must fail rather than let the
+  // caller branch on a field that was never written. Only the whole file loads.
+  const std::string whole = imagePageBytes(200, 150);
+  for (size_t cut = 0; cut < whole.size(); ++cut) {
+    EXPECT_EQ(deserialize(whole.substr(0, cut)), nullptr) << "truncated to " << cut << " bytes";
+  }
+  EXPECT_NE(deserialize(whole), nullptr);
+}
+
+TEST_F(PageImageDeserializeTest, MissingElementTagFailsThePage) {
+  // The element count promises an element the file does not contain: the tag read
+  // comes up short, which must be reported rather than dispatched on.
+  std::string bytes;
+  appendPod<uint16_t>(bytes, 1);
+  EXPECT_EQ(deserialize(bytes), nullptr);
+}
+
+TEST_F(PageImageDeserializeTest, TruncatedLinkGeometryFailsThePage) {
+  // A link's href arrives but its geometry does not; the page must be rejected
+  // instead of keeping a link whose rectangle was never read.
+  std::string bytes;
+  appendPod<uint16_t>(bytes, 0);  // no elements
+  appendPod<uint16_t>(bytes, 0);  // no footnotes
+  appendPod<uint16_t>(bytes, 1);  // one link
+  char href[FOOTNOTE_HREF_LEN] = {};
+  std::snprintf(href, sizeof(href), "chapter2.xhtml#top");
+  bytes.append(href, sizeof(href));
+  EXPECT_EQ(deserialize(bytes), nullptr);
 }
 
 }  // namespace

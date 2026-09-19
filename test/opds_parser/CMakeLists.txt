@@ -6,6 +6,7 @@ add_executable(OpdsParserTest
   ${REPO_ROOT}/lib/expat/xmlparse.c
   ${REPO_ROOT}/lib/expat/xmlrole.c
   ${REPO_ROOT}/lib/expat/xmltok.c
+  ${REPO_ROOT}/test/support/PlatformHost.cpp
 )
 
 target_include_directories(OpdsParserTest PRIVATE
@@ -13,6 +14,8 @@ target_include_directories(OpdsParserTest PRIVATE
   ${REPO_ROOT}/lib/expat
   ${REPO_ROOT}/lib/OpdsParser
   ${REPO_ROOT}/lib/XmlParserUtils
+  ${REPO_ROOT}/lib/Platform
+  ${REPO_ROOT}/test/support
 )
 
 target_compile_definitions(OpdsParserTest PRIVATE

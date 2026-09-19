@@ -1,6 +1,5 @@
 #pragma once
 
-#include <functional>
 #include <string>
 
 #include "components/UiAppHost.h"
@@ -26,6 +25,17 @@ class ReaderToolbarUi : public UiAppHost {
  public:
   enum class Event { None = 0, Dismiss = 1, Tool = 2, PrevChapter = 3, NextChapter = 4, Scrub = 5, Row = 6 };
 
+  // Row text supplier: a context pointer plus a function taking it, not
+  // std::function (see BaseTheme.h's MenuLabelFn). `ctx` is the reader activity
+  // and must outlive the render call that uses it.
+  struct RowTextFn {
+    std::string (*fn)(void* ctx, int index) = nullptr;
+    void* ctx = nullptr;
+
+    explicit operator bool() const { return fn != nullptr; }
+    std::string operator()(int index) const { return fn != nullptr ? fn(ctx, index) : std::string(); }
+  };
+
   struct Model {
     bool panel = false;  // false = toolbar, true = a Contents/Text/More panel
     // Toolbar
@@ -36,8 +46,8 @@ class ReaderToolbarUi : public UiAppHost {
     const char* panelTitle = nullptr;
     int itemCount = 0;
     int selectedIndex = -1;  // row the buttons' cursor sits on; -1 = none shown
-    std::function<std::string(int)> rowText;
-    std::function<std::string(int)> rowValue;
+    RowTextFn rowText;
+    RowTextFn rowValue;
     // Tile row: the tool in focus (toolbar) / the open panel (panel). 0..2.
     int activeTool = 0;
     // Pixels kept free along the screen's bottom edge under the panel sheet

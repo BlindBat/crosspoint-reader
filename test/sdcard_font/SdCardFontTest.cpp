@@ -18,6 +18,7 @@
 #include "EpdFont.h"
 #include "EpdFontFamily.h"
 #include "HalStorage.h"
+#include "PlatformHost.h"
 #include "SdCardFont.h"
 #include "SdCardFontRegistry.h"
 
@@ -88,11 +89,11 @@ class SdCardFontTest : public ::testing::Test {
  protected:
   void SetUp() override {
     halstub::root = CPFONT_RESOURCES_DIR;
-    ESP = EspHostStub{};
+    platform_host::setHeap(0, 0);
   }
   void TearDown() override {
     halstub::root.clear();
-    ESP = EspHostStub{};
+    platform_host::setHeap(0, 0);
   }
 };
 
@@ -371,12 +372,12 @@ TEST_F(SdCardFontPrewarmTest, MultiStringPrewarmFailsCleanlyWhenHeapBudgetIsZero
   ASSERT_TRUE(font.load(res("valid_basic.cpfont").c_str()));
 
   // 16KB free == exactly the prewarm headroom: zero glyph budget.
-  ESP.freeHeap = 16 * 1024;
+  platform_host::setHeap(16 * 1024, 0);
   const char* strings[] = {"Hello", "World"};
   EXPECT_EQ(font.prewarm(&twoStringGetter, strings, 2), -1);
 
   // Restored heap: the same request succeeds.
-  ESP.freeHeap = EspHostStub{}.freeHeap;
+  platform_host::setHeap(0, 0);
   EXPECT_EQ(font.prewarm(&twoStringGetter, strings, 2), 0);
   expectResidentGlyph(font.getEpdFont(0), 'W');
 }
@@ -394,9 +395,9 @@ TEST_F(SdCardFontPrewarmTest, ClearCacheRetainsMiniUnlessHeapIsTight) {
 
   // Tight heap (< 40KB retention floor): clearCache drops the mini and the
   // next prewarm must re-read from SD.
-  ESP.freeHeap = 30 * 1024;
+  platform_host::setHeap(30 * 1024, 0);
   font.clearCache();
-  ESP.freeHeap = EspHostStub{}.freeHeap;
+  platform_host::setHeap(0, 0);
   EXPECT_EQ(font.prewarm("Hi"), 0);
   EXPECT_GT(font.getStats().seekCount, seeks);
 }
@@ -702,11 +703,11 @@ class SdCardFontHostileTest : public ::testing::Test {
     sandbox_ = std::string(CPFONT_SANDBOX_DIR "/") + ::testing::UnitTest::GetInstance()->current_test_info()->name();
     makeDirs(sandbox_);
     halstub::root = sandbox_;
-    ESP = EspHostStub{};
+    platform_host::setHeap(0, 0);
   }
   void TearDown() override {
     halstub::root.clear();
-    ESP = EspHostStub{};
+    platform_host::setHeap(0, 0);
   }
 
   // Write `bytes` into this test's sandbox; returns the device path to load.
@@ -865,7 +866,7 @@ class SdCardFontRegistryTest : public ::testing::Test {
     sandbox_ = std::string(CPFONT_SANDBOX_DIR "/") + ::testing::UnitTest::GetInstance()->current_test_info()->name();
     makeDirs(sandbox_);
     halstub::root = sandbox_;
-    ESP = EspHostStub{};
+    platform_host::setHeap(0, 0);
   }
   void TearDown() override { halstub::root.clear(); }
 

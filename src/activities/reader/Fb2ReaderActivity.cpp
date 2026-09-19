@@ -319,6 +319,14 @@ void Fb2ReaderActivity::onReturnFromEndOfBook() {
   }
 }
 
+// BuildPopupFn trampoline: a plain function pointer plus this activity as context,
+// so the section builder carries no std::function closure.
+void Fb2ReaderActivity::showIndexingPopup(void* ctx) {
+  auto* self = static_cast<Fb2ReaderActivity*>(ctx);
+  GUI.drawPopup(self->renderer, tr(STR_INDEXING));
+  self->pagesUntilFullRefresh = 1;
+}
+
 void Fb2ReaderActivity::renderBook() {
   if (!fb2) return;
 
@@ -352,12 +360,7 @@ void Fb2ReaderActivity::renderBook() {
 
     if (!section->loadSectionFile(renderSpec)) {
       LOG_DBG("FBR", "Cache not found, building...");
-      const auto popupFn = [this] {
-        GUI.drawPopup(renderer, tr(STR_INDEXING));
-        pagesUntilFullRefresh = 1;
-      };
-
-      if (!section->createSectionFile(renderSpec, popupFn)) {
+      if (!section->createSectionFile(renderSpec, BuildPopupFn{&showIndexingPopup, this})) {
         LOG_ERR("FBR", "Failed to build section");
         section.reset();
         renderer.clearScreen();
@@ -446,18 +449,21 @@ void Fb2ReaderActivity::renderStatusBar() const {
   const float chapterProg = totalPages > 0 ? static_cast<float>(currentPage) / static_cast<float>(totalPages) : 0;
   const float bookProgress = fb2 ? fb2->calculateProgress(currentSectionIndex, chapterProg) * 100 : 0;
 
-  std::string title;
+  // Borrowed text only: getTocEntry and getTitle both hand back references the
+  // book owns, so the status bar copies nothing per render.
+  const char* title = "";
   const auto sb = SETTINGS.statusBarSpec();
   if (sb.titleMode == CrossPointSettings::STATUS_BAR_TITLE::CHAPTER_TITLE) {
     title = tr(STR_UNNAMED);
     if (fb2) {
       const int tocIndex = fb2->getTocIndexForSectionIndex(currentSectionIndex);
-      if (tocIndex != -1 && !fb2->getTocEntry(tocIndex).title.empty()) {
-        title = fb2->getTocEntry(tocIndex).title;
+      if (tocIndex != -1) {
+        const Fb2::TocEntry& tocEntry = fb2->getTocEntry(tocIndex);
+        if (!tocEntry.title.empty()) title = tocEntry.title.c_str();
       }
     }
   } else if (sb.titleMode == CrossPointSettings::STATUS_BAR_TITLE::BOOK_TITLE) {
-    title = fb2 ? fb2->getTitle() : "";
+    if (fb2) title = fb2->getTitle().c_str();
   }
 
   GUI.drawStatusBar(renderer, bookProgress, currentPage, totalPages, title);

@@ -16,6 +16,17 @@
 
 namespace {
 
+// Collects finished pages behind an Fb2PageCompleteFn (function pointer + context).
+struct PageSink {
+  std::vector<std::unique_ptr<Page>>* pages;
+
+  Fb2PageCompleteFn fn() { return {&PageSink::append, this}; }
+
+  static void append(void* ctx, std::unique_ptr<Page> page) {
+    static_cast<PageSink*>(ctx)->pages->push_back(std::move(page));
+  }
+};
+
 using fb2test::fileExists;
 using fb2test::fixturePath;
 using fb2test::readAll;
@@ -88,9 +99,9 @@ class Fb2SectionCacheTest : public ::testing::Test {
   // Reference pages straight from the parser, bypassing serialization.
   std::vector<std::unique_ptr<Page>> parseReferencePages(const ReaderRenderSpec& spec, int index = 0) {
     std::vector<std::unique_ptr<Page>> pages;
+    PageSink sink{&pages};
     const auto& info = book->getSectionInfo(index);
-    Fb2SectionParser parser(book->getPath(), info.length, index, renderer, spec,
-                            [&pages](std::unique_ptr<Page> page) { pages.push_back(std::move(page)); });
+    Fb2SectionParser parser(book->getPath(), info.length, index, renderer, spec, sink.fn());
     if (!parser.parseAndBuildPages()) pages.clear();
     return pages;
   }

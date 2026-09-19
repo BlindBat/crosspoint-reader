@@ -151,7 +151,12 @@ bool Fb2Section::clearCache() const {
   return true;
 }
 
-bool Fb2Section::createSectionFile(const ReaderRenderSpec& spec, const std::function<void()>& popupFn) {
+void Fb2Section::appendBuiltPage(void* ctx, std::unique_ptr<Page> page) {
+  auto* lutCtx = static_cast<BuildLutContext*>(ctx);
+  lutCtx->lut->emplace_back(lutCtx->section->onPageComplete(std::move(page)));
+}
+
+bool Fb2Section::createSectionFile(const ReaderRenderSpec& spec, const BuildPopupFn& popupFn) {
   const auto& sectionInfo = fb2->getSectionInfo(sectionIndex);
   pageCount = 0;
 
@@ -170,9 +175,11 @@ bool Fb2Section::createSectionFile(const ReaderRenderSpec& spec, const std::func
   // If there's only one section with fileOffset 0, the metadata parser found no real <section> tags.
   // Pass -1 to tell the parser to process all body content instead of filtering by section index.
   const int targetIndex = (fb2->getSectionCount() == 1 && sectionInfo.fileOffset == 0) ? -1 : sectionIndex;
-  Fb2SectionParser visitor(
-      fb2->getPath(), sectionInfo.length, targetIndex, renderer, spec,
-      [this, &lut](std::unique_ptr<Page> page) { lut.emplace_back(this->onPageComplete(std::move(page))); }, popupFn);
+  // The page-complete callback needs both this section and the local LUT, so it
+  // takes a small context struct rather than a capturing lambda.
+  BuildLutContext lutCtx{this, &lut};
+  Fb2SectionParser visitor(fb2->getPath(), sectionInfo.length, targetIndex, renderer, spec,
+                           Fb2PageCompleteFn{&Fb2Section::appendBuiltPage, &lutCtx}, popupFn);
   Hyphenator::setPreferredLanguage(fb2->getLanguage());
   const bool success = visitor.parseAndBuildPages();
 
@@ -218,11 +225,19 @@ std::unique_ptr<Page> Fb2Section::loadPage(const int page) {
   }
 
   file.seek(HEADER_SIZE - sizeof(uint32_t));
-  uint32_t lutOffset;
-  serialization::readPod(file, lutOffset);
+  uint32_t lutOffset = 0;
+  if (!serialization::readPod(file, lutOffset)) {
+    LOG_ERR("FBS", "Page %d load failed: truncated LUT offset", page);
+    file.close();
+    return nullptr;
+  }
   file.seek(lutOffset + sizeof(uint32_t) * page);
-  uint32_t pagePos;
-  serialization::readPod(file, pagePos);
+  uint32_t pagePos = 0;
+  if (!serialization::readPod(file, pagePos)) {
+    LOG_ERR("FBS", "Page %d load failed: truncated LUT entry", page);
+    file.close();
+    return nullptr;
+  }
   file.seek(pagePos);
 
   auto loadedPage = Page::deserialize(file);

@@ -10,6 +10,13 @@ Txt::Txt(std::string path, std::string cacheBasePath)
   // Generate cache path from file path hash
   const size_t hash = std::hash<std::string>{}(filepath);
   cachePath = this->cacheBasePath + "/txt_" + std::to_string(hash);
+
+  // Title is the file name without its directory or .txt/.md extension.
+  const size_t lastSlash = filepath.find_last_of('/');
+  title = (lastSlash != std::string::npos) ? filepath.substr(lastSlash + 1) : filepath;
+  if (FsHelpers::hasTxtExtension(title)) {
+    title.resize(title.length() - 4);
+  }
 }
 
 bool Txt::load() {
@@ -34,19 +41,6 @@ bool Txt::load() {
   loaded = true;
   LOG_DBG("TXT", "Loaded TXT file: %s (%zu bytes)", filepath.c_str(), fileSize);
   return true;
-}
-
-std::string Txt::getTitle() const {
-  // Extract filename without path and extension
-  size_t lastSlash = filepath.find_last_of('/');
-  std::string filename = (lastSlash != std::string::npos) ? filepath.substr(lastSlash + 1) : filepath;
-
-  // Remove .txt extension
-  if (FsHelpers::hasTxtExtension(filename)) {
-    filename.resize(filename.length() - 4);
-  }
-
-  return filename;
 }
 
 void Txt::setupCacheDir() const {

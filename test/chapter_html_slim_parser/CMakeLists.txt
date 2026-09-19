@@ -12,6 +12,7 @@ add_executable(ChapterHtmlSlimParserTest
   ${REPO_ROOT}/lib/expat/xmlparse.c
   ${REPO_ROOT}/lib/expat/xmlrole.c
   ${REPO_ROOT}/lib/expat/xmltok.c
+  ${REPO_ROOT}/test/support/PlatformHost.cpp
 )
 
 # In-tree expat at device-parity flags (XML_GE=0, XML_CONTEXT_BYTES=1024): the
@@ -31,6 +32,7 @@ target_include_directories(ChapterHtmlSlimParserTest PRIVATE
   ${REPO_ROOT}/lib/MiniBidi
   ${REPO_ROOT}/lib/FsHelpers
   ${REPO_ROOT}/lib/XmlParserUtils
+  ${REPO_ROOT}/lib/Platform
 )
 
 target_link_libraries(ChapterHtmlSlimParserTest PRIVATE

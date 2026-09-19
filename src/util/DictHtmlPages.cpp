@@ -1,5 +1,6 @@
 #include "DictHtmlPages.h"
 
+#include <Epub/ReaderCallbacks.h>
 #include <Epub/parsers/ChapterHtmlSlimParser.h>
 #include <HalStorage.h>
 #include <Logging.h>
@@ -206,6 +207,43 @@ bool writeNormalizedXhtml(const std::string& html, HalFile& file) {
   return out.append("</body></html>") && out.flush();
 }
 
+// Page-complete sink for the styled-definition build: an EpubPageCompleteFn
+// context, so the parser takes a function pointer instead of a std::function.
+struct StyledPageSink {
+  std::vector<std::unique_ptr<Page>>* pagesOut;
+  bool resourceLimitHit = false;
+  const char* limitReason = nullptr;
+  size_t retainedElements = 0;
+
+  static void append(void* ctx, std::unique_ptr<Page> page, uint16_t, uint16_t, uint32_t) {
+    auto* self = static_cast<StyledPageSink*>(ctx);
+    if (self->resourceLimitHit) return;
+    const size_t pageElements = page->elements.size();
+    // Name the limit that fired. The three causes mean different things --
+    // the count caps say the definition is genuinely too big to hold,
+    // while the heap floor says only that this moment was a bad one -- and
+    // a single "exceeded the budget" message cannot tell them apart.
+    if (self->pagesOut->size() >= MAX_STYLED_PAGES) {
+      self->limitReason = "page count";
+    } else if (pageElements > MAX_STYLED_PAGE_ELEMENTS - self->retainedElements) {
+      self->limitReason = "element count";
+    } else if (platform::freeHeap() < MIN_STYLED_RETAIN_HEAP || platform::maxAllocHeap() < MIN_STYLED_RETAIN_ALLOC) {
+      self->limitReason = "free heap";
+    }
+    if (self->limitReason != nullptr) {
+      LOG_ERR("DHTML", "Styled definition stopped on %s (pages=%u elements=%u free=%u contig=%u)", self->limitReason,
+              static_cast<unsigned>(self->pagesOut->size()),
+              static_cast<unsigned>(self->retainedElements + pageElements), static_cast<unsigned>(platform::freeHeap()),
+              static_cast<unsigned>(platform::maxAllocHeap()));
+      self->resourceLimitHit = true;
+      self->pagesOut->clear();
+      return;
+    }
+    self->retainedElements += pageElements;
+    self->pagesOut->push_back(std::move(page));
+  }
+};
+
 }  // namespace
 
 bool buildDictionaryHtmlPages(GfxRenderer& renderer, const std::string& definition, const uint16_t viewportWidth,
@@ -233,9 +271,7 @@ bool buildDictionaryHtmlPages(GfxRenderer& renderer, const std::string& definiti
   pagesOut.reserve(MAX_STYLED_PAGES);
 
   bool ok = false;
-  bool resourceLimitHit = false;
-  const char* limitReason = nullptr;
-  size_t retainedElements = 0;
+  StyledPageSink sink{&pagesOut};
   {
     const std::string tmpPath = TMP_HTML_PATH;  // the parser stores a reference
     // Heap-allocated as Section does — the parser object is far too large for
@@ -244,34 +280,7 @@ bool buildDictionaryHtmlPages(GfxRenderer& renderer, const std::string& definiti
     auto parser = makeUniqueNoThrow<ChapterHtmlSlimParser>(
         nullptr, tmpPath, renderer, SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
         SETTINGS.extraParagraphSpacing, SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
-        SETTINGS.hyphenationEnabled, SETTINGS.focusReadingEnabled,
-        [&pagesOut, &resourceLimitHit, &retainedElements, &limitReason](std::unique_ptr<Page> page, uint16_t, uint16_t,
-                                                                        uint32_t) {
-          if (resourceLimitHit) return;
-          const size_t pageElements = page->elements.size();
-          // Name the limit that fired. The three causes mean different things --
-          // the count caps say the definition is genuinely too big to hold,
-          // while the heap floor says only that this moment was a bad one -- and
-          // a single "exceeded the budget" message cannot tell them apart.
-          if (pagesOut.size() >= MAX_STYLED_PAGES) {
-            limitReason = "page count";
-          } else if (pageElements > MAX_STYLED_PAGE_ELEMENTS - retainedElements) {
-            limitReason = "element count";
-          } else if (platform::freeHeap() < MIN_STYLED_RETAIN_HEAP ||
-                     platform::maxAllocHeap() < MIN_STYLED_RETAIN_ALLOC) {
-            limitReason = "free heap";
-          }
-          if (limitReason != nullptr) {
-            LOG_ERR("DHTML", "Styled definition stopped on %s (pages=%u elements=%u free=%u contig=%u)", limitReason,
-                    static_cast<unsigned>(pagesOut.size()), static_cast<unsigned>(retainedElements + pageElements),
-                    static_cast<unsigned>(platform::freeHeap()), static_cast<unsigned>(platform::maxAllocHeap()));
-            resourceLimitHit = true;
-            pagesOut.clear();
-            return;
-          }
-          retainedElements += pageElements;
-          pagesOut.push_back(std::move(page));
-        },
+        SETTINGS.hyphenationEnabled, SETTINGS.focusReadingEnabled, EpubPageCompleteFn{&StyledPageSink::append, &sink},
         /*embeddedStyle=*/false, /*contentBase=*/"", /*imageBasePath=*/"", /*imageRendering=*/2);
     if (!parser) {
       LOG_ERR("DHTML", "OOM: ChapterHtmlSlimParser");
@@ -281,10 +290,10 @@ bool buildDictionaryHtmlPages(GfxRenderer& renderer, const std::string& definiti
   }
   Storage.remove(TMP_HTML_PATH);
 
-  if (resourceLimitHit) {
+  if (sink.resourceLimitHit) {
     LOG_ERR("DHTML", "Styled definition exceeded page heap budget");
   }
-  if (!ok || resourceLimitHit || pagesOut.empty()) {
+  if (!ok || sink.resourceLimitHit || pagesOut.empty()) {
     pagesOut.clear();
     return false;
   }

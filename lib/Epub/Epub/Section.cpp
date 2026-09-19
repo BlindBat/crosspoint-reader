@@ -278,7 +278,14 @@ bool Section::clearCache() const {
   return true;
 }
 
-bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::function<void()>& popupFn) {
+void Section::appendBuiltPage(void* ctx, std::unique_ptr<Page> page, const uint16_t paragraphIndex,
+                              const uint16_t listItemIndex, const uint32_t visibleTextOffset) {
+  auto* self = static_cast<Section*>(ctx);
+  self->build_->lut.push_back(
+      {self->onPageComplete(std::move(page)), paragraphIndex, listItemIndex, visibleTextOffset});
+}
+
+bool Section::createSectionFile(const ReaderRenderSpec& spec, const BuildPopupFn& popupFn) {
   // One-shot build: start, then lay out the whole section in a single pass.
   if (!startBuild(spec, popupFn)) {
     return false;
@@ -289,7 +296,7 @@ bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::functio
   return buildComplete_;
 }
 
-bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void()>& popupFn) {
+bool Section::startBuild(const ReaderRenderSpec& spec, const BuildPopupFn& popupFn) {
   if (build_) {
     LOG_ERR("SCT", "startBuild called while a build is already active");
     return false;
@@ -442,20 +449,15 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
 
   // The parser stores the path/contentBase/imageBasePath by reference, so they must
   // live in the BuildContext (which outlives the parser). The page-complete callback
-  // captures the BuildContext pointer to append to its in-RAM LUT; build_ owns the
-  // context for the parser's whole lifetime.
+  // takes this Section as its context and appends to build_'s in-RAM LUT; build_ is
+  // assigned below, before any parsing runs.
   BuildContext* ctxPtr = ctx.get();
   ctx->parser = makeUniqueNoThrow<ChapterHtmlSlimParser>(
       epub, ctxPtr->parsePath, renderer, spec.fontId, spec.lineCompression, spec.extraParagraphSpacing,
       spec.paragraphAlignment, spec.viewportWidth, spec.viewportHeight, spec.hyphenationEnabled,
-      spec.focusReadingEnabled,
-      [this, ctxPtr](std::unique_ptr<Page> page, const uint16_t paragraphIndex, const uint16_t listItemIndex,
-                     const uint32_t visibleTextOffset) {
-        ctxPtr->lut.push_back(
-            {this->onPageComplete(std::move(page)), paragraphIndex, listItemIndex, visibleTextOffset});
-      },
-      spec.embeddedStyle, ctxPtr->contentBase, ctxPtr->imageBasePath, spec.imageRendering, std::move(tocAnchors),
-      popupFn, ctxPtr->cssParser);
+      spec.focusReadingEnabled, EpubPageCompleteFn{&Section::appendBuiltPage, this}, spec.embeddedStyle,
+      ctxPtr->contentBase, ctxPtr->imageBasePath, spec.imageRendering, std::move(tocAnchors), popupFn,
+      ctxPtr->cssParser);
   if (!ctx->parser) {
     LOG_ERR("SCT", "OOM: ChapterHtmlSlimParser");
     if (ctx->cssParser) ctx->cssParser->clear();

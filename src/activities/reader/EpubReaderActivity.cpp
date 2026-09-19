@@ -249,15 +249,17 @@ void EpubReaderActivity::openReaderMenu() {
     panelHoldJumped = false;
     panelCursorShown = !mappedInput.hasTouch();
     if (!toolbarUi) toolbarUi = makeUniqueNoThrow<ReaderToolbarUi>(renderer);
-    if (!toolbarUi) {
-      LOG_ERR("ERS", "OOM: reader toolbar; falling back to the list menu");
-      openReaderMenu();
+    if (toolbarUi) {
+      toolbarUi->begin();
+      discardOverlayPage();
+      requestUpdate();
       return;
     }
-    toolbarUi->begin();
-    discardOverlayPage();
-    requestUpdate();
-    return;
+    // OOM. render() and loop() require Overlay::Toolbar and a live toolbarUi
+    // together, so close the overlay again and fall through to the list menu
+    // below rather than re-entering this branch.
+    LOG_ERR("ERS", "OOM: reader toolbar; opening the list menu instead");
+    overlay = Overlay::None;
   }
   const int currentPage = section ? section->currentPage + 1 : 0;
   const int totalPages = section ? section->estimatedTotalPages() : 0;
@@ -288,6 +290,18 @@ bool EpubReaderActivity::buildTickHeapGate() {
   const size_t maxBlock = ESP.getMaxAllocHeap();
   buildHeapPaused = freeHeap < BACKGROUND_BUILD_MIN_FREE_HEAP || maxBlock < BACKGROUND_BUILD_MIN_MAX_ALLOC;
   return !buildHeapPaused;
+}
+
+// BuildPopupFn trampolines: the section builders take a function pointer plus a
+// context, so neither build path carries a std::function closure.
+void EpubReaderActivity::redrawIndexingPopup(void* ctx) {
+  auto* self = static_cast<EpubReaderActivity*>(ctx);
+  if (self->renderer.hasFrameBuffer()) GUI.drawPopup(self->renderer, tr(STR_INDEXING));
+}
+
+void EpubReaderActivity::showBuildPopupTrampoline(void* ctx) {
+  auto* self = static_cast<EpubReaderActivity*>(ctx);
+  self->showBuildPopup(self->renderer, self->pagesUntilFullRefresh);
 }
 
 void EpubReaderActivity::showBuildPopup(GfxRenderer& renderer, int& pagesUntilFullRefresh) {
@@ -1157,7 +1171,12 @@ void EpubReaderActivity::renderBook() {
   if (!section) {
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;
     LOG_DBG("ERS", "Loading file: %s, index: %d", filepath.c_str(), currentSpineIndex);
-    section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer));
+    section = makeUniqueNoThrow<Section>(epub, currentSpineIndex, renderer);
+    if (!section) {
+      LOG_ERR("ERS", "OOM: Section for spine index %d", currentSpineIndex);
+      showBuildError();
+      return;
+    }
     partialRebuildStartFailed = false;
 
     const bool cacheLoaded = section->loadSectionFile(renderSpec);
@@ -1183,11 +1202,8 @@ void EpubReaderActivity::renderBook() {
       if (needsFullBuild) {
         GUI.drawPopup(renderer, tr(STR_INDEXING));
         pagesUntilFullRefresh = 1;
-        const auto popupFn = [this]() {
-          if (renderer.hasFrameBuffer()) GUI.drawPopup(renderer, tr(STR_INDEXING));
-        };
         GfxRenderer::FrameBufferLoan loan(renderer);
-        if (!section->createSectionFile(renderSpec, popupFn)) {
+        if (!section->createSectionFile(renderSpec, BuildPopupFn{&redrawIndexingPopup, this})) {
           LOG_ERR("ERS", "Failed to persist page data to SD");
           section.reset();
           loan.end();
@@ -1225,7 +1241,7 @@ void EpubReaderActivity::renderBook() {
           bool started;
           {
             GfxRenderer::FrameBufferLoan loan(renderer);
-            started = section->startBuild(renderSpec, [this] { showBuildPopup(renderer, pagesUntilFullRefresh); });
+            started = section->startBuild(renderSpec, BuildPopupFn{&showBuildPopupTrampoline, this});
           }
           if (!started) {
             LOG_ERR("ERS", "Failed to start section build");
@@ -1718,12 +1734,18 @@ void EpubReaderActivity::renderStatusBar() const {
   const float sectionChapterProg = (pageCount > 0) ? (static_cast<float>(currentPage) / pageCount) : 0;
   const float bookProgress = epub ? (epub->calculateProgress(currentSpineIndex, sectionChapterProg) * 100) : 0;
 
-  std::string title;
+  // Every branch borrows text that already exists (a translation, the book title,
+  // or the TOC entry held alive below); nothing is copied for the status bar.
+  const char* title = "";
+  BookMetadataCache::TocEntry tocItem;
+  char autoTurnLabel[48];
   int textYOffset = 0;
   const auto sb = SETTINGS.statusBarSpec();
 
   if (automaticPageTurnActive) {
-    title = tr(STR_AUTO_TURN_ENABLED) + std::to_string(60 * 1000 / pageTurnDuration);
+    snprintf(autoTurnLabel, sizeof(autoTurnLabel), "%s%lu", tr(STR_AUTO_TURN_ENABLED),
+             static_cast<unsigned long>(60 * 1000 / pageTurnDuration));
+    title = autoTurnLabel;
     const uint8_t statusBarHeight = UITheme::getInstance().getStatusBarHeight();
     if (statusBarHeight == 0 || statusBarHeight == UITheme::getInstance().getProgressBarHeight()) {
       textYOffset += UITheme::getInstance().getMetrics().statusBarVerticalMargin;
@@ -1733,12 +1755,12 @@ void EpubReaderActivity::renderStatusBar() const {
     if (epub) {
       const int tocIndex = epub->getTocIndexForSpineIndex(currentSpineIndex);
       if (tocIndex != -1) {
-        const auto tocItem = epub->getTocItem(tocIndex);
-        title = tocItem.title;
+        tocItem = epub->getTocItem(tocIndex);
+        title = tocItem.title.c_str();
       }
     }
   } else if (sb.titleMode == CrossPointSettings::STATUS_BAR_TITLE::BOOK_TITLE) {
-    title = epub ? epub->getTitle() : "";
+    if (epub) title = epub->getTitle().c_str();
   }
 
   GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset, true, currentPageBookmarked,
@@ -1773,6 +1795,31 @@ std::string EpubReaderActivity::currentChapterTitle() const {
     return epub->getTocItem(tocIndex).title;
   }
   return tr(STR_UNNAMED);
+}
+
+// Row-text trampolines for ReaderToolbarUi::RowTextFn: a plain function pointer
+// plus the activity as context, so the panel model carries no std::function.
+std::string EpubReaderActivity::tocRowText(void* ctx, const int index) {
+  auto* self = static_cast<EpubReaderActivity*>(ctx);
+  const auto item = self->epub->getTocItem(index);
+  const int depth = item.level > 1 ? (item.level - 1) * 2 : 0;
+  return std::string(depth, ' ') + item.title;
+}
+
+std::string EpubReaderActivity::textRowNameTrampoline(void* ctx, const int index) {
+  return static_cast<EpubReaderActivity*>(ctx)->textRowName(index);
+}
+
+std::string EpubReaderActivity::textRowValueTrampoline(void* ctx, const int index) {
+  return static_cast<EpubReaderActivity*>(ctx)->textRowValue(index);
+}
+
+std::string EpubReaderActivity::moreRowNameTrampoline(void* ctx, const int index) {
+  return static_cast<EpubReaderActivity*>(ctx)->moreRowName(index);
+}
+
+std::string EpubReaderActivity::moreRowValueTrampoline(void* ctx, const int index) {
+  return static_cast<EpubReaderActivity*>(ctx)->moreRowValue(index);
 }
 
 std::string EpubReaderActivity::textRowName(int row) const {
@@ -1985,21 +2032,17 @@ void EpubReaderActivity::renderOverlay() {
   if (overlay == Overlay::Contents) {
     model.panelTitle = tr(STR_TOOL_CONTENTS);
     model.itemCount = epub->getTocItemsCount();
-    model.rowText = [this](int i) {
-      const auto item = epub->getTocItem(i);
-      const int depth = item.level > 1 ? (item.level - 1) * 2 : 0;
-      return std::string(depth, ' ') + item.title;
-    };
+    model.rowText = {&tocRowText, this};
   } else if (overlay == Overlay::Text) {
     model.panelTitle = tr(STR_TOOL_TEXT);
     model.itemCount = kTextRowCount;
-    model.rowText = [this](int i) { return textRowName(i); };
-    model.rowValue = [this](int i) { return textRowValue(i); };
+    model.rowText = {&textRowNameTrampoline, this};
+    model.rowValue = {&textRowValueTrampoline, this};
   } else {
     model.panelTitle = tr(STR_TOOL_MORE);
     model.itemCount = static_cast<int>(moreItems.size());
-    model.rowText = [this](int i) { return moreRowName(i); };
-    model.rowValue = [this](int i) { return moreRowValue(i); };
+    model.rowText = {&moreRowNameTrampoline, this};
+    model.rowValue = {&moreRowValueTrampoline, this};
   }
   toolbarUi->setModel(model);
   toolbarUi->render();

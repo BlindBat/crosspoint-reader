@@ -35,7 +35,7 @@ class ChapterHtmlSlimParserTest : public ::testing::TestWithParam<const char*> {
                                "",
                                0,
                                {},
-                               nullptr,
+                               {},
                                &cssParser};
 
   void SetUp() override { parser.currentTextBlock = std::make_unique<ParsedText>(false); }

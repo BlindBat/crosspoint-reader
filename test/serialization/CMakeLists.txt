@@ -29,6 +29,7 @@ add_executable(SerializationTest
   ${REPO_ROOT}/lib/uzlib/src/tinflate.c
   ${REPO_ROOT}/test/dict_common/UzlibChecksumLinkStubs.c
   ${REPO_ROOT}/lib/miniz/third_party/miniz.c
+  ${REPO_ROOT}/test/support/PlatformHost.cpp
 )
 
 # stubs/ first so <Arduino.h>, <HalStorage.h>, <Print.h>, <base64.h>,
@@ -48,6 +49,8 @@ target_include_directories(SerializationTest PRIVATE
   ${REPO_ROOT}/lib/uzlib/src
   ${REPO_ROOT}/lib/miniz/third_party
   ${REPO_ROOT}/src/util
+  ${REPO_ROOT}/lib/Platform
+  ${REPO_ROOT}/test/support
 )
 
 # Third-party C sources: not held to the suite's warning bar.

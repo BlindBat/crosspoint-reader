@@ -2,6 +2,7 @@
 
 #include <Xtc/XtcTypes.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -43,5 +44,12 @@ uint32_t decodeProgress(const uint8_t data[4], uint32_t pageCount);
 
 // Target of a relative skip, clamped to [0, pageCount]; pageCount is the end-of-book screen.
 uint32_t skipTarget(uint32_t currentPage, int amount, uint32_t pageCount);
+
+// XTH 2-bit pixel at (x, y): 0 white, 1 dark gray, 2 light gray, 3 black.
+// The two planes are column-major right-to-left with 8 vertical pixels per byte
+// (MSB topmost). Each plane holds (width*height+7)/8 bytes but is indexed at
+// (height+7)/8 bytes per column, so the tail columns have no storage whenever the
+// height is not a multiple of 8; those offsets read as white rather than past the buffer.
+uint8_t xthPixelValue(const uint8_t* planes, size_t planeSize, uint16_t width, uint16_t height, uint16_t x, uint16_t y);
 
 }  // namespace xtc_reader

@@ -9,6 +9,7 @@ add_executable(PngDecodeTest
   ${REPO_ROOT}/lib/miniz/src/InflateStream.cpp
   ${REPO_ROOT}/lib/miniz/src/miniz_impl.c
   ${REPO_ROOT}/lib/Memory/BuildScratch.cpp
+  ${REPO_ROOT}/test/support/PlatformHost.cpp
 )
 
 target_include_directories(PngDecodeTest PRIVATE
@@ -18,6 +19,8 @@ target_include_directories(PngDecodeTest PRIVATE
   ${REPO_ROOT}/lib/GfxRenderer
   ${REPO_ROOT}/lib/miniz/src
   ${REPO_ROOT}/lib/Memory
+  ${REPO_ROOT}/lib/Platform
+  ${REPO_ROOT}/test/support
 )
 
 target_compile_definitions(PngDecodeTest PRIVATE

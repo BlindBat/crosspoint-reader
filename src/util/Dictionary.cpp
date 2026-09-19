@@ -1,8 +1,8 @@
 #include "Dictionary.h"
 
-#include <Arduino.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <PlatformSeam.h>
 
 #include <algorithm>
 #include <cctype>
@@ -234,7 +234,7 @@ bool Dictionary::buildSidecar(const std::string& sourcePath, const std::string& 
     sampleCount = 1;
   }
 
-  const unsigned long startMs = millis();
+  const unsigned long startMs = platform::millis();
   uint32_t entryCount = 0;
   uint32_t pos = 0;
   uint32_t suffixLeft = 0;  // 0 while scanning a word, else suffix bytes remaining
@@ -279,7 +279,7 @@ bool Dictionary::buildSidecar(const std::string& sourcePath, const std::string& 
   }
 
   LOG_INF("DICT", "Indexed %lu entries (%lu samples) from %s in %lu ms", static_cast<unsigned long>(entryCount),
-          static_cast<unsigned long>(sampleCount), sourcePath.c_str(), millis() - startMs);
+          static_cast<unsigned long>(sampleCount), sourcePath.c_str(), platform::millis() - startMs);
   return true;
 }
 
@@ -512,7 +512,7 @@ bool Dictionary::readDefinition(const DictLocation& location, std::string& out, 
   // Refuse before touching the heap or the SD: std::string growth aborts on OOM
   // (-fno-exceptions), and the extraction below transiently holds a chunk buffer
   // plus a 32KB inflate window we'd rather not commit to a doomed lookup.
-  if (ESP.getMaxAllocHeap() < size + DEFINITION_HEAP_HEADROOM_BYTES) {
+  if (platform::maxAllocHeap() < size + DEFINITION_HEAP_HEADROOM_BYTES) {
     LOG_ERR("DICT", "Low heap for %lu byte definition", static_cast<unsigned long>(size));
     return fail(LookupResult::LowMemory);
   }

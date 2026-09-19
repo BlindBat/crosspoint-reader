@@ -9,7 +9,6 @@
 
 #include <HalStorage.h>
 
-#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -66,9 +65,7 @@ class XtcParser {
    * @param chunkSize Chunk size (default: 1024 bytes)
    * @return Error code
    */
-  XtcError loadPageStreaming(uint32_t pageIndex,
-                             std::function<void(const uint8_t* data, size_t size, size_t offset)> callback,
-                             size_t chunkSize = 1024);
+  XtcError loadPageStreaming(uint32_t pageIndex, const PageChunkFn& callback, size_t chunkSize = 1024);
 
   // Get title/author from metadata
   std::string getTitle() const { return m_title; }

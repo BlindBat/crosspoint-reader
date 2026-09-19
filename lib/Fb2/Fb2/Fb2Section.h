@@ -1,10 +1,11 @@
 #pragma once
+#include <Epub/ReaderCallbacks.h>
 #include <Epub/ReaderRenderSpec.h>
 #include <HalStorage.h>
 
-#include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "Fb2.h"
 
@@ -39,6 +40,13 @@ class Fb2Section {
   bool loadSectionFile(const ReaderRenderSpec& spec);
   bool clearCache() const;
   // Parse the FB2 section and lay it out into the section file.
-  bool createSectionFile(const ReaderRenderSpec& spec, const std::function<void()>& popupFn = nullptr);
+  bool createSectionFile(const ReaderRenderSpec& spec, const BuildPopupFn& popupFn = {});
+  // Context and trampoline for Fb2PageCompleteFn: the build's page-offset LUT is
+  // a local of createSectionFile, so the callback carries it alongside `this`.
+  struct BuildLutContext {
+    Fb2Section* section;
+    std::vector<uint32_t>* lut;
+  };
+  static void appendBuiltPage(void* ctx, std::unique_ptr<Page> page);
   std::unique_ptr<Page> loadPage(int page);
 };

@@ -5,8 +5,7 @@
 #include <InflateStream.h>
 #include <Logging.h>
 #include <Memory.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
+#include <PlatformSeam.h>
 
 #include <cstdio>
 #include <cstring>
@@ -78,7 +77,7 @@ enum PngFilter : uint8_t {
 void yieldDuringDecode(uint8_t& rowsSinceYield) {
   if (++rowsSinceYield < 8) return;
   rowsSinceYield = 0;
-  vTaskDelay(1);
+  platform::yield();
 }
 
 // Read a big-endian 32-bit value from file
@@ -660,6 +659,12 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
       LOG_ERR("PNG", "OOM: Atkinson1BitDitherer");
       return false;
     }
+    // The object fits but its error rows may not; dithering is an enhancement, so
+    // drop it and let the row loop fall back to plain quantisation.
+    if (!atkinson1BitDitherer->valid()) {
+      LOG_ERR("PNG", "OOM: dithering disabled for this image");
+      atkinson1BitDitherer.reset();
+    }
   } else if (!USE_8BIT_OUTPUT) {
     if (USE_ATKINSON) {
       atkinsonDitherer = makeUniqueNoThrow<AtkinsonDitherer>(outWidth);
@@ -667,11 +672,19 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
         LOG_ERR("PNG", "OOM: AtkinsonDitherer");
         return false;
       }
+      if (!atkinsonDitherer->valid()) {
+        LOG_ERR("PNG", "OOM: dithering disabled for this image");
+        atkinsonDitherer.reset();
+      }
     } else if (USE_FLOYD_STEINBERG) {
       fsDitherer = makeUniqueNoThrow<FloydSteinbergDitherer>(outWidth);
       if (!fsDitherer) {
         LOG_ERR("PNG", "OOM: FloydSteinbergDitherer");
         return false;
+      }
+      if (!fsDitherer->valid()) {
+        LOG_ERR("PNG", "OOM: dithering disabled for this image");
+        fsDitherer.reset();
       }
     }
   }

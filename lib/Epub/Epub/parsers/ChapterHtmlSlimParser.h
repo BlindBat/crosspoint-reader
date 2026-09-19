@@ -5,13 +5,13 @@
 
 #include <array>
 #include <climits>
-#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "Epub/FootnoteEntry.h"
 #include "Epub/ParsedText.h"
+#include "Epub/ReaderCallbacks.h"
 #include "Epub/blocks/ImageBlock.h"
 #include "Epub/blocks/TextBlock.h"
 #include "Epub/css/CssParser.h"
@@ -27,9 +27,9 @@ class ChapterHtmlSlimParser {
   std::shared_ptr<Epub> epub;
   const std::string& filepath;
   GfxRenderer& renderer;
-  std::function<void(std::unique_ptr<Page>, uint16_t, uint16_t, uint32_t)> completePageFn;
-  std::function<void()> popupFn;  // Popup callback
-  bool imagePopupFired = false;   // popupFn fired for the first image probe (single-shot)
+  EpubPageCompleteFn completePageFn;
+  BuildPopupFn popupFn;          // Popup callback
+  bool imagePopupFired = false;  // popupFn fired for the first image probe (single-shot)
   int depth = 0;
   int skipUntilDepth = INT_MAX;
   int boldUntilDepth = INT_MAX;
@@ -165,15 +165,15 @@ class ChapterHtmlSlimParser {
   static void XMLCALL endElement(void* userData, const XML_Char* name);
 
  public:
-  explicit ChapterHtmlSlimParser(
-      std::shared_ptr<Epub> epub, const std::string& filepath, GfxRenderer& renderer, const int fontId,
-      const float lineCompression, const bool extraParagraphSpacing, const uint8_t paragraphAlignment,
-      const uint16_t viewportWidth, const uint16_t viewportHeight, const bool hyphenationEnabled,
-      const bool focusReadingEnabled,
-      const std::function<void(std::unique_ptr<Page>, uint16_t, uint16_t, uint32_t)>& completePageFn,
-      const bool embeddedStyle, const std::string& contentBase, const std::string& imageBasePath,
-      const uint8_t imageRendering = 0, std::vector<std::string> tocAnchors = {},
-      const std::function<void()>& popupFn = nullptr, const CssParser* cssParser = nullptr)
+  explicit ChapterHtmlSlimParser(std::shared_ptr<Epub> epub, const std::string& filepath, GfxRenderer& renderer,
+                                 const int fontId, const float lineCompression, const bool extraParagraphSpacing,
+                                 const uint8_t paragraphAlignment, const uint16_t viewportWidth,
+                                 const uint16_t viewportHeight, const bool hyphenationEnabled,
+                                 const bool focusReadingEnabled, const EpubPageCompleteFn& completePageFn,
+                                 const bool embeddedStyle, const std::string& contentBase,
+                                 const std::string& imageBasePath, const uint8_t imageRendering = 0,
+                                 std::vector<std::string> tocAnchors = {}, const BuildPopupFn& popupFn = {},
+                                 const CssParser* cssParser = nullptr)
 
       : epub(epub),
         filepath(filepath),

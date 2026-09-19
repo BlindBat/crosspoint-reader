@@ -3,6 +3,7 @@
 #include <HalStorage.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <PlatformSeam.h>
 #include <Utf8.h>
 
 #include <algorithm>
@@ -130,7 +131,7 @@ void SdCardFont::resetStyleMiniData(PerStyle& s) {
   // when the heap is tight: the arenas are rebuildable for one page's worth of
   // allocations, and this floor keeps retained fonts out of the way of section
   // builds and the render path's own floors.
-  if (ESP.getFreeHeap() < MINI_RETAIN_MIN_FREE_HEAP) {
+  if (platform::freeHeap() < MINI_RETAIN_MIN_FREE_HEAP) {
     freeStyleMiniData(s);
     return;
   }
@@ -867,7 +868,7 @@ int SdCardFont::prewarm(TextGetter getter, const void* ctx, uint32_t textCount, 
   styleMask = resolveStyleMask(styleMask);
   if (styleMask == 0) return 0;
 
-  unsigned long startMs = millis();
+  unsigned long startMs = platform::millis();
 
   // Cap the unique-codepoint budget by what the heap can actually hold as a
   // full mini arena (glyph structs + bitmaps, working headroom left over).
@@ -895,7 +896,7 @@ int SdCardFont::prewarm(TextGetter getter, const void* ctx, uint32_t textCount, 
       }
       const uint32_t perGlyph = bitmapPerGlyph + sizeof(EpdGlyph);
       constexpr uint32_t PREWARM_HEAP_HEADROOM = 16 * 1024;
-      const uint32_t freeHeap = ESP.getFreeHeap();
+      const uint32_t freeHeap = platform::freeHeap();
       const uint32_t budgetBytes = freeHeap > PREWARM_HEAP_HEADROOM ? freeHeap - PREWARM_HEAP_HEADROOM : 0;
       const uint32_t budgetGlyphs = budgetBytes / (perGlyph > 0 ? perGlyph : 1);
       if (budgetGlyphs < cpBudget) {
@@ -1005,7 +1006,7 @@ int SdCardFont::prewarm(TextGetter getter, const void* ctx, uint32_t textCount, 
       // ample free bytes. Retry with the estimated largest prefix, backing off
       // if variable-size glyphs made that estimate too large.
       const uint32_t perGlyph = styles_[si].measuredBytesPerGlyph > 0 ? styles_[si].measuredBytesPerGlyph : 1;
-      const uint32_t maxAlloc = ESP.getMaxAllocHeap();
+      const uint32_t maxAlloc = platform::maxAllocHeap();
       const uint32_t arenaBytes = maxAlloc > PREWARM_MAX_ALLOC_RESERVE ? maxAlloc - PREWARM_MAX_ALLOC_RESERVE : 0;
       uint32_t fit = arenaBytes / perGlyph;
       if (fit > cpCount) fit = cpCount;
@@ -1024,7 +1025,7 @@ int SdCardFont::prewarm(TextGetter getter, const void* ctx, uint32_t textCount, 
     totalMissed += missedForStyle;
   }
 
-  stats_.prewarmTotalMs = millis() - startMs;
+  stats_.prewarmTotalMs = platform::millis() - startMs;
   return totalMissed;
 }
 
@@ -1079,7 +1080,7 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
   // Over MAX_PAGE_GLYPHS the union is abandoned (request-only rebuild), which
   // bounds mini RAM to the same worst case as a single dense page.
   std::unique_ptr<uint32_t[]> unionCps;
-  if (s.miniGlyphCount > 0 && s.miniIntervalCount > 0 && ESP.getFreeHeap() < MINI_RETAIN_MIN_FREE_HEAP) {
+  if (s.miniGlyphCount > 0 && s.miniIntervalCount > 0 && platform::freeHeap() < MINI_RETAIN_MIN_FREE_HEAP) {
     // Heap-tight (e.g. a chapter list stacked over an open book). Size-aware:
     // a small union (a UI screen's worth of titles, a few KB) is exactly what
     // stops per-string eviction from re-reading the SD on every repaint, so
@@ -1092,7 +1093,7 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
         (s.miniBitmapUsed > 0 && s.miniGlyphCount > 0) ? s.miniBitmapUsed / s.miniGlyphCount : 64;
     const uint32_t estArenaBytes = unionMaxCount * (static_cast<uint32_t>(sizeof(EpdGlyph)) + avgBitmapBytes);
     constexpr uint32_t UNION_PRESSURE_HEADROOM = 12 * 1024;
-    if (estArenaBytes + UNION_PRESSURE_HEADROOM > ESP.getFreeHeap()) {
+    if (estArenaBytes + UNION_PRESSURE_HEADROOM > platform::freeHeap()) {
       freeStyleMiniData(s);
     }
   }
@@ -1225,7 +1226,7 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
     return static_cast<int>(cpCount);
   }
 
-  unsigned long sdStart = millis();
+  unsigned long sdStart = platform::millis();
   uint32_t seekCount = 0;
 
   // Read glyph metadata. lastReadIndex tracks sequential reads to skip redundant
@@ -1335,7 +1336,7 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
     }
   }
 
-  uint32_t sdTime = millis() - sdStart;
+  uint32_t sdTime = platform::millis() - sdStart;
   delete[] readOrder;
   delete[] mappings;
 
@@ -1598,7 +1599,7 @@ int SdCardFont::buildAdvanceTableRange(Iter begin, Iter end, bool includeSpace, 
   styleMask = resolveStyleMask(styleMask);
   if (styleMask == 0) return 0;
 
-  unsigned long startMs = millis();
+  unsigned long startMs = platform::millis();
 
   // +2 reserved slots for space and hyphen injected after the main scan.
   static constexpr uint32_t MAX_UNIQUE_CODEPOINTS = 4096;
@@ -1629,7 +1630,7 @@ int SdCardFont::buildAdvanceTableRange(Iter begin, Iter end, bool includeSpace, 
   std::sort(codepoints, codepoints + cpCount);
   int totalMissed = fetchAdvancesForCodepoints(codepoints, cpCount, styleMask);
   delete[] codepoints;
-  stats_.prewarmTotalMs = millis() - startMs;
+  stats_.prewarmTotalMs = platform::millis() - startMs;
   return totalMissed;
 }
 

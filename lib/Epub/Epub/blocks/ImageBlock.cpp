@@ -20,7 +20,12 @@
 // - uint8_t pixels[...] - 2 bits per pixel, packed (4 pixels per byte), row-major order
 
 ImageBlock::ImageBlock(const std::string& imagePath, const std::string& srcPath, int16_t width, int16_t height)
-    : imagePath(imagePath), srcPath(srcPath), width(width), height(height) {}
+    : imagePath(imagePath), srcPath(srcPath), width(width), height(height) {
+  // Pixel cache sits beside the image with a .pxc extension.
+  const size_t dotPos = this->imagePath.rfind('.');
+  cachePath = (dotPos != std::string::npos) ? this->imagePath.substr(0, dotPos) : this->imagePath;
+  cachePath += ".pxc";
+}
 
 void* ImageBlock::extractCtx = nullptr;
 ImageBlock::ExtractFn ImageBlock::extractFn = nullptr;
@@ -33,15 +38,6 @@ void ImageBlock::setExtractor(void* ctx, ExtractFn fn) {
 bool ImageBlock::imageExists() const { return Storage.exists(imagePath.c_str()); }
 
 namespace {
-
-std::string getCachePath(const std::string& imagePath) {
-  // Replace extension with .pxc (pixel cache)
-  size_t dotPos = imagePath.rfind('.');
-  if (dotPos != std::string::npos) {
-    return imagePath.substr(0, dotPos) + ".pxc";
-  }
-  return imagePath + ".pxc";
-}
 
 bool readValidCacheHeader(HalFile& cacheFile, const int expectedWidth, const int expectedHeight, uint16_t& cachedWidth,
                           uint16_t& cachedHeight) {
@@ -297,7 +293,6 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
 }  // namespace
 
 bool ImageBlock::hasValidCache() const {
-  const auto cachePath = getCachePath(imagePath);
   HalFile cacheFile;
   if (!Storage.openFileForRead("IMG", cachePath, cacheFile)) {
     return false;
@@ -357,7 +352,6 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   }
 
   // Try to render from cache first
-  std::string cachePath = getCachePath(imagePath);
   if (renderFromCache(renderer, cachePath, x, y, width, height)) {
     renderer.preserveImagePolarity(x, y, width, height);
     return;  // Successfully rendered from cache
@@ -437,10 +431,15 @@ bool ImageBlock::serialize(HalFile& file) {
 std::unique_ptr<ImageBlock> ImageBlock::deserialize(HalFile& file) {
   std::string path;
   std::string src;
-  serialization::readString(file, path);
-  serialization::readString(file, src);
-  int16_t w, h;
-  serialization::readPod(file, w);
-  serialization::readPod(file, h);
+  if (!serialization::readString(file, path) || !serialization::readString(file, src)) {
+    LOG_ERR("IMG", "Deserialization failed: truncated image path");
+    return nullptr;
+  }
+  int16_t w = 0;
+  int16_t h = 0;
+  if (!serialization::readPod(file, w) || !serialization::readPod(file, h)) {
+    LOG_ERR("IMG", "Deserialization failed: truncated image dimensions");
+    return nullptr;
+  }
   return std::unique_ptr<ImageBlock>(new (std::nothrow) ImageBlock(path, src, w, h));
 }

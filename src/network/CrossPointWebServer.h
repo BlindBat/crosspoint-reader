@@ -11,10 +11,24 @@
 
 // Structure to hold file information
 struct FileInfo {
-  String name;
+  // Borrowed from scanFiles' reusable entry-name buffer: valid only for the
+  // duration of one FileEntryFn call, never stored.
+  const char* name;
   size_t size;
   bool isEpub;
   bool isDirectory;
+};
+
+// One directory entry handed back by scanFiles: a context pointer plus a plain
+// function taking it, not std::function (see BaseTheme.h's MenuLabelFn).
+struct FileEntryFn {
+  void (*fn)(void* ctx, const FileInfo& info) = nullptr;
+  void* ctx = nullptr;
+
+  explicit operator bool() const { return fn != nullptr; }
+  void operator()(const FileInfo& info) const {
+    if (fn != nullptr) fn(ctx, info);
+  }
 };
 
 class CrossPointWebServer {
@@ -84,9 +98,16 @@ class CrossPointWebServer {
   void abortWsUpload(const char* tag);
 
   // File scanning
-  void scanFiles(const char* path, const std::function<void(FileInfo)>& callback) const;
+  void scanFiles(const char* path, const FileEntryFn& callback) const;
+  // Context for the /api/files streaming listing, handed to sendFileListEntry.
+  struct FileListContext {
+    const CrossPointWebServer* server;
+    char* output;
+    bool seenFirst;
+  };
+  static void sendFileListEntry(void* ctx, const FileInfo& info);
   String formatFileSize(size_t bytes) const;
-  bool isEpubFile(const String& filename) const;
+  bool isEpubFile(std::string_view filename) const;
 
   // Request handlers
   void handleRoot() const;

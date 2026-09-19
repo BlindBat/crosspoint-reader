@@ -10,6 +10,7 @@ add_executable(SdCardFontTest
   ${REPO_ROOT}/lib/EpdFont/SdCardFontRegistry.cpp
   ${REPO_ROOT}/lib/EpdFont/EpdFont.cpp
   ${REPO_ROOT}/lib/Utf8/Utf8.cpp
+  ${REPO_ROOT}/test/support/PlatformHost.cpp
 )
 
 target_include_directories(SdCardFontTest PRIVATE
@@ -17,6 +18,8 @@ target_include_directories(SdCardFontTest PRIVATE
   ${REPO_ROOT}/lib/EpdFont
   ${REPO_ROOT}/lib/Utf8
   ${REPO_ROOT}/lib/Memory
+  ${REPO_ROOT}/lib/Platform
+  ${REPO_ROOT}/test/support
 )
 
 set(CPFONT_RESOURCES_DIR ${CMAKE_CURRENT_BINARY_DIR}/resources)

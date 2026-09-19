@@ -1,5 +1,5 @@
 #pragma once
-#include <Print.h>
+#include <PlatformSeam.h>
 #include <expat.h>
 
 #include <string>
@@ -43,7 +43,7 @@ using OpdsBook = OpdsEntry;
  *     }
  *   }
  */
-class OpdsParser final : public Print {
+class OpdsParser final : public platform::ByteSink {
  public:
   OpdsParser();
   ~OpdsParser();

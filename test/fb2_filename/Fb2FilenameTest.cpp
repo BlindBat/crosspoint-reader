@@ -47,11 +47,6 @@ TEST(HasFb2Extension, TrailingCharactersAfterExtensionDoNotMatch) {
   EXPECT_FALSE(has("book.fb20"));
 }
 
-TEST(HasFb2Extension, ArduinoStringOverloadDelegates) {
-  EXPECT_TRUE(FsHelpers::hasFb2Extension(String("book.fb2")));
-  EXPECT_FALSE(FsHelpers::hasFb2Extension(String("book.epub")));
-}
-
 TEST(HasFb2Extension, DoesNotMatchOtherReaderFormats) {
   EXPECT_FALSE(has("book.epub"));
   EXPECT_FALSE(has("book.txt"));

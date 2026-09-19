@@ -1,11 +1,11 @@
 #pragma once
-#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "Epub.h"
+#include "ReaderCallbacks.h"
 #include "ReaderRenderSpec.h"
 
 class Page;
@@ -87,14 +87,17 @@ class Section {
   ~Section();
   bool loadSectionFile(const ReaderRenderSpec& spec);
   bool clearCache() const;
-  bool createSectionFile(const ReaderRenderSpec& spec, const std::function<void()>& popupFn = nullptr);
+  bool createSectionFile(const ReaderRenderSpec& spec, const BuildPopupFn& popupFn = {});
+  // EpubPageCompleteFn trampoline: appends one laid-out page to build_'s LUT.
+  static void appendBuiltPage(void* ctx, std::unique_ptr<Page> page, uint16_t paragraphIndex, uint16_t listItemIndex,
+                              uint32_t visibleTextOffset);
 
   // Incremental build: lay out the section a few pages at a time so a large chapter
   // can show its first page immediately and keep the UI responsive while the rest
   // builds. createSectionFile() above is the one-shot wrapper over these.
   //   if (!startBuild(...)) fail;
   //   each tick: buildSomeMore(N); render up to pageCount; when isBuildComplete() stop.
-  bool startBuild(const ReaderRenderSpec& spec, const std::function<void()>& popupFn = nullptr);
+  bool startBuild(const ReaderRenderSpec& spec, const BuildPopupFn& popupFn = {});
   // Lay out up to maxPages more pages (maxPages <= 0 = build to completion). Returns
   // false on error (the build is abandoned). Sets isBuildComplete() when finished.
   bool buildSomeMore(int maxPages);

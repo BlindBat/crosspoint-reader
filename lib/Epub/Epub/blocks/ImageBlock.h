@@ -45,6 +45,9 @@ class ImageBlock final : public Block {
 
  private:
   std::string imagePath;
+  // imagePath with its extension replaced by .pxc, derived once: render() and
+  // hasValidCache() both need it and are called on every grayscale band pass.
+  std::string cachePath;
   std::string srcPath;  // book-internal source href; empty once known-extracted
   int16_t width;
   int16_t height;

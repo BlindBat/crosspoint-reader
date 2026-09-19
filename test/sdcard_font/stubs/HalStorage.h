@@ -10,7 +10,7 @@
 //   - a path-remap root so the registry's absolute "/.fonts" paths land in a
 //     per-test sandbox directory (halstub::root),
 //   - a settable ESP heap stub: SdCardFont sizes its prewarm budget and mini
-//     retention from ESP.getFreeHeap()/getMaxAllocHeap().
+//     retention from platform::freeHeap()/maxAllocHeap().
 //
 // Directory entries are sorted by name so registry tests are deterministic
 // regardless of the host filesystem's readdir order.
@@ -207,15 +207,5 @@ class HalStorage {
 
 #define Storage HalStorage::getInstance()
 
-inline uint32_t millis() { return 0; }
-
-// SdCardFont reads heap telemetry to size prewarm budgets and decide mini-data
-// retention. Defaults are large enough to never constrain a test unless the
-// test lowers them explicitly.
-struct EspHostStub {
-  uint32_t freeHeap = 512u * 1024u * 1024u;
-  uint32_t maxAllocHeap = 256u * 1024u * 1024u;
-  uint32_t getFreeHeap() const { return freeHeap; }
-  uint32_t getMaxAllocHeap() const { return maxAllocHeap; }
-};
-inline EspHostStub ESP;
+// SdCardFont's heap telemetry and clocks go through lib/Platform/PlatformSeam.h;
+// drive them with platform_host::setHeap() / setClock().

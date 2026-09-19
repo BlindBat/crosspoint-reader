@@ -31,6 +31,12 @@ struct ParseRun {
   bool hung = false;    // step budget exhausted — would spin forever on device
   size_t pages = 0;     // pages handed to completePageFn
   size_t maxSteps = 0;  // budget the run was given
+
+  // EpubPageCompleteFn trampoline: the parser takes a function pointer plus a
+  // context, so the run counts pages without a capturing lambda.
+  static void countPage(void* ctx, std::unique_ptr<Page>, uint16_t, uint16_t, uint32_t) {
+    ++static_cast<ParseRun*>(ctx)->pages;
+  }
 };
 
 // Drives beginParse/parseStep/finishParse with a step budget derived from the
@@ -51,13 +57,13 @@ ParseRun runBoundedParse(const std::string& filepath, GfxRenderer& renderer, con
                                static_cast<uint16_t>(renderer.getScreenHeight()),
                                false,
                                false,
-                               [&run](std::unique_ptr<Page>, uint16_t, uint16_t, uint32_t) { ++run.pages; },
+                               EpubPageCompleteFn{&ParseRun::countPage, &run},
                                true,
                                "",
                                "",
                                0,
                                {},
-                               nullptr,
+                               {},
                                &cssParser};
 
   if (!parser.beginParse()) {
