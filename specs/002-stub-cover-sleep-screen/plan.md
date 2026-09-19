@@ -64,7 +64,13 @@ device is about to cut power to peripherals, so allocation and I/O must both sta
 | VI. Untrusted Input Is Hostile | PASS | Title and author are attacker-shaped (they come out of an EPUB/FB2 container). They are never passed to a C string API as a `string_view`, never used to size an allocation, and their length is bounded by the wrap helper, which clamps lines to the bounds height and ellipsises the remainder. A hostile title costs at most three wrapped lines. |
 | VII. Upstream-First Fork Hygiene | PASS | One logical change, one semantic commit, on a short-lived branch. No fork-only tooling in the diff; the change is upstream-shaped (it extends an existing upstream function rather than adding a fork subsystem) and would port as a small PR. |
 
-**No Complexity Tracking entries** — no violation to justify.
+### Complexity Tracking
+
+| Violation | Why Needed | Simpler Alternative Rejected Because |
+|---|---|---|
+| No host test for the cover/stub/fall-back branch (tasks-template override of Principle V) | The branch lives in `SleepActivity`, which pulls the display, settings and storage singletons and does not host-compile; the wrapping it delegates to is already covered by `test/gfx_renderer/` | Extracting the branch to `sleepimage::` yields `coverReadable ? Art : (title.empty() ? Fallback : Stub)` — a test over a one-line ternary does not fail when the feature breaks, which Principle V itself defines as theatre. Verification is gate 6 (simulator), recipe in [quickstart.md](quickstart.md). |
+
+This is the only entry; Principles I, II, III, IV, VI and VII pass without qualification.
 
 ## Project Structure
 

@@ -13,8 +13,8 @@ description: "Task list for 002-stub-cover-sleep-screen"
 host-reachable logic. This feature adds none — the wrapping engine it reuses is already covered by
 `test/gfx_renderer/GfxRendererTest.cpp` and `GfxRendererAllocTest.cpp`, and what remains is render
 calls inside an activity the host cannot compile. The rejection of an extraction-for-testability is
-recorded in [research.md](research.md) §4 and in the plan's Constitution Check, per the override's
-"justify" clause. Verification is constitution gate 6 (simulator).
+recorded in [research.md](research.md) §4 and in the plan's Complexity Tracking table, per the
+override's "justify" clause. Verification is constitution gate 6 (simulator).
 
 **Organization**: Tasks are grouped by user story. Two tasks are already complete in the working
 tree (marked `[X]`) — they are the retrospective half of the spec, restored from commit `80213c09`
