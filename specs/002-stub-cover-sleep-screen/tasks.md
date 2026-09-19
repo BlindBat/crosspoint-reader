@@ -97,7 +97,7 @@ and FR-015 (the sleep path resets to portrait before the mode switch, at
 [src/activities/boot_sleep/SleepActivity.cpp:370-377](../../src/activities/boot_sleep/SleepActivity.cpp)).
 This story is verification only.
 
-- [ ] T005 [US3] Verify in the simulator: set `sleepScreenCoverFilter` to `2` (Inverted) in `fs_branches/<branch>/.crosspoint/settings.json`, capture a sleep with the coverless fixture per [quickstart.md](quickstart.md) step 3, and confirm the card is light-on-dark and the log shows one screen update (FR-013, FR-014, SC-004).
+- [ ] T005 [US3] Verify in the simulator: set `sleepScreenCoverFilter` to `2` (Inverted) in `fs_branches/<branch>/.crosspoint/settings.json`, capture a sleep with the coverless fixture per [quickstart.md](quickstart.md) step 3, and confirm the card is light-on-dark and the log shows one screen update (FR-013, FR-014, SC-004). Then sleep from a reader left in `LANDSCAPE_CW` and confirm the card is still upright (FR-015).
 
 ---
 
