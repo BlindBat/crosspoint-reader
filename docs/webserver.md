@@ -18,11 +18,16 @@ and **Create Hotspot** modes under **File Transfer**. It can:
 
 Names that start with a dot, plus `System Volume Information` and `XTCache`, are
 treated as protected. The **Show Hidden Files** setting only controls whether
-dot-prefixed entries appear in the browser's folder listing; downloading,
-renaming, moving and deleting such an item is refused regardless of the setting.
-WebDAV goes further: fetching, writing or deleting a file whose path contains a
-protected segment anywhere is refused, so a normally-named file inside a hidden
-folder is unreachable there.
+dot-prefixed entries appear in the browser's folder listing; it never relaxes the
+checks below.
+
+Every client-supplied path is normalised and then rejected if **any** component
+of it is protected, not just the last one — over HTTP and over WebDAV alike. A
+normally-named file inside a hidden folder is therefore unreachable: listing
+(`/api/files`), downloading, deleting, uploading into and creating a folder under
+such a path all fail. `/upload` and `/mkdir` additionally screen the name they
+are given, rejecting an empty name, a name that is whitespace only, and a name
+containing `/` or `\` (which could otherwise escape the target folder).
 
 The server does not require authentication. Use it only on trusted private
 networks or in hotspot mode when you control who is connected.
@@ -194,9 +199,9 @@ Endpoint details are documented in [webserver-endpoints.md](./webserver-endpoint
   `x4pro`, `papermono`) it switches Wi-Fi off in place instead of rebooting.
 - Hotspot mode creates an open network for connectivity fallback; disconnect when done.
 - Dot-prefixed names and the protected `System Volume Information` and `XTCache`
-  entries cannot be downloaded, renamed, moved or deleted. Over HTTP the check
-  looks at the item's own name, so a normally-named file inside a hidden folder
-  is still reachable by its full path; WebDAV checks every segment instead.
+  entries cannot be listed, downloaded, renamed, moved, deleted or written into.
+  Both HTTP and WebDAV check every component of the normalised path, so a
+  normally-named file inside a hidden folder is not reachable either.
 
 ## Tips
 

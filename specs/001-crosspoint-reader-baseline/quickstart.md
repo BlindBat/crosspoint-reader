@@ -10,7 +10,7 @@
 
 ```bash
 ./bin/clang-format-fix -c            # 1. formatting gate (never call clang-format directly)
-bin/run-tests                        # 2. host test program, plain (43 suites)
+bin/run-tests                        # 2. host test program, plain (59 suites)
 bin/run-tests --asan                 # 3. same under ASan+UBSan (separate build dir)
 pio run -e default                   # 4. ESP32-C3 firmware builds (X4 + X3)
 pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high   # 5. cppcheck

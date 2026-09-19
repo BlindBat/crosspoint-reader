@@ -18,7 +18,7 @@ CrossPoint Reader is an EPUB-first e-book reader firmware for ESP32 e-ink device
 
 **Storage**: SD card (FAT, UTF-8 long names) under `/.crosspoint/` for all firmware state and per-book caches; RTC_NOINIT memory for reboot-surviving flags and the crash capture; NVS only for the SDK's panel fingerprint. SPIFFS is reserved but never mounted.
 
-**Testing**: Host GoogleTest program under `test/` (43 suites, ~1,003 tests) built with CMake/Ninja via `bin/run-tests` (plain and `--asan`), malformed-input corpus under `test/corpus/`, deterministic fixture generators under `scripts/generate_test_*.py`; `pio check` (cppcheck low/medium/high); `./bin/clang-format-fix -c`; on-device verification with `scripts/debugging_monitor.py`; the official simulator (sister repo, per-developer `platformio.local.ini`).
+**Testing**: Host GoogleTest program under `test/` (59 suites, ~3,271 tests) built with CMake/Ninja via `bin/run-tests` (plain and `--asan`, both run by CI), malformed-input corpus under `test/corpus/`, deterministic fixture generators under `scripts/generate_test_*.py`; `pio check` (cppcheck low/medium/high); `./bin/clang-format-fix -c`; on-device verification with `scripts/debugging_monitor.py`; the official simulator (sister repo, per-developer `platformio.local.ini`).
 
 **Target Platform**: ESP32-C3 (Xteink X4, X3; one combined binary with runtime detection) and ESP32-S3 (Seeed reTerminal Sticky; Xteink X4 Pro and X4 Classic and M5 Paper Mono with PSRAM, native SDMMC and USB mass storage). 800×480 (X4) / 792×528 (X3) e-ink, 16 MB flash with two 6.25 MB OTA slots.
 
@@ -28,7 +28,7 @@ CrossPoint Reader is an EPUB-first e-book reader firmware for ESP32 e-ink device
 
 **Constraints**: ~380 KB usable RAM, no PSRAM on the C3; single 48,000-byte framebuffer (`EINK_DISPLAY_SINGLE_BUFFER_MODE`); single core; 8 KB render-task stack; e-ink refresh 1–2 s for a full update; SdFat is not thread-safe (one storage mutex); `-fno-exceptions` makes bare `new` abort; all SD and network input is hostile.
 
-**Scale/Scope**: ~45 k lines in `src/`, ~37 k in `lib/Epub`, ~60 screens (activities), 205 functional requirements across 18 areas, 34 UI languages, 5 board environments, 43 host test suites.
+**Scale/Scope**: ~45 k lines in `src/`, ~37 k in `lib/Epub`, ~60 screens (activities), 205 functional requirements across 18 areas, 34 UI languages, 5 board environments, 59 host test suites.
 
 ## Constitution Check
 
@@ -38,9 +38,9 @@ CrossPoint Reader is an EPUB-first e-book reader firmware for ESP32 e-ink device
 |-----------|--------------------------|------------------|
 | I. A Focused Reading Device | PASS | Every capability in spec.md serves reading, library management, typography, local transfer or maintainability. Out-of-scope items (apps, authoring, RSS/browsers, PDF) are absent. The only "connector" surfaces are the pre-existing OPDS and KOSync ones that SCOPE.md grandfathers. |
 | II. Memory Is the Design Constraint | PASS with recorded exceptions | SD-first caching, streaming parsers, bounded arenas, nothrow helpers (`lib/Memory/Memory.h`), framebuffer lending (`lib/Memory/BuildScratch.h`) and heap gates are the design. Known deviations (bare `new`/`make_unique` on fallible paths, some >256-byte stack buffers, per-render `std::string`/`std::function` use, un-debounced SD writes) are listed in Complexity Tracking and become convergence tasks. |
-| III. Portability Behind the HAL | PASS with recorded exceptions | Device code lives in `lib/hal` and the SDK; readers, parsers, caches and typography are host-compiled by 43 suites. Some pure-logic libraries still include Arduino headers (`Print`, `WString`, `ESP.*`, `millis()`, FreeRTOS) and need per-suite stubs; listed in Complexity Tracking. |
+| III. Portability Behind the HAL | PASS with recorded exceptions | Device code lives in `lib/hal` and the SDK; readers, parsers, caches and typography are host-compiled by 59 suites. Some pure-logic libraries still include Arduino headers (`Print`, `WString`, `ESP.*`, `millis()`, FreeRTOS) and need per-suite stubs; listed in Complexity Tracking. |
 | IV. Evidence Over Claims | PASS | Performance rationale in `research.md` cites mechanisms recorded in code comments and commit history (allocation counts, IRAM/DRAM placement, SD transaction counts). Two unmeasured claims in headers are recorded as drift. |
-| V. Tests Prove Behavior (NON-NEGOTIABLE) | PARTIAL | 43 mutation-verified suites cover the parsers, caches, layout, fonts, sync mapping, dictionary, stores and web paths. Host-reachable logic without a suite (EPUB container/OPF/nav/NCX parsers, `Epub.cpp` orchestration, TXT pagination, `Bitmap.cpp`, `UrlUtils`, `FontInstaller`, `KOReaderSyncClient`, `KOReaderDocumentId`, `DictionaryRegistry`, `FirmwareFlasher`, `OtaBootSwitch`, `MappedInputManager`, and others) is the largest convergence gap. CI runs the plain build only; the ASan gate is manual. |
+| V. Tests Prove Behavior (NON-NEGOTIABLE) | PASS | 59 mutation-verified suites (~3,271 tests) cover the parsers, caches, layout, fonts, sync mapping, dictionary, stores, web paths and the modules Phase 20 added suites for — the EPUB container/OPF/nav/NCX parsers, `Epub.cpp` orchestration, TXT pagination, `Bitmap.cpp`, `UrlUtils`, `FontInstaller`, `KOReaderSyncClient`, `KOReaderDocumentId`, `DictionaryRegistry`, `FirmwareFlasher`, `OtaBootSwitch` and `MappedInputManager`. CI's `unit-tests` job runs the matrix twice, plain and with `-DCROSSPOINT_SANITIZE=ON` (`.github/workflows/ci.yml:162-174`), so the ASan gate is no longer manual. |
 | VI. Untrusted Input Is Hostile | PASS with recorded exceptions | Length/count validation before allocation exists for book.bin, section.bin, FB2 caches, ZIP, JPEG/PNG, XTC, dictzip, release JSON, xpointers, `.cpfont` headers and credential stores. Gaps: TXT `index.bin` page count, `.cpfont` glyph records vs bitmap bounds, `PageImage` null image block, unbounded JSON string fields in `opds.json`/`recent.json`/KOSync responses, unvalidated upload paths. No corpus for container/OPF/nav/NCX or TXT. |
 | VII. Upstream-First Fork Hygiene | PASS | Fork `master` carries upstream plus one-defect-one-commit fixes and fork-only test tooling; this feature's artifacts live under `specs/` and `.specify/` only. Upstream PR branches are cut from `origin/develop`. |
 
@@ -132,7 +132,7 @@ lib/
 │   JpegToBmpConverter/, PngToBmpConverter/, MiniBidi/, Utf8/, I18n/ (+translations/*.yaml), Memory/,
 │   Logging/, FsHelpers/, XmlParserUtils/, expat/, miniz/, uzlib/
 
-test/                  43 gtest suites + corpus/ + support/ + fixtures (see research.md §Test program)
+test/                  59 gtest suites + corpus/ + support/ + fixtures (see research.md §Test program)
 scripts/               build_html.py, gen_i18n.py, git_branch.py, patch_*.py, generate_test_*.py, debugging_monitor.py
 bin/                   run-tests, install-hooks, clang-format-fix
 freeink-sdk/           hardware SDK submodule

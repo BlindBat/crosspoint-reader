@@ -212,8 +212,8 @@ if (Storage.openFileForRead("MODULE", "/path/to/file.bin", file)) {
 
 - SdFat's `SdSpiCard` tracks SPI bus state with an unsynchronized `m_spiActive` bool. Two tasks calling SdFat concurrently can confuse that state machine and end with one task calling `SPIClass::endTransaction()` against a paramLock the *other* task is holding. That trips FreeRTOS's `xTaskPriorityDisinherit` assert (`tasks.c:5156, pxTCB == pxCurrentTCBs[0]`) and panics the system. See SdFat issue #518.
 - `HalStorage` serializes everything via `storageMutex`, a **recursive** mutex so the same task can re-enter `StorageLock` without self-deadlock. Downstream code uses `HalFile` (declared in `<HalStorage.h>`); every method that touches the card — `read`, `write`, `seek*`, `available`, `position`, `rename`, `flush`, `getName`, `close`, `openNextFile`, `rewindDirectory` — takes the mutex. `HalFile`'s destructor also takes the mutex before letting the underlying SdFat `FsFile` close.
-- **Exception — lock-free accessors**: `size()`, `fileSize()`, `fileSize64()`, `isDirectory()`, `isOpen()` and `operator bool()` forward to SdFat *without* taking the mutex. They only read state already cached in memory, so they are safe to call from any task and cheap in hot loops ([lib/hal/HalStorage.cpp:247-249, 260-262, 275-277, 294-295](lib/hal/HalStorage.cpp)). Do not add locking around them, and do not assume any other accessor is free.
-- A default-constructed or moved-from `HalFile` has no `Impl`; every accessor built on `HAL_FILE_GUARD` then logs `LOG_ERR` and returns a fail value rather than dereferencing, so a bad handle degrades instead of aborting on device ([lib/hal/HalStorage.cpp:234-241](lib/hal/HalStorage.cpp)). The hand-written `flush()`, `rewindDirectory()` and `isOpen()` return silently instead.
+- **Exception — lock-free accessors**: `size()`, `fileSize()`, `fileSize64()`, `isDirectory()`, `isOpen()` and `operator bool()` forward to SdFat *without* taking the mutex. They only read state already cached in memory, so they are safe to call from any task and cheap in hot loops ([lib/hal/HalStorage.cpp:271-273, 286-288, 305-306](lib/hal/HalStorage.cpp)). Do not add locking around them, and do not assume any other accessor is free.
+- A default-constructed or moved-from `HalFile` has no `Impl`; every accessor built on `HAL_FILE_GUARD` then logs `LOG_ERR` and returns a fail value rather than dereferencing, so a bad handle degrades instead of aborting on device ([lib/hal/HalStorage.cpp:247-251](lib/hal/HalStorage.cpp)). The hand-written `flush()`, `rewindDirectory()` and `isOpen()` return silently instead.
 - **Never** call into `SdFat` / `SdSpiCard` / `FsBaseFile` / `SDCardManager` / raw `FsFile` directly — that bypasses the mutex.
 
 ---
@@ -332,8 +332,8 @@ When a template is necessary, limit instantiations: use explicit template instan
 
 1. **LOG_ERR + return false** (90%): `LOG_ERR("MOD", "Failed: %s", reason); return false;`
 2. **LOG_ERR + fallback**: `LOG_ERR("MOD", "Unavailable"); useDefault();`
-3. **assert(false)**: Only for fatal "impossible" states — the one in-tree use is a missing framebuffer in `GfxRenderer::begin()` ([lib/GfxRenderer/GfxRenderer.cpp:120-125](lib/GfxRenderer/GfxRenderer.cpp))
-4. **ESP.restart()**: Reserved for deliberate reboots, not error handling. In-tree uses are firmware update completion (`OtaUpdateActivity`, `SdFirmwareUpdateActivity`), the heap-defrag silent restarts and the USB-storage handoff in `src/main.cpp`, and one backstop after a failed framebuffer restore ([lib/GfxRenderer/GfxRenderer.cpp:170](lib/GfxRenderer/GfxRenderer.cpp))
+3. **assert(false)**: Only for fatal "impossible" states. There are two in-tree uses: a missing framebuffer in `GfxRenderer::begin()` ([lib/GfxRenderer/GfxRenderer.cpp:133](lib/GfxRenderer/GfxRenderer.cpp)) and the `ActivityManager` destructor, which must never run ([src/activities/ActivityManager.h:75](src/activities/ActivityManager.h))
+4. **ESP.restart()**: Reserved for deliberate reboots, not error handling. In-tree uses are firmware update completion (`OtaUpdateActivity`, `SdFirmwareUpdateActivity`), the heap-defrag silent restarts and the USB-storage handoff in `src/main.cpp`, and one backstop after a failed framebuffer restore ([lib/GfxRenderer/GfxRenderer.cpp:172-180](lib/GfxRenderer/GfxRenderer.cpp))
 
 **Rules**: NO exceptions, NO abort(), ALWAYS log before error return
 
@@ -541,7 +541,7 @@ void render(RenderLock&&) { /* draw; runs on the shared render task */ }
 void onExit()         { Activity::onExit(); /* free buffers, close member HalFiles */ }
 ```
 
-`mappedInputManager.update()` is called once per iteration by the Arduino `loop()` in [src/main.cpp:585](src/main.cpp), so activities read button state without polling it themselves.
+`mappedInputManager.update()` is called once per iteration by the Arduino `loop()` in [src/main.cpp:593](src/main.cpp), so activities read button state without polling it themselves.
 
 **Critical**: Free resources in reverse order in `onExit()`.
 

@@ -98,16 +98,21 @@ Hidden dotfiles are omitted from this listing unless the device setting
 `showHiddenFiles` is enabled. `System Volume Information` and `XTCache` are
 always hidden/protected.
 
-The setting affects **only** this listing. `/download`, `/rename`, `/move` and
-`/delete` refuse a dot-prefixed or protected name regardless of
-`showHiddenFiles`; those endpoints test the item's own name, so a normally-named
-file inside a hidden folder is still reachable by its full path. WebDAV is
-stricter and refuses a protected segment anywhere in the path (`PROPFIND` and
-`LOCK`/`UNLOCK` excepted — see below). `/upload` and `/mkdir` do not screen the
-name they are given.
+The setting affects **only** this listing; it never relaxes the checks below.
+
+`/api/files`, `/download`, `/delete`, `/upload` and `/mkdir` normalise the path
+they are given and then refuse it if **any** component is dot-prefixed or
+protected, not just the last one — so a normally-named file inside a hidden
+folder is not reachable by its full path either. `/upload` and `/mkdir`
+additionally screen the name they are given, rejecting an empty or
+whitespace-only name and a name containing `/` or `\`.
+
+`/rename` and `/move` test the item's own name and the new name, not the whole
+path. WebDAV refuses a protected segment anywhere in the path (`PROPFIND` and
+`LOCK`/`UNLOCK` excepted — see below).
 
 The response is streamed as chunked JSON. An entry whose serialized JSON does
-not fit the handler's 512-byte buffer is skipped rather than truncated.
+not fit the handler's 512-byte entry buffer is skipped rather than truncated.
 
 ### `GET /download`
 
@@ -123,10 +128,9 @@ Query parameters:
 |-----------|----------|-------------|
 | `path` | Yes | File path to download |
 
-A file name starting with a dot, `System Volume Information`, or `XTCache` is
-refused with `403`, whatever `showHiddenFiles` is set to; the check looks at the
-final path segment only. A missing file returns `404`, and a directory path
-returns `400`. EPUB files are served as `application/epub+zip`; other files use
+A path with a dot-prefixed, `System Volume Information` or `XTCache` component
+anywhere in it is refused with `403`, whatever `showHiddenFiles` is set to. A
+missing file returns `404`, and a directory path returns `400`. EPUB files are served as `application/epub+zip`; other files use
 `application/octet-stream`.
 
 ### `POST /upload`
@@ -241,13 +245,14 @@ Form parameters:
 | `path` | Yes, unless `paths` is provided | Single path to delete |
 | `paths` | Yes, unless `path` is provided | JSON array of paths to delete |
 
-Supply either `path` or `paths`, not both. Protected items cannot be deleted.
-Non-empty folders are rejected. The book cache for each deleted file is cleared.
+Supply either `path` or `paths`, not both. Each path is normalised and then
+refused if any component of it is protected, so nothing inside a hidden folder
+can be deleted either. Non-empty folders are rejected. The book cache for each
+deleted file is cleared.
 
 Deletion is per item: the response is `200 All items deleted successfully`, or
 `500` listing each failure with its reason — `(cannot delete root)`,
-`(hidden/system file)`, `(protected file)`, `(not found)`, `(folder not empty)`
-or `(deletion failed)`.
+`(protected file)`, `(not found)`, `(folder not empty)` or `(deletion failed)`.
 
 ## Settings API
 
