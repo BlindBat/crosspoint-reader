@@ -696,7 +696,7 @@ void SleepActivity::renderCoverSleepScreen() const {
 
   // A book with no usable cover art still gets a cover-like screen drawn from its metadata.
   // A title of nothing but whitespace or control bytes counts as no title at all.
-  if (std::any_of(bookTitle.begin(), bookTitle.end(), [](unsigned char c) { return c > ' '; })) {
+  if (std::any_of(bookTitle.begin(), bookTitle.end(), [](unsigned char c) { return c > ' ' && c != 0x7F; })) {
     LOG_DBG("SLP", "No cover art, rendering stub cover");
     return renderCoverStubSleepScreen(bookTitle, bookAuthor);
   }
