@@ -2131,6 +2131,26 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
   return widthPx;
 }
 
+bool GfxRenderer::textHasInk(const int fontId, const char* text, const EpdFontFamily::Style style) const {
+  if (!text || *text == '\0') return false;
+
+  const int resolvedFontId = resolveTextFontId(fontId, text, style);
+  const auto fontIt = fontMap.find(resolvedFontId);
+  if (fontIt == fontMap.end()) {
+    LOG_ERR("GFX", "Font %d not found", resolvedFontId);
+    return false;
+  }
+
+  const auto& font = fontIt->second;
+  while (const uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text))) {
+    // A glyph paints only when it exists and has a bitmap. Zero-size glyphs (space, U+00A0,
+    // the U+2000 blanks) and codepoints the font never had are equally inkless.
+    const EpdGlyph* glyph = font.getGlyph(cp, style);
+    if (glyph && glyph->width > 0 && glyph->height > 0) return true;
+  }
+  return false;
+}
+
 int GfxRenderer::getFontAscenderSize(const int fontId) const {
   const auto fontIt = fontMap.find(fontId);
   if (fontIt == fontMap.end()) {

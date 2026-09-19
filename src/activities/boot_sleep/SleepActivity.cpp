@@ -695,8 +695,11 @@ void SleepActivity::renderCoverSleepScreen() const {
   }
 
   // A book with no usable cover art still gets a cover-like screen drawn from its metadata.
-  // A title of nothing but whitespace or control bytes counts as no title at all.
-  if (std::any_of(bookTitle.begin(), bookTitle.end(), [](unsigned char c) { return c > ' ' && c != 0x7F; })) {
+  // A title that paints nothing is no title at all, so the card never reduces to an empty frame.
+  // Asked of the font that will draw it, which covers whitespace, control characters and any
+  // codepoint the font lacks — including U+FFFD, so a title of nothing but malformed bytes
+  // falls back rather than framing a blank.
+  if (renderer.textHasInk(UI_12_FONT_ID, bookTitle.c_str(), EpdFontFamily::BOLD)) {
     LOG_DBG("SLP", "No cover art, rendering stub cover");
     return renderCoverStubSleepScreen(bookTitle, bookAuthor);
   }

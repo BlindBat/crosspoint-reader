@@ -297,6 +297,11 @@ class GfxRenderer {
   /// Returns the kerning adjustment between two adjacent codepoints.
   int getKerning(int fontId, uint32_t leftCp, uint32_t rightCp, EpdFontFamily::Style style) const;
   int getTextAdvanceX(int fontId, const char* text, EpdFontFamily::Style style) const;
+  /// True when \p text would paint at least one pixel in \p fontId. False for text that is
+  /// empty, whitespace, control characters, or codepoints the font has no glyph for — all of
+  /// which draw nothing. Asks the font rather than denylisting codepoints, so it stays correct
+  /// as fonts change. Honours the CJK fallback, so CJK text counts as ink when one is registered.
+  bool textHasInk(int fontId, const char* text, EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
   int getFontAscenderSize(int fontId) const;
   int getLineHeight(int fontId) const;
   int getLineHeight(int fontId, float compression) const;

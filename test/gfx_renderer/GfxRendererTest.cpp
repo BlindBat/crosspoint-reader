@@ -540,6 +540,37 @@ TEST_F(GfxRendererTest, SpacesAdvanceTheCursorWithoutDrawingInk) {
   EXPECT_EQ(inkColumns(), (std::set<int>{0, 1, 5, 6}));
 }
 
+TEST_F(GfxRendererTest, TextHasInkSeparatesPaintingTextFromBlanks) {
+  EXPECT_TRUE(renderer.textHasInk(kTiny, "A"));
+  EXPECT_TRUE(renderer.textHasInk(kTiny, "  A  ")) << "one painting glyph is enough";
+  EXPECT_FALSE(renderer.textHasInk(kTiny, nullptr));
+  EXPECT_FALSE(renderer.textHasInk(kTiny, ""));
+  // ' ' has a glyph, but it is 0x0 — present-but-inkless must not count as text.
+  EXPECT_FALSE(renderer.textHasInk(kTiny, " "));
+  EXPECT_FALSE(renderer.textHasInk(kTiny, "   "));
+  EXPECT_FALSE(renderer.textHasInk(99, "A")) << "unknown font paints nothing";
+}
+
+TEST_F(GfxRendererTest, TextHasInkFollowsWhateverTheFontWouldActuallyDraw) {
+  // kTiny carries U+FFFD, so getGlyph substitutes it for anything missing and the
+  // text really does paint. kCjk has no U+FFFD, so the same input paints nothing.
+  EXPECT_TRUE(renderer.textHasInk(kTiny, "Z"));
+  EXPECT_TRUE(renderer.textHasInk(kTiny, "\xc2\x85")) << "U+0085 -> U+FFFD in a font that has one";
+  EXPECT_FALSE(renderer.textHasInk(kCjk, "Z"));
+  EXPECT_FALSE(renderer.textHasInk(kCjk, "\xc2\x85")) << "no glyph and no replacement -> no ink";
+  EXPECT_TRUE(renderer.textHasInk(kCjk, "\xe4\xb8\xad"));
+}
+
+TEST_F(GfxRendererTest, TextHasInkHonoursTheCjkFallbackFont) {
+  // kGray has neither U+4E2D nor U+FFFD, so on its own the text paints nothing.
+  // Only consulting the registered fallback can turn this true.
+  EXPECT_FALSE(renderer.textHasInk(kGray, "\xe4\xb8\xad"));
+  renderer.setFallbackFont(kGray, kCjk);
+  EXPECT_TRUE(renderer.textHasInk(kGray, "\xe4\xb8\xad"));
+  renderer.clearFallbackFonts();
+  EXPECT_FALSE(renderer.textHasInk(kGray, "\xe4\xb8\xad"));
+}
+
 TEST_F(GfxRendererTest, MissingGlyphsFallBackToTheReplacementGlyph) {
   renderer.setOrientation(GfxRenderer::LandscapeCounterClockwise);
   // 'Z' is outside the font's interval table; U+FFFD is a 2x2 block, advance 2.0.
