@@ -607,6 +607,9 @@ void SleepActivity::renderCoverSleepScreen() const {
   }
 
   std::string coverBmpPath;
+  // Copied out of the book object so the stub cover can still use them once it goes out of scope.
+  std::string bookTitle;
+  std::string bookAuthor;
   bool cropped = SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP;
 
   // Check if the current book is XTC, TXT, or EPUB
@@ -618,12 +621,14 @@ void SleepActivity::renderCoverSleepScreen() const {
       return (this->*renderNoCoverSleepScreen)();
     }
 
-    if (!lastXtc.generateCoverBmp()) {
-      LOG_ERR("SLP", "Failed to generate XTC cover bmp");
-      return (this->*renderNoCoverSleepScreen)();
-    }
+    bookTitle = lastXtc.getTitle();
+    bookAuthor = lastXtc.getAuthor();
 
-    coverBmpPath = lastXtc.getCoverBmpPath();
+    if (lastXtc.generateCoverBmp()) {
+      coverBmpPath = lastXtc.getCoverBmpPath();
+    } else {
+      LOG_ERR("SLP", "Failed to generate XTC cover bmp");
+    }
   } else if (FsHelpers::hasTxtExtension(APP_STATE.openEpubPath) ||
              FsHelpers::hasMarkdownExtension(APP_STATE.openEpubPath)) {
     // TXT and Markdown - looks for a cover image in the same folder
@@ -633,12 +638,13 @@ void SleepActivity::renderCoverSleepScreen() const {
       return (this->*renderNoCoverSleepScreen)();
     }
 
-    if (!lastTxt.generateCoverBmp()) {
-      LOG_ERR("SLP", "No cover image found for TXT file");
-      return (this->*renderNoCoverSleepScreen)();
-    }
+    bookTitle = lastTxt.getTitle();
 
-    coverBmpPath = lastTxt.getCoverBmpPath();
+    if (lastTxt.generateCoverBmp()) {
+      coverBmpPath = lastTxt.getCoverBmpPath();
+    } else {
+      LOG_ERR("SLP", "No cover image found for TXT file");
+    }
   } else if (FsHelpers::hasFb2Extension(APP_STATE.openEpubPath)) {
     // Handle FB2 file
     Fb2 lastFb2(APP_STATE.openEpubPath, "/.crosspoint");
@@ -647,12 +653,14 @@ void SleepActivity::renderCoverSleepScreen() const {
       return (this->*renderNoCoverSleepScreen)();
     }
 
-    if (!lastFb2.generateCoverBmp()) {
-      LOG_ERR("SLP", "Failed to generate FB2 cover bmp");
-      return (this->*renderNoCoverSleepScreen)();
-    }
+    bookTitle = lastFb2.getTitle();
+    bookAuthor = lastFb2.getAuthor();
 
-    coverBmpPath = lastFb2.getCoverBmpPath();
+    if (lastFb2.generateCoverBmp()) {
+      coverBmpPath = lastFb2.getCoverBmpPath();
+    } else {
+      LOG_ERR("SLP", "Failed to generate FB2 cover bmp");
+    }
   } else if (FsHelpers::hasEpubExtension(APP_STATE.openEpubPath)) {
     // Handle EPUB file
     Epub lastEpub(APP_STATE.openEpubPath, "/.crosspoint");
@@ -662,27 +670,75 @@ void SleepActivity::renderCoverSleepScreen() const {
       return (this->*renderNoCoverSleepScreen)();
     }
 
-    if (!lastEpub.generateCoverBmp(cropped)) {
-      LOG_ERR("SLP", "Failed to generate cover bmp");
-      return (this->*renderNoCoverSleepScreen)();
-    }
+    bookTitle = lastEpub.getTitle();
+    bookAuthor = lastEpub.getAuthor();
 
-    coverBmpPath = lastEpub.getCoverBmpPath(cropped);
+    if (lastEpub.generateCoverBmp(cropped)) {
+      coverBmpPath = lastEpub.getCoverBmpPath(cropped);
+    } else {
+      LOG_ERR("SLP", "Failed to generate cover bmp");
+    }
   } else {
     return (this->*renderNoCoverSleepScreen)();
   }
 
-  HalFile file;
-  if (Storage.openFileForRead("SLP", coverBmpPath, file)) {
-    Bitmap bitmap(file);
-    if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-      LOG_DBG("SLP", "Rendering sleep cover: %s", coverBmpPath.c_str());
-      renderBitmapSleepScreen(bitmap);
-      return;
+  if (!coverBmpPath.empty()) {
+    HalFile file;
+    if (Storage.openFileForRead("SLP", coverBmpPath, file)) {
+      Bitmap bitmap(file);
+      if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+        LOG_DBG("SLP", "Rendering sleep cover: %s", coverBmpPath.c_str());
+        renderBitmapSleepScreen(bitmap);
+        return;
+      }
     }
   }
 
+  // A book with no usable cover art still gets a cover-like screen drawn from its metadata.
+  // A title of nothing but whitespace or control bytes counts as no title at all.
+  if (std::any_of(bookTitle.begin(), bookTitle.end(), [](unsigned char c) { return c > ' '; })) {
+    LOG_DBG("SLP", "No cover art, rendering stub cover");
+    return renderCoverStubSleepScreen(bookTitle, bookAuthor);
+  }
+
   return (this->*renderNoCoverSleepScreen)();
+}
+
+void SleepActivity::renderCoverStubSleepScreen(const std::string& title, const std::string& author) const {
+  const auto pageWidth = renderer.getScreenWidth();
+  const auto pageHeight = renderer.getScreenHeight();
+
+  renderer.clearScreen();
+
+  // Double-line border frame, standing in for the missing cover art
+  constexpr int outerMargin = 30;
+  constexpr int innerMargin = 36;
+  renderer.drawRect(outerMargin, outerMargin, pageWidth - outerMargin * 2, pageHeight - outerMargin * 2);
+  renderer.drawRect(innerMargin, innerMargin, pageWidth - innerMargin * 2, pageHeight - innerMargin * 2);
+
+  const int textMargin = innerMargin + 20;
+  const int maxTextWidth = pageWidth - textMargin * 2;
+
+  // Title grows up from the divider, author down from it, so the pair stays balanced at any line count.
+  const int divider = pageHeight / 3 + renderer.getLineHeight(UI_12_FONT_ID);
+  const int titleTop = innerMargin + 8;
+  const int authorTop = divider + 12;
+
+  UITheme::drawCenteredWrappedText(renderer, Rect{textMargin, titleTop, maxTextWidth, divider - titleTop},
+                                   UI_12_FONT_ID, title.c_str(), 3, true, EpdFontFamily::BOLD,
+                                   UITheme::TextVerticalAlignment::BOTTOM);
+
+  if (!author.empty()) {
+    UITheme::drawCenteredWrappedText(
+        renderer, Rect{textMargin, authorTop, maxTextWidth, pageHeight - innerMargin - 8 - authorTop}, SMALL_FONT_ID,
+        author.c_str(), 2, true, EpdFontFamily::REGULAR, UITheme::TextVerticalAlignment::TOP);
+  }
+
+  if (SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
+    renderer.invertScreen();
+  }
+
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
 }
 
 void SleepActivity::renderLastScreenSleepScreen() const {

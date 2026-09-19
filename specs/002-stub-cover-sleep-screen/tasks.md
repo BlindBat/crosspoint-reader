@@ -60,7 +60,7 @@ framed card with the title and author. See [quickstart.md](quickstart.md) steps 
 
 - [X] T001 [US1] In `renderCoverSleepScreen()` in `src/activities/boot_sleep/SleepActivity.cpp`, copy `getTitle()` and `getAuthor()` into local `bookTitle`/`bookAuthor` strings inside each of the four format branches (XTC, TXT/Markdown, FB2, EPUB) before the book object leaves scope, and turn each `generateCoverBmp()` failure from an early `return` into a fall-through that leaves `coverBmpPath` empty (FR-002, FR-003, FR-004). A book-*load* failure still returns to the existing fall-back — no metadata is available (FR-005).
 - [X] T002 [US1] Add `renderCoverStubSleepScreen(const std::string& title, const std::string& author)` to `src/activities/boot_sleep/SleepActivity.h` and implement it in `src/activities/boot_sleep/SleepActivity.cpp`: two nested `drawRect` frames at 30 px and 36 px inset, title at `pageHeight / 3` in `UI_12_FONT_ID` bold, author below it in `SMALL_FONT_ID`, screen inverted when `sleepScreenCoverFilter == INVERTED_BLACK_AND_WHITE`, one `displayBuffer(HalDisplay::HALF_REFRESH)` (FR-007, FR-008, FR-013, FR-014). Call it from the end of `renderCoverSleepScreen()` when the cover BMP attempt failed and `bookTitle` is non-empty (FR-001, FR-005, FR-006).
-- [ ] T003 [US1] In `renderCoverSleepScreen()` in `src/activities/boot_sleep/SleepActivity.cpp`, treat a title that is empty **or contains no non-whitespace character** as absent, so a whitespace-only title falls back instead of drawing an empty frame (FR-005, spec Edge Cases). One condition at the call site — do not add a string-trimming helper.
+- [X] T003 [US1] In `renderCoverSleepScreen()` in `src/activities/boot_sleep/SleepActivity.cpp`, treat a title that is empty **or contains no non-whitespace character** as absent, so a whitespace-only title falls back instead of drawing an empty frame (FR-005, spec Edge Cases). One condition at the call site — do not add a string-trimming helper.
 
 **Checkpoint**: US1 delivers the MVP on its own. Titles are single-line and ellipsised until US2.
 
@@ -73,7 +73,7 @@ framed card with the title and author. See [quickstart.md](quickstart.md) steps 
 **Independent test**: a book whose title is far wider than the screen shows the title over multiple
 lines, distinguishable from a book sharing its opening words. [quickstart.md](quickstart.md) step 4.
 
-- [ ] T004 [US2] In `renderCoverStubSleepScreen()` in `src/activities/boot_sleep/SleepActivity.cpp`, replace both `truncatedText()` + `drawCenteredText()` pairs with two `UITheme::drawCenteredWrappedText()` calls sharing a fixed divider, per [research.md](research.md) §2 (FR-009 to FR-012):
+- [X] T004 [US2] In `renderCoverStubSleepScreen()` in `src/activities/boot_sleep/SleepActivity.cpp`, replace both `truncatedText()` + `drawCenteredText()` pairs with two `UITheme::drawCenteredWrappedText()` calls sharing a fixed divider, per [research.md](research.md) §2 (FR-009 to FR-012):
   - `const int textMargin = innerMargin + 20;` and `const int maxTextWidth = pageWidth - textMargin * 2;` (unchanged from T002).
   - `const int divider = pageHeight / 3 + renderer.getLineHeight(UI_12_FONT_ID);`
   - Title: `Rect{textMargin, innerMargin + 8, maxTextWidth, divider - (innerMargin + 8)}`, `maxLines = 3`, `EpdFontFamily::BOLD`, `TextVerticalAlignment::BOTTOM`.
@@ -97,16 +97,16 @@ and FR-015 (the sleep path resets to portrait before the mode switch, at
 [src/activities/boot_sleep/SleepActivity.cpp:370-377](../../src/activities/boot_sleep/SleepActivity.cpp)).
 This story is verification only.
 
-- [ ] T005 [US3] Verify in the simulator: set `sleepScreenCoverFilter` to `2` (Inverted) in `fs_branches/<branch>/.crosspoint/settings.json`, capture a sleep with the coverless fixture per [quickstart.md](quickstart.md) step 3, and confirm the card is light-on-dark and the log shows one screen update (FR-013, FR-014, SC-004). Then sleep from a reader left in `LANDSCAPE_CW` and confirm the card is still upright (FR-015).
+- [X] T005 [US3] Verify in the simulator: set `sleepScreenCoverFilter` to `2` (Inverted) in `fs_branches/<branch>/.crosspoint/settings.json`, capture a sleep with the coverless fixture per [quickstart.md](quickstart.md) step 3, and confirm the card is light-on-dark and the log shows one screen update (FR-013, FR-014, SC-004). Then sleep from a reader left in `LANDSCAPE_CW` and confirm the card is still upright (FR-015).
 
 ---
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T006 Run `./bin/clang-format-fix -g` over the two changed files, then the merge gates in order: `bin/run-tests`, `bin/run-tests --asan`, `pio run -e default`, `pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high` (Constitution "Development Workflow & Quality Gates"). Note macOS ASan rejects `ASAN_OPTIONS=detect_leaks=1` — omit it locally.
-- [ ] T007 Run the full [quickstart.md](quickstart.md) validation, including the fixture variations in step 4 (one-word title, ~300-character title, spaceless title, no `dc:creator`, Cyrillic/Arabic title, a title carrying a lone UTF-8 continuation byte and embedded control characters, and a 10 KB title — the last two cover FR-018/SC-006) and the must-not-change checks in step 5 (FR-001 to FR-015, SC-001 to SC-007). Restore the simulator card per step 6.
-- [ ] T008 Commit the two source files as one logical change with a semantic message (`feat: …`), via `.specify/scripts/bash/speckit-commit.sh implement -m "feat: <subject>" src/activities/boot_sleep/SleepActivity.cpp src/activities/boot_sleep/SleepActivity.h`. No AI attribution (Constitution Principle VII).
-- [ ] T009 Confirm the change builds for one S3 board as well — `pio run -e sticky` — since a change is only proven on the family it was built for (AGENTS.md). Expected to be a formality here: the path has no board conditionals.
+- [X] T006 Run `./bin/clang-format-fix -g` over the two changed files, then the merge gates in order: `bin/run-tests`, `bin/run-tests --asan`, `pio run -e default`, `pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high` (Constitution "Development Workflow & Quality Gates"). Note macOS ASan rejects `ASAN_OPTIONS=detect_leaks=1` — omit it locally.
+- [X] T007 Run the full [quickstart.md](quickstart.md) validation, including the fixture variations in step 4 (one-word title, ~300-character title, spaceless title, no `dc:creator`, Cyrillic/Arabic title, a title carrying a lone UTF-8 continuation byte and embedded control characters, and a 10 KB title — the last two cover FR-018/SC-006) and the must-not-change checks in step 5 (FR-001 to FR-015, SC-001 to SC-007). Restore the simulator card per step 6.
+- [X] T008 Commit the two source files as one logical change with a semantic message (`feat: …`), via `.specify/scripts/bash/speckit-commit.sh implement -m "feat: <subject>" src/activities/boot_sleep/SleepActivity.cpp src/activities/boot_sleep/SleepActivity.h`. No AI attribution (Constitution Principle VII).
+- [X] T009 Confirm the change builds for one S3 board as well — `pio run -e sticky` — since a change is only proven on the family it was built for (AGENTS.md). Expected to be a formality here: the path has no board conditionals.
 
 ---
 

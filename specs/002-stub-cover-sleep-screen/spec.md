@@ -122,8 +122,8 @@ the card is light-on-dark and that the screen updates exactly once.
   than a wallpaper.
 - **No author recorded** (common for plain-text files): the card shows the title alone, with the
   block re-balanced so it does not look bottom-heavy.
-- **Unbreakable text**: a title that is one word longer than a line is broken within the word
-  rather than allowed to run past the frame.
+- **Unbreakable text**: a title that is one word longer than a line is ellipsised rather than
+  allowed to run past the frame.
 - **Non-Latin scripts**: titles in scripts the built-in interface font does not cover are drawn
   with whatever substitution the rest of the interface already uses; right-to-left titles keep
   their reading direction.
