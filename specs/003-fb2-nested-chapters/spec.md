@@ -126,15 +126,18 @@ at the first page of the next story with progress increasing monotonically.
   annotation that sits directly under a part section): must remain readable and appear
   in document order before the first story, not be dropped or duplicated.
 - **Text after the last nested story inside the same parent** (rare but legal): must
-  remain readable in document order and must not be silently dropped.
+  remain readable and must never be silently dropped. It reads with its parent chapter,
+  ahead of that parent's children — the one accepted departure from strict document
+  position (see Assumptions).
 - **No sections at all** (a body of bare paragraphs): behaves as today — the whole body
   is one chapter.
 - **Deeply nested sections** (three or more levels, e.g. book → part → chapter →
   scene): every level is reachable; the depth indication in the list degrades gracefully
   rather than pushing titles off the screen.
 - **Many sections** — a file with hundreds of sections must not exhaust memory; the
-  chapter count is bounded and a file claiming more sections than it can hold is
-  rejected as corrupt rather than trusted.
+  chapter count is bounded by a documented limit (beyond it, sections read as part of
+  their containing chapter per FR-001), and a cache claiming more chapters than it can
+  hold is rejected as corrupt rather than trusted.
 - **Auxiliary bodies** (`name="notes"`, `name="comments"`): still excluded from chapters
   and from progress, as today — the reference book's 14 footnote sections must not
   appear in the chapter list.
@@ -149,20 +152,24 @@ at the first page of the next story with progress increasing monotonically.
 
 - **FR-001**: The system MUST treat every `<section>` in an FB2 reading body as its own
   chapter, at any nesting depth, and MUST list each one in the chapter list in document
-  order.
+  order, up to a documented chapter limit. Beyond that limit further sections MUST read as
+  part of the chapter containing them rather than becoming chapters of their own, so no
+  text is lost.
 - **FR-002**: The system MUST record each chapter's nesting depth and MUST convey that
   depth in the chapter list, consistently with how the EPUB chapter list conveys TOC
   depth.
 - **FR-003**: A chapter's text MUST be exactly its own direct content — the content of a
   parent section MUST NOT be repeated inside its children's chapters, and no text of the
-  reading body may be lost.
-- **FR-004**: The full text of the reading body MUST be presented in document order
-  across the chapter sequence, so continuous paging from the first to the last chapter
-  reads the book in the author's order.
+  reading bodies may be lost.
+- **FR-004**: The full text of the reading bodies MUST be presented across the chapter
+  sequence in chapter order, and within each chapter in that chapter's own document order,
+  so continuous paging from the first to the last chapter reads every part of the book
+  exactly once. One deliberate exception: a parent section's own text that *follows* one of
+  its child sections reads with the parent, ahead of those children (see Assumptions).
 - **FR-005**: Selecting a chapter MUST open the reader at that chapter's first page.
 - **FR-006**: Page counts and the in-chapter page indicator MUST refer to the selected
   chapter alone.
-- **FR-007**: Reading progress MUST be computed over the whole reading body and MUST be
+- **FR-007**: Reading progress MUST be computed over all reading bodies and MUST be
   monotonically non-decreasing as the reader advances, reaching 100% on the last page of
   the last chapter.
 - **FR-008**: Paging forward from a chapter's last page MUST open the next chapter in
@@ -214,10 +221,12 @@ at the first page of the next story with progress increasing monotonically.
   interactions from the reader screen (open chapter list, select story) instead of
   paging through the containing 853 KB chapter.
 - **SC-003**: No chapter in the reference book exceeds the size of the largest single
-  story; the largest chapter shrinks from 853 KB to under 100 KB of source text, so
-  opening a story shows its first page without a multi-second full-part layout.
+  story: the largest chapter shrinks from 853 KB to under 100 KB of source text, which is
+  the layout work needed before a story's first page can be shown.
 - **SC-004**: Reading the reference book from first page to last page reaches every
-  story exactly once, in the book's printed order, with no repeated and no missing text.
+  story exactly once, in the book's printed order (no section in it carries parent text
+  after a child, so FR-004's exception does not arise), with no repeated and no missing
+  text.
 - **SC-005**: Displayed progress advances across the reference book's chapter boundaries
   in steps of at most 4% of the book (its largest chapter is 67 KB of a 1.83 MB reading
   body), instead of today's four chapters of roughly 0%, 47%, 83% and 100%.
@@ -240,6 +249,17 @@ at the first page of the next story with progress increasing monotonically.
   TOC entries by level (`src/activities/reader/EpubReaderChapterSelectionActivity.cpp:65`);
   FB2 follows that existing convention rather than introducing new list chrome, so no new
   UI component is assumed.
+- **Parent text after a child section reads with the parent.** Keeping "a chapter is a
+  section's own direct content" as one rule is what guarantees no text is lost and keeps
+  the progress arithmetic exact; the price is that this rare shape reads slightly out of
+  printed position. Splitting the parent into pre-child and post-child chapters would add
+  an untitled row to the list for every occurrence.
+- **A documented chapter limit of 1024.** Chapter titles and extents live in RAM, so the
+  count must be bounded on a 380 KB device. Past the limit, sections stop being chapter
+  boundaries and read as part of their container — bounded memory without losing text. The
+  limit is a constant, raisable once chapter metadata moves to the SD card.
+- **Terminology**: this spec says "chapter"; the firmware and its cache paths say
+  "section" (the FB2 markup name). They are the same thing.
 - **All depths are listed; no depth cap.** FB2 files in practice nest two or three levels
   deep. Collapsing or hiding deep levels would re-create the reported defect at a
   different depth.
