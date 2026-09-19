@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+
+# bin/run-simulator -- build and launch the CrossPoint simulator from the
+# current working tree.
+#
+# The point of this script is that what you see on screen is what is checked out
+# right now: it compiles the tree as-is, stamps the firmware's version string
+# with the branch and SHA it built from, and gives each branch its own SD card so
+# a layout cache built on one branch can never be mistaken for another's.
+
+set -euo pipefail
+
+# ---------------------------------------------------------------- repo + args
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  echo "error: not inside a git repository" >&2
+  exit 1
+}
+cd "$REPO_ROOT"
+
+BOARD="simulator"
+PORT="${CROSSPOINT_SIM_HTTP_PORT:-8080}"
+DO_BUILD=1
+DO_LAUNCH=1
+FOREGROUND=0
+CLEAN_CACHE=0
+KEEP_RUNNING=0
+
+usage() {
+  cat <<'EOF'
+Usage: run-simulator.sh [board] [options]
+
+Board (default: simulator / X4):
+  x4 | x3 | pro | classic | sticky | papermono
+  ...or any full env name from platformio.local.ini, e.g. simulator_x4_uc8279
+
+Options:
+  --port N         HTTP port for the firmware's web server (default 8080;
+                   the WebSocket endpoint uses N+1)
+  --clean-cache    Delete this branch's book caches before launching. Use after
+                   a change to layout, pagination or render settings.
+  --reset-sd       Delete this branch's whole SD folder (settings and progress
+                   too), then recreate it empty.
+  --no-build       Launch the existing binary without rebuilding.
+  --build-only     Build and stop; don't launch.
+  --fg             Run in the foreground instead of detaching.
+  --keep-running   Don't stop an already-running instance of this board first.
+  -h, --help       Show this help.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --port)         PORT="${2:?--port needs a value}"; shift 2 ;;
+    --clean-cache)  CLEAN_CACHE=1; shift ;;
+    --reset-sd)     CLEAN_CACHE=2; shift ;;
+    --no-build)     DO_BUILD=0; shift ;;
+    --build-only)   DO_LAUNCH=0; shift ;;
+    --fg)           FOREGROUND=1; shift ;;
+    --keep-running) KEEP_RUNNING=1; shift ;;
+    -h|--help)      usage; exit 0 ;;
+    -*)             echo "error: unknown option $1" >&2; usage >&2; exit 1 ;;
+    *)              BOARD="$1"; shift ;;
+  esac
+done
+
+# Friendly board names map onto the env names in platformio.local.ini. Anything
+# already starting with "simulator" passes through, which covers the UC8179 /
+# UC8279 panel variants without needing an entry each.
+case "$BOARD" in
+  x4|X4|simulator)  ENV_NAME="simulator" ;;
+  x3|X3)            ENV_NAME="simulator_x3" ;;
+  pro|x4pro|x4_pro) ENV_NAME="simulator_x4_pro" ;;
+  classic|x4c)      ENV_NAME="simulator_x4_classic" ;;
+  sticky)           ENV_NAME="simulator_sticky" ;;
+  paper|papermono)  ENV_NAME="simulator_papermono" ;;
+  simulator*)       ENV_NAME="$BOARD" ;;
+  *)
+    echo "error: unknown board '$BOARD'" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
+
+if ! grep -q "^\[env:${ENV_NAME}\]" platformio.local.ini 2>/dev/null; then
+  echo "error: [env:${ENV_NAME}] is not defined in platformio.local.ini." >&2
+  echo "       The simulator envs live in that gitignored file; start from" >&2
+  echo "       crosspoint-simulator/sample-platformio-macos.ini if it is missing." >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------- git identity
+
+# A detached HEAD has no branch name, so fall back to the SHA rather than
+# silently reusing the previous branch's SD card.
+BRANCH=$(git symbolic-ref --short -q HEAD || echo "")
+SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "nocommit")
+if [[ -z "$BRANCH" ]]; then
+  BRANCH="detached-${SHORT_SHA}"
+fi
+
+DIRTY_COUNT=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+
+# Same shape git_branch.py injects for the device dev envs, so a version seen in
+# the simulator reads the same way as one seen on hardware. "-dirty" is added on
+# top because an uncommitted tree is not what the SHA alone describes.
+BASE_VERSION=$(sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*//p' platformio.ini | head -1)
+BASE_VERSION="${BASE_VERSION:-0.0.0}"
+VERSION="${BASE_VERSION}-dev-${BRANCH}-${SHORT_SHA}"
+[[ "$DIRTY_COUNT" -gt 0 ]] && VERSION="${VERSION}-dirty"
+
+# Branch names may contain "/" and other characters that are awkward in a path.
+SAFE_BRANCH=$(printf '%s' "$BRANCH" | sed 's#[^A-Za-z0-9._-]#-#g')
+
+# ---------------------------------------------------------------- toolchain
+
+# PlatformIO's native platform resolves gcc/g++ by name from PATH. On macOS
+# those are /usr/bin shims that refuse to run until the Xcode licence is
+# accepted, so prefer a shim directory pointing straight at Xcode's clang.
+SHIM_DIR="$HOME/bin/xcshim"
+XCODE_BIN="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+if [[ "$(uname -s)" == "Darwin" && -x "$XCODE_BIN/clang++" ]]; then
+  if [[ ! -x "$SHIM_DIR/g++" ]]; then
+    mkdir -p "$SHIM_DIR"
+    ln -sf "$XCODE_BIN/clang"   "$SHIM_DIR/gcc"
+    ln -sf "$XCODE_BIN/clang++" "$SHIM_DIR/g++"
+    ln -sf "$XCODE_BIN/clang"   "$SHIM_DIR/cc"
+    ln -sf "$XCODE_BIN/clang++" "$SHIM_DIR/c++"
+    ln -sf "$XCODE_BIN/ar"      "$SHIM_DIR/ar"
+    ln -sf "$XCODE_BIN/ranlib"  "$SHIM_DIR/ranlib"
+    echo "note: created compiler shim at $SHIM_DIR"
+  fi
+  export PATH="$SHIM_DIR:$PATH"
+fi
+
+# Local helper that points CC/CXX and SDKROOT at the same toolchain.
+# shellcheck disable=SC1091
+[[ -f build/hostenv.sh ]] && source build/hostenv.sh
+
+command -v pio >/dev/null 2>&1 || {
+  echo "error: 'pio' not found on PATH. Install PlatformIO or activate its venv." >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------- SD card
+
+# One SD folder per branch. Book caches key on the render spec, so a cache built
+# before a layout change would otherwise be silently reused after switching
+# branches and show stale pagination.
+SD_BASE="fs_branches"
+SD_DIR="${SD_BASE}/${SAFE_BRANCH}"
+SHARED_BOOKS="${SD_BASE}/_books"
+SHARED_FONTS="${SD_BASE}/_fonts"
+
+mkdir -p "$SHARED_BOOKS" "$SHARED_FONTS"
+
+# Per-branch cards are local state. The repo's .gitignore covers the simulator's
+# default fs_ but not this tree, so the folder ignores itself rather than
+# requiring an edit to a tracked file.
+if [[ ! -f "${SD_BASE}/.gitignore" ]]; then
+  printf '# Simulator SD cards (per branch). Local state, never committed.\n*\n' \
+    > "${SD_BASE}/.gitignore"
+fi
+
+if [[ "$CLEAN_CACHE" -eq 2 && -d "$SD_DIR" ]]; then
+  rm -rf "$SD_DIR"
+  echo "note: reset SD folder for branch '$BRANCH'"
+fi
+
+SD_IS_NEW=0
+[[ -d "$SD_DIR" ]] || SD_IS_NEW=1
+mkdir -p "$SD_DIR"
+
+# Books and fonts are large and branch-independent, so every branch's card
+# points at one shared copy instead of duplicating them.
+[[ -e "$SD_DIR/books" ]] || ln -s "../_books" "$SD_DIR/books"
+[[ -e "$SD_DIR/fonts" ]] || ln -s "../_fonts" "$SD_DIR/fonts"
+
+if [[ "$CLEAN_CACHE" -eq 1 ]]; then
+  # Drop layout caches but keep settings.json / state.json, so the reader comes
+  # back on the same book with the same preferences.
+  find "$SD_DIR/.crosspoint" -maxdepth 1 -type d \
+    \( -name 'epub_*' -o -name 'fb2_*' -o -name 'txt_*' -o -name 'xtc_*' \) \
+    -exec rm -rf {} + 2>/dev/null || true
+  echo "note: cleared book caches for branch '$BRANCH'"
+fi
+
+# One-time nudge if books are still sitting in the simulator's default folder.
+if [[ "$SD_IS_NEW" -eq 1 && -d "fs_/books" ]] && [[ -n "$(ls -A fs_/books 2>/dev/null)" ]]; then
+  echo "note: books found in fs_/books; share them across branches with:"
+  echo "        mv fs_/books/* ${SHARED_BOOKS}/"
+fi
+
+# ---------------------------------------------------------------- build
+
+BIN=".pio/build/${ENV_NAME}/program"
+
+if [[ "$DO_BUILD" -eq 1 ]]; then
+  echo "building ${ENV_NAME} from ${BRANCH} @ ${SHORT_SHA}$([[ "$DIRTY_COUNT" -gt 0 ]] && echo " (${DIRTY_COUNT} uncommitted)")"
+  # The env hardcodes CROSSPOINT_VERSION; redefining it here is what makes the
+  # boot log and About screen name the branch actually being run. -U would be
+  # reordered after -D by PlatformIO and undefine it, so rely on last-wins and
+  # silence the expected redefinition warning.
+  export PLATFORMIO_BUILD_FLAGS="-Wno-macro-redefined -DCROSSPOINT_VERSION=\\\"${VERSION}\\\""
+  if ! pio run -e "$ENV_NAME"; then
+    echo "error: build failed" >&2
+    exit 1
+  fi
+fi
+
+[[ -x "$BIN" ]] || {
+  echo "error: $BIN not found. Run without --no-build first." >&2
+  exit 1
+}
+
+[[ "$DO_LAUNCH" -eq 1 ]] || { echo "built: $BIN"; exit 0; }
+
+# ---------------------------------------------------------------- launch
+
+if [[ "$KEEP_RUNNING" -eq 0 ]] && pgrep -f "$BIN" >/dev/null 2>&1; then
+  # SIGTERM rather than SIGKILL so the firmware can flush settings and progress.
+  pkill -TERM -f "$BIN" 2>/dev/null || true
+  sleep 1
+  echo "note: stopped the previous ${ENV_NAME} instance"
+fi
+
+export CROSSPOINT_SIM_SD="$SD_DIR"
+export CROSSPOINT_SIM_HTTP_PORT="$PORT"
+
+echo "──────────────────────────────────────────────"
+echo "  branch   ${BRANCH} @ ${SHORT_SHA}$([[ "$DIRTY_COUNT" -gt 0 ]] && echo "  (${DIRTY_COUNT} uncommitted)")"
+echo "  version  ${VERSION}"
+echo "  board    ${ENV_NAME}"
+echo "  sd card  ${SD_DIR}/"
+echo "  web ui   http://127.0.0.1:${PORT}/  (after starting File Transfer)"
+echo "──────────────────────────────────────────────"
+
+if [[ "$FOREGROUND" -eq 1 ]]; then
+  exec "./$BIN"
+fi
+
+LOG_FILE="${TMPDIR:-/tmp}/crosspoint-sim-${SAFE_BRANCH}-${ENV_NAME}.log"
+nohup "./$BIN" > "$LOG_FILE" 2>&1 &
+SIM_PID=$!
+sleep 2
+
+if ! kill -0 "$SIM_PID" 2>/dev/null; then
+  echo "error: the simulator exited immediately. Log:" >&2
+  tail -20 "$LOG_FILE" >&2
+  exit 1
+fi
+
+echo "running  pid ${SIM_PID}"
+echo "log      ${LOG_FILE}"
+echo "stop     kill ${SIM_PID}"

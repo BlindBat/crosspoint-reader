@@ -24,6 +24,12 @@ lib/EpdFont/scripts/output/
 # Claude Code: keep local agent state out (worktrees, scheduled-task
 # locks, settings.local, scout CLEANUP.md).
 .claude/*
+# ...except the run-simulator skill, which is fork tooling we version alongside
+# bin/run-simulator. Re-including a path under an excluded directory needs each
+# level un-excluded in turn, hence the four lines.
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/run-simulator/
 /managed_components
 /.dummy
 /CMakeLists.txt
