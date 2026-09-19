@@ -70,6 +70,9 @@ class FontDownloadActivity final : public UiListActivity {
   size_t fileTotal_ = 0;
   int downloadingFamilyIndex_ = 0;
   std::string errorMessage_;
+  // Fills errorMessage_ from a single-%s translated format through a fixed stack
+  // buffer, so the filename-bearing messages build no intermediate strings.
+  void setFormattedError(const char* format, const char* arg);
   bool cancelRequested_ = false;
   // Set when the cancel came from the home gesture (consumed by the download
   // callback's own input pump); exit to home after the abort unwinds.
