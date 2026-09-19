@@ -99,7 +99,7 @@ Open the BMP. It should show a double-line frame with the title in bold above th
 | The long title occupies more than one line and ends without an ellipsis | FR-009, SC-003 |
 | The author is on its own line(s), visibly smaller than the title | FR-008, FR-010 |
 | Neither text touches or crosses either frame line | FR-011, FR-012 |
-| The title/author pair looks balanced, not bottom-heavy | FR-012 |
+| The title-to-author gap is unchanged from the one-line case | FR-012 |
 | Exactly one screen update in the log, no second flash | FR-014, SC-004 |
 
 Then vary the fixture: a one-word title (single line, unchanged from today), a title of ~300

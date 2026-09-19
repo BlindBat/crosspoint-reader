@@ -163,8 +163,9 @@ the card is light-on-dark and that the screen updates exactly once.
 - **FR-010**: The author MUST wrap the same way within its own, smaller line budget.
 - **FR-011**: Wrapped text MUST stay within the inner frame's horizontal bounds, and a word longer
   than one line MUST be truncated with an ellipsis rather than overflow.
-- **FR-012**: The title-and-author block MUST remain vertically balanced on the card as the number
-  of lines changes, and MUST NOT overlap or cross the frame at any line count.
+- **FR-012**: The gap between the title block's last line and the author block's first line MUST be
+  the same at every line count, so the pair stays balanced as the title grows, and neither block MUST
+  overlap or cross the frame at any line count.
 - **FR-013**: The stub cover MUST honour the sleep-screen cover filter setting, at minimum
   rendering light-on-dark under the Inverted filter.
 - **FR-014**: The stub cover MUST complete in a single screen update, matching the other static
