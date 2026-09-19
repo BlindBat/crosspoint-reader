@@ -195,8 +195,9 @@ the card is light-on-dark and that the screen updates exactly once.
   a cover sleep mode names the book on screen, where previously it named none of them.
 - **SC-002**: A reader can identify which of two books with the same first three title words is
   open, from the sleeping screen alone, without waking the device.
-- **SC-003**: Titles up to 100 characters are shown in full on a standard panel; longer titles end
-  in an ellipsis with no clipped or overflowing text at any length.
+- **SC-003**: Titles up to ~80 Latin characters are shown in full on an 800x480 portrait panel;
+  longer titles end in an ellipsis with no clipped or overflowing text at any length. Wider scripts
+  (CJK) fit proportionally fewer.
 - **SC-004**: Sleeping with a stub cover takes the same number of screen updates (one) as sleeping
   with real cover art, with no added flash.
 - **SC-005**: Sleep entry time with a stub cover is indistinguishable to the user from sleep entry
