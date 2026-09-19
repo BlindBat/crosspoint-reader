@@ -166,3 +166,12 @@ but neither has been seen on screen. No source file should need to change.
 
 - [X] T010 Capture a sleep where the book's cached `cover.bmp` exists but is corrupt (truncate or scribble over `fs_branches/<branch>/.crosspoint/epub_<hash>/cover.bmp` for a book that has cover art), and confirm the stub card is drawn rather than the generic sleep screen, per US1/AC3 (partial). Every capture so far reached the stub via `generateCoverBmp()` failing, never via `Bitmap::parseHeaders()` rejecting a present file.
 - [X] T011 Capture a stub card whose author name is wider than one line, and confirm the author wraps within its own 2-line budget, stays inside the inner frame and keeps the title-to-author gap, per FR-010 and US2/AC3 (partial). Use a coverless EPUB fixture with a long `dc:creator`; the two-line author branch has never rendered.
+
+---
+
+## Phase 8: Convergence
+
+One low-severity gap. The card's requirements are otherwise met in the tree; this is the last
+corner of the "no title" guard.
+
+- [ ] T012 Widen the no-title guard in `renderCoverSleepScreen()` (`src/activities/boot_sleep/SleepActivity.cpp:699`) so `DEL` (0x7F) counts as a control character alongside the C0 range: `c > ' ' && c != 0x7F`. A title of nothing but `DEL` currently passes `c > ' '`, draws no glyphs, and leaves the empty frame the edge case forbids, per FR-005 and spec Edge Cases "Whitespace-only or control-character title" (partial). One condition — do not add a trimming helper. UTF-8 continuation bytes (0x80-0xBF) must keep passing.
