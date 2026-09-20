@@ -156,16 +156,16 @@ and be dead on device (Principle V).
 
 ### Implementation for User Story 2
 
-- [ ] T012 [US2] In `src/activities/reader/Fb2ReaderActivity.h`, add `bool onCoverPage = false;`
+- [X] T012 [US2] In `src/activities/reader/Fb2ReaderActivity.h`, add `bool onCoverPage = false;`
       and `std::string coverBmpPath;` per data-model.md's "Reader cover state". Neither is
       persisted.
-- [ ] T013 [US2] In `src/activities/reader/Fb2ReaderActivity.cpp`'s `loadBook()`, after
+- [X] T013 [US2] In `src/activities/reader/Fb2ReaderActivity.cpp`'s `loadBook()`, after
       `loadProgress()`, resolve the cover once: call `fb2->generateCoverBmp()` (it short-circuits
       when `cover.bmp` already exists, `lib/Fb2/Fb2.cpp`) and store `fb2->getCoverBmpPath()` in
       `coverBmpPath` on success, leaving it empty otherwise. Set
       `onCoverPage = !coverBmpPath.empty() && currentSectionIndex == 0 && nextPageNumber == 0`
       — V1 and V3 in one expression.
-- [ ] T014 [US2] In `src/activities/reader/Fb2ReaderActivity.cpp`'s `renderBook()`, after the
+- [X] T014 [US2] In `src/activities/reader/Fb2ReaderActivity.cpp`'s `renderBook()`, after the
       section is loaded and `section->currentPage` is clamped, and **before** `loadPage()`, take
       the cover branch when `onCoverPage`: `renderer.clearScreen()`, open `coverBmpPath` through
       `Storage.openFileForRead`, construct a `Bitmap`, and on `parseHeaders() == BmpReaderError::Ok`
@@ -177,12 +177,12 @@ and be dead on device (Principle V).
       section->currentPage, section->pageCount)` call on the cover path so the stored position
       stays chapter 0 / page 0 (V6). Loading the section first is deliberate: the reader menu and
       `bookProgressPercent()` read `section->pageCount` (V5).
-- [ ] T015 [US2] In `src/activities/reader/Fb2ReaderActivity.cpp`'s `pageTurn()`, implement V4:
+- [X] T015 [US2] In `src/activities/reader/Fb2ReaderActivity.cpp`'s `pageTurn()`, implement V4:
       when `onCoverPage`, a forward turn clears it and returns true (chapter 0 / page 0 renders),
       and a backward turn returns **false** (nothing precedes the cover); when not on the cover,
       a backward turn at `currentSectionIndex == 0 && section->currentPage == 0` with a non-empty
       `coverBmpPath` sets `onCoverPage` and returns true, instead of today's `return false`.
-- [ ] T016 [US2] In `src/activities/reader/Fb2ReaderActivity.cpp`, clear `onCoverPage` on every
+- [X] T016 [US2] In `src/activities/reader/Fb2ReaderActivity.cpp`, clear `onCoverPage` on every
       other route out of the cover (V7): `skipPages()`, the `SELECT_CHAPTER` result handler,
       `jumpToPercent()`, and the re-pagination path in `onReaderMenuConfirm` that resets
       `section`. One assignment each; a missed one leaves the cover painted over a jump target.

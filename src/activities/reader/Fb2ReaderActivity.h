@@ -20,6 +20,13 @@ class Fb2ReaderActivity final : public ReaderActivity {
   // the old page number is rescaled by oldTotal -> newTotal for the same section.
   int cachedSectionIndex = 0;
   int cachedSectionTotalPageCount = 0;
+  // The cover is reader state, not a page: it occupies the position ahead of
+  // chapter 0 page 0, so no chapter index, page number or cached page moves.
+  // Empty coverBmpPath means the book has no usable cover.
+  bool onCoverPage = false;
+  std::string coverBmpPath;
+  bool renderCoverPage();
+
   bool pendingPercentJump = false;
   bool pendingScreenshot = false;
   float pendingSectionProgress = 0.0f;

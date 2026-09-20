@@ -16,6 +16,7 @@
 #include "MappedInputManager.h"
 #include "ReaderUtils.h"
 #include "SdCardFontSystem.h"
+#include "activities/boot_sleep/SleepImageUtils.h"
 #include "activities/settings/TextSettingsActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -40,6 +41,39 @@ bool Fb2ReaderActivity::loadBook() {
   fb2 = std::move(loadedFb2);
   fb2->setupCacheDir();
   loadProgress();
+  // generateCoverBmp() is a no-op when cover.bmp already exists, which it does for
+  // any book the home or sleep screen has drawn.
+  if (fb2->generateCoverBmp()) {
+    coverBmpPath = fb2->getCoverBmpPath();
+  }
+  // Only a book opened at its very beginning opens on the cover; a resumed
+  // position is restored exactly as it was saved.
+  onCoverPage = !coverBmpPath.empty() && currentSectionIndex == 0 && nextPageNumber == 0;
+  return true;
+}
+
+// Draws the cover over the loaded section. Returns false when the bitmap cannot be
+// used, so the caller falls through to the normal page render.
+bool Fb2ReaderActivity::renderCoverPage() {
+  HalFile file;
+  if (!Storage.openFileForRead("FBR", coverBmpPath, file)) {
+    LOG_ERR("FBR", "Cover unreadable: %s", coverBmpPath.c_str());
+    return false;
+  }
+  Bitmap bitmap(file);
+  if (bitmap.parseHeaders() != BmpReaderError::Ok) {
+    LOG_ERR("FBR", "Cover header invalid: %s", coverBmpPath.c_str());
+    return false;
+  }
+  const auto placement = sleepimage::calculateBitmapPlacement(bitmap.getWidth(), bitmap.getHeight(),
+                                                              renderer.getScreenWidth(), renderer.getScreenHeight(),
+                                                              /*crop=*/false);
+  renderer.clearScreen();
+  // ponytail: black and white only. The sleep screen's three-pass grayscale
+  // pipeline is the upgrade path if a dithered cover reads poorly on device.
+  renderer.drawBitmap(bitmap, placement.x, placement.y, renderer.getScreenWidth(), renderer.getScreenHeight(),
+                      placement.cropX, placement.cropY);
+  renderer.displayBuffer();
   return true;
 }
 
@@ -123,6 +157,7 @@ void Fb2ReaderActivity::openReaderMenu() {
 void Fb2ReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAction action) {
   switch (action) {
     case EpubReaderMenuActivity::MenuAction::SELECT_CHAPTER: {
+      onCoverPage = false;
       const int sectionIdx = currentSectionIndex;
       // Release the section while the chapter list is up; cancel restores the
       // position through the cached page/page-count rebuild below.
@@ -242,6 +277,7 @@ void Fb2ReaderActivity::applyOrientation(const uint8_t orientation) {
 }
 
 void Fb2ReaderActivity::jumpToPercent(const int percent) {
+  onCoverPage = false;
   if (!fb2) return;
 
   const fb2_reader::SectionSizes sizes{fb2.get(), &cumulativeSectionSize, fb2->getSectionCount(), fb2->getBookSize()};
@@ -258,6 +294,12 @@ void Fb2ReaderActivity::jumpToPercent(const int percent) {
 
 bool Fb2ReaderActivity::pageTurn(const bool isForward) {
   if (!section || !fb2) return false;
+  if (onCoverPage) {
+    // Forward leaves the cover for chapter 0 page 0; nothing precedes the cover.
+    if (!isForward) return false;
+    onCoverPage = false;
+    return true;
+  }
   if (isForward) {
     if (section->currentPage < section->pageCount - 1) {
       section->currentPage++;
@@ -284,6 +326,10 @@ bool Fb2ReaderActivity::pageTurn(const bool isForward) {
       currentSectionIndex--;
       section.reset();
       return true;
+    } else if (!coverBmpPath.empty()) {
+      // Back from the book's first page of text returns to the cover.
+      onCoverPage = true;
+      return true;
     }
   }
   return false;
@@ -293,6 +339,7 @@ bool Fb2ReaderActivity::skipPages(const int amount) {
   // Long-press chapter skip: forward goes to the next section, backward to the
   // start of this section (or the previous one when already there).
   if (!section || !fb2) return false;
+  onCoverPage = false;
   if (amount > 0) {
     RenderLock lock;
     nextPageNumber = 0;
@@ -408,6 +455,18 @@ void Fb2ReaderActivity::renderBook() {
 
   if (section->currentPage < 0) section->currentPage = 0;
   if (section->currentPage >= section->pageCount) section->currentPage = section->pageCount - 1;
+
+  // The section is loaded first so the menu and the progress percent read the real
+  // page count while the cover is up. A cover that cannot be drawn is not an error:
+  // clear the flag and render the first page of text instead.
+  if (onCoverPage) {
+    if (renderCoverPage()) {
+      saveProgress(currentSectionIndex, section->currentPage, section->pageCount);
+      return;
+    }
+    onCoverPage = false;
+    coverBmpPath.clear();
+  }
 
   auto page = section->loadPage(section->currentPage);
   if (!page) {
