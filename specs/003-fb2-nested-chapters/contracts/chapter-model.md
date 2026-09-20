@@ -75,6 +75,14 @@ When a reading body contains no `<section>` at all, there is exactly one chapter
 `fileOffset == 0` spanning the file, and the render parser is invoked with target index
 `-1` to process all body content (existing behaviour, `Fb2Section.cpp:176-177`).
 
+## C10 — A body's own content
+
+A `<body>` may carry a `<title>`, `<epigraph>` or image of its own ahead of its first
+`<section>` (the FB2 schema allows nothing else there). That content is in no section, so
+it reads with the **first chapter of its body** and is never dropped. Its bytes are in no
+chapter's `length`, so it carries no progress weight — a documented ceiling, since it is a
+few hundred bytes of a whole body.
+
 ## Parity property (required test)
 
 For every fixture in `test/fb2/`, and for each chapter index `i` reported by

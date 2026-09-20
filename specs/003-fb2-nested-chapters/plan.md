@@ -56,8 +56,8 @@ verification in crosspoint-simulator
 **Project Type**: e-reader firmware — portable reader core in `lib/`, UI in `src/activities/`
 
 **Performance Goals**: no regression in time-to-first-page; for the reference book the
-largest chapter's layout work drops from 853 KB to 67 KB of source text, so opening a
-story is expected to get faster, not slower. No timing assertion is claimed as a gate.
+largest chapter's layout work drops from 853.7 KB to 117.5 KB of source text, so opening
+a story is expected to get faster, not slower. No timing assertion is claimed as a gate.
 
 **Constraints**: chapter metadata for a whole book lives in RAM (it already does), so the
 chapter count must be capped and titles bounded; total FB2 metadata RAM must not regress
@@ -75,10 +75,10 @@ Touched: 6 production files, 5 test suites, ~4 new fixtures.
 | **I. A Focused Reading Device** | PASS — this is core reading navigation for a format the firmware already supports, fixing a defect that makes most FB2 anthologies unnavigable. No new feature surface, no connectivity, no new theme. |
 | **II. Memory Is the Design Constraint** | PASS with a measured trade. Deleting `tocEntries` removes one `std::string` copy of every chapter title, so flat books use less RAM after this change. Nested books hold more chapters (reference: 4 → 66 ≈ +5 KB), bounded by `FB2_MAX_CHAPTERS = 1024` and a per-title cap. The parser stack is a `std::vector` with `reserve()` before any `push_back`. No bare `new`; new buffers use `makeUniqueNoThrow`. No new allocation in a render-loop path. The RAM claim is measured, not asserted: tasks.md T041 checks it with the `AllocCounter` scope the `fb2_book` suite already compiles. |
 | **III. Portability Behind the HAL** | PASS — all logic lands in `lib/Fb2/` (host-compilable, already covered by host suites) plus one pure-arithmetic change in `src/activities/reader/Fb2ReaderMath.*`, which exists precisely to be host-testable. Storage stays behind `HalStorage`. |
-| **IV. Evidence Over Claims** | PASS — every number in spec and plan is measured from the reference file (1,915,806 bytes; 66 sections; largest 67,209 bytes) or cited to a file and line. The performance expectation is stated as a mechanism (less source text laid out per chapter), and the on-screen result is verified in the simulator. |
+| **IV. Evidence Over Claims** | PASS — every number in spec and plan is measured from the reference file (1,915,806 bytes; reading body 1,827,705 bytes; 66 chapters; largest own-content chapter 117,515 bytes) or cited to a file and line. The performance expectation is stated as a mechanism (less source text laid out per chapter), and the on-screen result is verified in the simulator. |
 | **V. Tests Prove Behavior** | PASS — four existing tests pin the current top-level-only behaviour (`Fb2MetadataParserTest.cpp:100`, `Fb2SectionParserTest.cpp:434,448,457`). Each is rewritten to the new contract and MUST be shown failing against unmodified production code before the fix lands. New fixtures cover the shapes the change creates: deep nesting, a title-only parent, a content-only wrapper, trailing parent content, and the chapter cap. |
 | **VI. Untrusted Input Is Hostile** | PASS — `book.bin` gains a `level` field and a new version, so every count and length is re-validated against physical file size before any `reserve()`; chapter count is capped; `progress.bin` payload lengths are validated as they are today; malformed nesting is bounded by the cap and by expat's own well-formedness checks. Corpus additions: unbalanced sections, 64-deep nesting, a cache claiming 65535 chapters. |
-| **VII. Upstream-First Fork Hygiene** | PASS — one defect, one branch (`feature/fb2-nested-chapters`), cherry-pickable commits, no AI co-authors. Diff stays well under 200 lines of non-test change. Upstream has no FB2 chapter work in flight to mirror (to be re-checked before any upstream PR); host suites and fixtures stay fork-only. |
+| **VII. Upstream-First Fork Hygiene** | PASS — one defect, one branch (`feature/fb2-nested-chapters`), cherry-pickable commits, no AI co-authors. Upstream has no FB2 chapter work in flight to mirror (to be re-checked before any upstream PR); host suites and fixtures stay fork-only. Measured non-test diff: 270 insertions / 180 deletions across `lib/Fb2/` and `src/activities/reader/` (net +90 lines), split into seven one-logical-change commits so each stays reviewable. |
 
 **Gate result**: PASS, no violations to justify. See Complexity Tracking for the one
 deliberate simplification (chapter cap) and the architecture deliberately *not* adopted

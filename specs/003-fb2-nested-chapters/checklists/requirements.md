@@ -37,8 +37,10 @@
   files that justify them; the citation is rationale for a UX decision, not a design
   instruction, and no requirement (FR-001..FR-015) names a file, class, or API.
 - Quantities in the Overview and Success Criteria were measured from the reference file on
-  the test card (1,915,806 bytes; reading body 1.83 MB; 66 sections at two depths; largest
-  section 67,209 bytes; 14 footnote sections in the `name="notes"` body), not estimated.
+  the test card (1,915,806 bytes; reading body 1,827,705 bytes; 66 sections at two depths;
+  largest own-content chapter 117,515 bytes; largest top-level span 853,718 bytes; 14
+  footnote sections in the `name="notes"` body), measured in bytes with the parser's
+  own-length rule, not estimated.
 - No [NEEDS CLARIFICATION] markers were raised. The one decision with competing readings —
   whether parent sections are chapters in their own right or only leaf sections are — is
   resolved in Assumptions with the reasoning, and it is the assumption most worth

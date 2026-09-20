@@ -221,15 +221,16 @@ at the first page of the next story with progress increasing monotonically.
   interactions from the reader screen (open chapter list, select story) instead of
   paging through the containing 853 KB chapter.
 - **SC-003**: No chapter in the reference book exceeds the size of the largest single
-  story: the largest chapter shrinks from 853 KB to under 100 KB of source text, which is
-  the layout work needed before a story's first page can be shown.
+  story: the largest chapter shrinks from 853.7 KB to 117.5 KB of source text - a 7.3x
+  reduction in the layout work needed before a story's first page can be shown.
 - **SC-004**: Reading the reference book from first page to last page reaches every
   story exactly once, in the book's printed order (no section in it carries parent text
   after a child, so FR-004's exception does not arise), with no repeated and no missing
   text.
 - **SC-005**: Displayed progress advances across the reference book's chapter boundaries
-  in steps of at most 4% of the book (its largest chapter is 67 KB of a 1.83 MB reading
-  body), instead of today's four chapters of roughly 0%, 47%, 83% and 100%.
+  in steps of at most 6.5% of the book (its largest chapter is 117,515 bytes of a
+  1,827,705-byte reading body), instead of today's four chapters of roughly 0%, 47%, 83%
+  and 100%.
 - **SC-006**: Flat FB2 books (no nested sections) show an identical chapter list and
   identical page counts to the current firmware.
 - **SC-007**: The malformed-FB2 corpus (truncated files, unbalanced sections, hostile

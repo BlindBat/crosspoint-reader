@@ -32,8 +32,12 @@ implement.
 ```bash
 bin/run-tests --filter fb2          # fast loop while implementing
 bin/run-tests                       # full program, plain
-bin/run-tests --asan                # full program, ASan + UBSan (leak checks on)
+bin/run-tests --asan                # full program, ASan + UBSan
 ```
+
+On Linux add `ASAN_OPTIONS=detect_leaks=1` (what CI uses). Do **not** set it on macOS:
+Apple's ASan has no LeakSanitizer and every suite aborts at startup with
+"detect_leaks is not supported on this platform".
 
 Expected, keyed to the contract in [contracts/chapter-model.md](contracts/chapter-model.md):
 
@@ -46,7 +50,7 @@ Expected, keyed to the contract in [contracts/chapter-model.md](contracts/chapte
 | Empty chapter (C8) | new wrapper-only fixture | chapter renders exactly 1 page; `pageCount != 0` |
 | Cap (C6) | generated >1024-section fixture | chapter count == 1024, no text lost, no OOM under ASan |
 | Cache round-trip | `fb2_book` | v3 write → read yields identical titles, lengths and levels; a v2 file is rejected and reparsed |
-| Malformed input | `corpus` | unbalanced sections, 64-deep nesting, count claiming 65535 → bounded failure, sanitizer-clean |
+| Malformed input | `fb2_metadata_parser`, `fb2_book` | unbalanced sections and 64-deep nesting (generated in-test), a cache count above the cap, an out-of-sequence level byte → bounded failure, sanitizer-clean |
 | Progress migration | `xtc_fb2_readers` | 8-byte marker payload round-trips; 6-byte payload decodes as a legacy ordinal with page 0; flat book → identity |
 
 ## 3. Firmware build and static analysis
@@ -74,7 +78,7 @@ With the reference book on the simulator's SD card:
 3. Page back from its first page → previous chapter's last page. Page forward past its
    last page → next story's first page (FR-008).
 4. Watch the status-bar percentage across three or four story boundaries — it should step
-   by a few percent, not by ~25% (SC-005).
+   by a few percent (at most ~6.5%, at the largest chapter), not by the old ~47% (SC-005).
 5. Reopen the chapter list while inside a story → that story's row is pre-selected
    (US2 scenario 3).
 6. Confirm the 14 footnote sections of the `name="notes"` body are absent from the list
@@ -94,21 +98,38 @@ With the reference book on the simulator's SD card:
 ```bash
 python3 - "fs_/Брэдбери Рэй/Марсианские хроники. Полное издание.fb2" <<'PY'
 import sys, re
-t = open(sys.argv[1],'rb').read().decode('utf-8','replace')
-body = 0; stack = []; sizes = []
-for m in re.finditer(r'<(/?)(body|section)\b', t):
+# Byte offsets and own-content lengths: exactly what the parser records. A
+# chapter's length is its span minus the spans of its child chapters. Counting
+# characters instead of bytes halves every figure on this Cyrillic file, and
+# measuring spans instead of own lengths counts a parent's children as its own.
+raw = open(sys.argv[1], 'rb').read()
+body = 0; stack = []; rows = []
+for m in re.finditer(rb'<(/?)(body|section)\b', raw):
     close, tag = m.group(1), m.group(2)
     if not close:
-        if tag == 'body': body += 1; stack = []
-        elif body == 1: stack.append((len(stack), m.start()))
-    elif tag == 'section' and body == 1:
-        d, st = stack.pop(); sizes.append((d, m.start() - st))
-print('chapters in body 1:', len(sizes), 'levels:', sorted({d for d, _ in sizes}),
-      'largest section bytes:', max(s for _, s in sizes))
+        if tag == b'body': body += 1; stack = []
+        elif body == 1: stack.append({'start': m.start(), 'child': 0, 'level': len(stack)})
+    elif tag == b'section' and body == 1 and stack:
+        cur = stack.pop()
+        span = m.start() + len('</section>') - cur['start']
+        rows.append({'level': cur['level'], 'own': span - cur['child'], 'span': span})
+        if stack: stack[-1]['child'] += span
+top = [r for r in rows if r['level'] == 0]
+print('chapters:', len(rows), 'levels:', sorted({r['level'] for r in rows}))
+print('reading body bytes:', sum(r['span'] for r in top))
+print('largest own-content chapter bytes:', max(r['own'] for r in rows))
+print('largest top-level span bytes:', max(r['span'] for r in top))
 PY
 ```
 
-Expected: `chapters in body 1: 66 levels: [0, 1] largest section bytes: 67209`.
+Expected:
+
+```text
+chapters: 66 levels: [0, 1]
+reading body bytes: 1827705
+largest own-content chapter bytes: 117515
+largest top-level span bytes: 853718
+```
 
 ## Definition of done
 
