@@ -186,7 +186,7 @@ and be dead on device (Principle V).
       other route out of the cover (V7): `skipPages()`, the `SELECT_CHAPTER` result handler,
       `jumpToPercent()`, and the re-pagination path in `onReaderMenuConfirm` that resets
       `section`. One assignment each; a missed one leaves the cover painted over a jump target.
-- [ ] T017 [US2] Verify V1–V7 in the simulator per [quickstart.md](quickstart.md) §4 steps 1, 2,
+- [X] T017 [US2] Verify V1–V7 in the simulator per [quickstart.md](quickstart.md) §4 steps 1, 2,
       5 and 6. Cover all three failure shapes SC-008 names, not just the easy one: `cover.bmp`
       **deleted**, **truncated** mid-file, and one whose header **lies about its dimensions**.
       `Bitmap::parseHeaders` already rejects all three (`test/gfx_renderer/BitmapTest.cpp`); what
@@ -264,7 +264,7 @@ selecting any row opens the chapter it names.
       the derived-label rule and its 64-character cap, and a line saying real titles are stored
       as the book supplies them. Add the v3 → v4 note to the version history the way v2 → v3 is
       recorded.
-- [ ] T026 [US3] Verify the chapter list in the simulator per [quickstart.md](quickstart.md) §4
+- [X] T026 [US3] Verify the chapter list in the simulator per [quickstart.md](quickstart.md) §4
       steps 3 and 4 — the steps T017 deliberately leaves to this story. On a nested anthology:
       zero rows show the placeholder where the section has text of its own (SC-007), derived rows
       are distinguishable from real titles (FR-016), indentation by nesting level is unchanged,
@@ -279,15 +279,15 @@ line`.
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T027 [P] Add the `ponytail:` comments the design owes, each naming its ceiling and upgrade
+- [X] T027 [P] Add the `ponytail:` comments the design owes, each naming its ceiling and upgrade
       path: at the cover branch in `Fb2ReaderActivity::renderBook` (black-and-white only; the
       sleep screen's three-pass grayscale pipeline is the upgrade if a dithered cover reads
       poorly), and at `refreshTocWindow` in `Fb2ReaderChapterSelectionActivity.cpp` (no fallback
       glyph prewarm; EPUB's batch is the upgrade if CJK lists repaint slowly).
-- [ ] T028 Run the merge gates in order and fix what they find: `./bin/clang-format-fix -g`,
+- [X] T028 Run the merge gates in order and fix what they find: `./bin/clang-format-fix -g`,
       `bin/run-tests`, `bin/run-tests --asan`, `pio run -e default`,
       `pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high`.
-- [ ] T029 [P] Build one S3 board — `pio run -e sticky` — since a change can build on C3 and
+- [X] T029 [P] Build one S3 board — `pio run -e sticky` — since a change can build on C3 and
       fail on S3; CI builds all five environments.
 - [ ] T030 Hand the device checks to the human tester per [quickstart.md](quickstart.md) §5 and
       §7, and include the **SC-003 heap check** that no host test can reach: free heap after
@@ -352,6 +352,38 @@ Nothing in US2 or US3 breaks US1, and each can be dropped without touching the o
 T024, which needs US1's window to exist.
 
 ---
+
+## Verification record (T017, T026)
+
+Simulator session on `feature/fb2-reader-hardening @ 73b4ceda`, X4 (SSD1677), real FB2 books.
+
+| Rule | Observed |
+|---|---|
+| V1 | A book with a cover opens on it. `[GFX] Cropping 581x800 by 0x0 pix` + `Scaling by 0.826162` — scaled to fit, **zero crop**, letterboxed (FR-013). |
+| V2 | `cover.bmp` truncated inside its header → `[ERR] [FBR] Cover header invalid`, reader fell through to the first page of text. No blank page, no error screen, no crash. A cover truncated only in its *pixel* data still parses and draws, which is `Bitmap`'s existing behaviour, not a new failure. |
+| V3 | Left the book at chapter 2, reopened: landed on "Глава 1 / Нат" — the saved position, not the cover. |
+| V4 | Forward from the cover → chapter 0 page 0. Back from it → the cover redrew with the identical scale signature. |
+| V5 | Reader menu on the cover read `Chapter: 1/66 pages | Book: 0%` — the real page count, which is why the section is loaded before the cover is drawn. |
+| T026 | Chapter list renders windowed and scrolls: rows 1–13 visible, selection tracked to row 11 of 66. Label content verified against the reference anthology through the parser itself (below), which is stronger evidence than a screenshot of one window. |
+
+**Issue #10's own book**, `Марсианские хроники. Полное издание.fb2`, 66 chapters, before → after:
+
+```
+Unnamed                          ->  "© Л. Жданов, наследники, перевод…"   [derived]
+Марсианские хроники                  Марсианские хроники                  [title]
+  Долгая дорога на Марс…               Долгая дорога на Марс…             [title]
+  Гринтаун, где-то на Марсе…           Гринтаун, где-то на Марсе…         [title]
+  Unnamed                        ->    "Моей жене Маргарет с искрен-"     [derived]
+  Unnamed                        ->    "«Великое дело – способность удив-" [derived]
+  Хронология [1]                       Хронология [1]                     [title]
+```
+
+Placeholder rows in that book: **3 → 0** (SC-007).
+
+Two of the three only became labels after a fix this verification found: the first
+implementation required the paragraph to be a **direct** child of the section, and both of
+those sections open with an `<epigraph>` instead. Commit `ce99d047` widened L2 to the
+section's own first paragraph at any depth, which is a smaller rule, not a bigger one.
 
 ## Notes
 
