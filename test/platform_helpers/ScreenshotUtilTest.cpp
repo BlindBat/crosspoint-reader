@@ -51,6 +51,33 @@ class ScreenshotUtilTest : public ::testing::Test {
   ScopedStorageRoot storage;
 };
 
+// Accepts exactly what SdFat's mbToCp accepts, so a path that fails here is a
+// path the card's long-name layer will reject.
+bool decodesAsUtf8(const std::string& s) {
+  size_t i = 0;
+  while (i < s.size()) {
+    const uint8_t c = static_cast<uint8_t>(s[i]);
+    size_t n = 0;
+    if ((c & 0x80) == 0) {
+      n = 1;
+    } else if ((c & 0xE0) == 0xC0) {
+      n = 2;
+    } else if ((c & 0xF0) == 0xE0) {
+      n = 3;
+    } else if ((c & 0xF8) == 0xF0) {
+      n = 4;
+    } else {
+      return false;
+    }
+    if (i + n > s.size()) return false;
+    for (size_t k = 1; k < n; k++) {
+      if ((static_cast<uint8_t>(s[i + k]) & 0xC0) != 0x80) return false;
+    }
+    i += n;
+  }
+  return true;
+}
+
 // 16x8 framebuffer: two bytes per row, eight rows.
 std::vector<uint8_t> blankFb() { return std::vector<uint8_t>(16, 0); }
 
@@ -126,6 +153,21 @@ TEST_F(ScreenshotUtilTest, LongestPossibleTitleStaysInsideTheFat32PathBudget) {
   const std::string path = build(reader(ReaderType::Epub, maxTitle.c_str(), 999999, 999999, 100), 512);
   EXPECT_LT(path.size(), 255u);
   EXPECT_EQ(path, "/screenshots/" + maxTitle + "/" + maxTitle + "_ch1000000_p999999_100pct_4242.bmp");
+}
+
+// ScreenshotInfo::title is 64 bytes, so any longer title is cut at byte 63 —
+// which lands mid-character for most Cyrillic, Greek and CJK titles. The name
+// must still decode as UTF-8 or SdFat rejects the mkdir and nothing is saved.
+TEST_F(ScreenshotUtilTest, LongMultiByteTitleDoesNotEndMidCharacter) {
+  // 35 characters, 66 bytes; byte 62 is the lead byte of a 2-byte character.
+  const char* title =
+      "\u041c\u0430\u0440\u0441\u0438\u0430\u043d\u0441\u043a\u0438\u0435 "
+      "\u0445\u0440\u043e\u043d\u0438\u043a\u0438. "
+      "\u041f\u043e\u043b\u043d\u043e\u0435 \u0438\u0437\u0434\u0430\u043d\u0438\u0435";
+  const std::string path = build(reader(ReaderType::Fb2, title));
+  EXPECT_TRUE(decodesAsUtf8(path)) << path;
+  // Still the per-book form, not the timestamp fallback.
+  EXPECT_NE(path.find("_p1_0pct_4242.bmp"), std::string::npos) << path;
 }
 
 TEST_F(ScreenshotUtilTest, SmallBufferTruncatesInsteadOfOverflowing) {

@@ -53,7 +53,9 @@ std::string extractFolderPath(const std::string& filePath);
 
 /**
  * Sanitize a filename/path component for FAT32 in a caller-provided buffer.
- * Replaces invalid path characters, spaces, and control characters with '-'.
+ * Replaces invalid path characters, spaces, and control characters with '-',
+ * and cuts the result at the first byte that is not valid UTF-8, so a title
+ * truncated mid-character cannot produce a name SdFat refuses to create.
  */
 void sanitizePathComponentForFat32(const char* input, char* output, size_t maxLen);
 

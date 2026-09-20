@@ -461,10 +461,21 @@ TEST(SanitizeFat32, TrailingDotsSurviveButTrailingSpacesBecomeDashes) {
   EXPECT_EQ(sanitize(" lead", 16), "-lead");
 }
 
-TEST(SanitizeFat32, TruncationCutsMidMultiByteSequence) {
-  // maxLen is a byte budget, not a code-point budget: "cafe" with U+00E9 loses its
-  // continuation byte and leaves a lone 0xC3 lead byte.
-  EXPECT_EQ(sanitize("caf\xC3\xA9", 5), "caf\xC3");
+TEST(SanitizeFat32, TruncationDropsAnIncompleteMultiByteSequence) {
+  // maxLen is a byte budget, not a code-point budget, so "cafe" with U+00E9 loses
+  // its continuation byte; the lone 0xC3 lead goes with it, because SdFat rejects
+  // a name it cannot decode and the caller's mkdir would fail.
+  EXPECT_EQ(sanitize("caf\xC3\xA9", 5), "caf");
+  EXPECT_EQ(sanitize("caf\xC3\xA9", 6), "caf\xC3\xA9");
+  // Already-broken input is cut at the bad byte wherever it sits.
+  EXPECT_EQ(sanitize("ab\xE2\x82"
+                     "cd",
+                     64),
+            "ab");
+  EXPECT_EQ(sanitize("\x80"
+                     "ab",
+                     64),
+            "");
 }
 
 TEST(SanitizeFat32, ReservedCharactersAreReplacedRightUpToTheTruncationPoint) {

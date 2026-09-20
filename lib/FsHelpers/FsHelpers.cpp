@@ -197,6 +197,47 @@ std::string extractFolderPath(const std::string& filePath) {
   return filePath.substr(0, lastSlash);
 }
 
+namespace {
+
+// Cut `output` at the first byte that does not begin or complete a valid UTF-8
+// character. Callers truncate titles by byte count, which lands mid-character
+// for most non-Latin text; SdFat's long-name layer rejects the whole name when
+// it cannot decode one (FsUtf.cpp mbToCp), so an mkdir on such a name fails.
+void truncateAtInvalidUtf8(char* output, size_t length) {
+  size_t i = 0;
+  while (i < length) {
+    const uint8_t lead = static_cast<uint8_t>(output[i]);
+    size_t charLen;
+    if ((lead & 0x80) == 0) {
+      charLen = 1;
+    } else if ((lead & 0xE0) == 0xC0) {
+      charLen = 2;
+    } else if ((lead & 0xF0) == 0xE0) {
+      charLen = 3;
+    } else if ((lead & 0xF8) == 0xF0) {
+      charLen = 4;
+    } else {
+      break;
+    }
+    if (i + charLen > length) {
+      break;
+    }
+    size_t k = 1;
+    for (; k < charLen; k++) {
+      if ((static_cast<uint8_t>(output[i + k]) & 0xC0) != 0x80) {
+        break;
+      }
+    }
+    if (k < charLen) {
+      break;
+    }
+    i += charLen;
+  }
+  output[i] = '\0';
+}
+
+}  // namespace
+
 void sanitizePathComponentForFat32(const char* input, char* output, size_t maxLen) {
   if (maxLen == 0) {
     return;
@@ -213,6 +254,7 @@ void sanitizePathComponentForFat32(const char* input, char* output, size_t maxLe
     }
   }
   output[i] = '\0';
+  truncateAtInvalidUtf8(output, i);
 }
 
 }  // namespace FsHelpers
