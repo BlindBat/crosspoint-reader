@@ -279,3 +279,38 @@ TEST(Fb2ProgressDecode, SixteenBitFieldsAreUnsigned) {
   EXPECT_EQ(p.page, 0xFFFE);
   EXPECT_EQ(p.pageCount, 0xFFFD);
 }
+
+// ---------------------------------------------------------------------------
+// prefetchTarget: which chapter the reader lays out ahead of the one being read.
+// ---------------------------------------------------------------------------
+
+using fb2_reader::NO_PREFETCH_TARGET;
+using fb2_reader::prefetchTarget;
+
+// TP1: always the NEXT chapter, and never past the end of the book.
+// Catches: an off-by-one that targets the chapter being read, or that runs on
+// the last chapter (there is nothing after it to prepare).
+TEST(Fb2PrefetchTarget, TargetsTheNextChapterAndStopsAtTheEnd) {
+  EXPECT_EQ(prefetchTarget(0, 5, false, false, NO_PREFETCH_TARGET), 1);
+  EXPECT_EQ(prefetchTarget(3, 5, false, false, NO_PREFETCH_TARGET), 4);
+  // Last chapter: nothing follows.
+  EXPECT_EQ(prefetchTarget(4, 5, false, false, NO_PREFETCH_TARGET), NO_PREFETCH_TARGET);
+  // One-chapter book.
+  EXPECT_EQ(prefetchTarget(0, 1, false, false, NO_PREFETCH_TARGET), NO_PREFETCH_TARGET);
+  // Cover and end-of-book are not reading positions.
+  EXPECT_EQ(prefetchTarget(0, 5, true, false, NO_PREFETCH_TARGET), NO_PREFETCH_TARGET);
+  EXPECT_EQ(prefetchTarget(5, 5, false, true, NO_PREFETCH_TARGET), NO_PREFETCH_TARGET);
+  // Out-of-range current index (end-of-book sets it past the last chapter).
+  EXPECT_EQ(prefetchTarget(5, 5, false, false, NO_PREFETCH_TARGET), NO_PREFETCH_TARGET);
+  EXPECT_EQ(prefetchTarget(-1, 5, false, false, NO_PREFETCH_TARGET), NO_PREFETCH_TARGET);
+}
+
+// TP2: a chapter already prepared is not prepared again.
+// Catches: dropping the already-prepared check, so every re-entry to a chapter
+// rebuilds a section file that is already on the card.
+TEST(Fb2PrefetchTarget, AlreadyPreparedChapterIsNotRepeated) {
+  EXPECT_EQ(prefetchTarget(2, 5, false, false, 3), NO_PREFETCH_TARGET);
+  // A different chapter being prepared does not block this one.
+  EXPECT_EQ(prefetchTarget(2, 5, false, false, 1), 3);
+  EXPECT_EQ(prefetchTarget(2, 5, false, false, 4), 3);
+}

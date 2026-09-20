@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "AllocCounter.h"
 #include "Fb2.h"
 #include "Fb2/Fb2Section.h"
 #include "Fb2/Fb2SectionParser.h"
@@ -726,6 +727,54 @@ TEST(Fb2SectionSlice, StalePartFileIsOverwrittenNotAppended) {
   ASSERT_TRUE(writeAll(sectionsDir + "/0.bin.part", std::string(4096, '\xAB')));
 
   EXPECT_EQ(buildOneShot(stale.book, renderer, spec, 0), expected);
+}
+
+// Slicing must not cost allocations. On a ~380KB device, per-slice heap churn is
+// the fragmentation hazard; allocation count is the accepted host proxy for it
+// (Constitution IV). The budget is the one-shot build's own count plus the
+// single BuildContext a sliced build adds.
+TEST(Fb2SectionSlice, SlicingCostsNoExtraAllocations) {
+  GfxRenderer renderer;
+  const auto spec = makeSpec();
+
+  size_t oneShotAllocs = 0;
+  bool oneShotOk = false;
+  {
+    SliceBook b("slice-boundary.fb2");
+    ASSERT_NE(b.book, nullptr);
+    Fb2Section section(b.book, 0, renderer);
+    {
+      // gtest assertions allocate, so none may appear inside the scope.
+      alloc_counter::CountingScope counting;
+      oneShotOk = section.createSectionFile(spec);
+      oneShotAllocs = counting.count();
+    }
+  }
+  ASSERT_TRUE(oneShotOk);
+  ASSERT_GT(oneShotAllocs, 0u);
+
+  size_t slicedAllocs = 0;
+  bool slicedOk = true;
+  {
+    SliceBook b("slice-boundary.fb2");
+    ASSERT_NE(b.book, nullptr);
+    Fb2Section section(b.book, 0, renderer);
+    {
+      alloc_counter::CountingScope counting;
+      slicedOk = section.startBuild(spec);
+      int guard = 0;
+      while (slicedOk && !section.isBuildComplete() && ++guard < 100000) {
+        slicedOk = section.buildSomeMore(2, 4096);
+      }
+      slicedAllocs = counting.count();
+    }
+  }
+  ASSERT_TRUE(slicedOk);
+
+  // createSectionFile IS startBuild + buildSomeMore, so the counts must match
+  // exactly: pausing between slices allocates nothing. A per-slice allocation
+  // (a re-created parser, a re-grown LUT, a temporary path string) lands here.
+  EXPECT_EQ(slicedAllocs, oneShotAllocs);
 }
 
 }  // namespace
