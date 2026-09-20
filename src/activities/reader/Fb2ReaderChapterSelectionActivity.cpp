@@ -3,6 +3,7 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
+#include <cstdio>
 #include <string>
 
 #include "MappedInputManager.h"
@@ -10,6 +11,10 @@
 #include "fontIds.h"
 
 namespace fui = freeink::ui;
+
+// A derived label is capped at Fb2::FB2_MAX_LABEL_CHARS codepoints (4 bytes each
+// in the UTF-8 worst case); the rest is the quoting format's own characters.
+constexpr size_t FB2_LABEL_BUFFER = Fb2::FB2_MAX_LABEL_CHARS * 4 + 16;
 
 Fb2ReaderChapterSelectionActivity::Fb2ReaderChapterSelectionActivity(GfxRenderer& renderer,
                                                                      MappedInputManager& mappedInput,
@@ -49,7 +54,17 @@ void Fb2ReaderChapterSelectionActivity::refreshTocWindow(const int start) {
     // deeply nested title is not pushed off the row.
     const int indentSteps = tocEntry.level > 3 ? 3 : tocEntry.level;
     std::string label(static_cast<size_t>(indentSteps) * 2, ' ');
-    label += tocEntry.title.empty() ? tr(STR_UNNAMED) : tocEntry.title;
+    if (tocEntry.title.empty()) {
+      label += tr(STR_UNNAMED);
+    } else if (tocEntry.titleDerived) {
+      // The book supplied no title, so the row shows its own opening words. Quoted
+      // so the reader can tell prose from a title the book actually gave.
+      char quoted[FB2_LABEL_BUFFER];
+      snprintf(quoted, sizeof(quoted), tr(STR_DERIVED_CHAPTER_LABEL_FORMAT), tocEntry.title.c_str());
+      label += quoted;
+    } else {
+      label += tocEntry.title;
+    }
     windowLabels[i] = std::move(label);
     fui::ListItem item;
     item.label = windowLabels[i].c_str();

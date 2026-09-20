@@ -20,13 +20,20 @@ class Fb2 {
   // for EPUB, which deletes this constant instead of tuning it.
   static constexpr uint16_t FB2_MAX_CHAPTERS = 256;
 
+  // Character cap for a DERIVED label only. A <title> the book supplies is stored
+  // as-is: measured across 2,899 real books, capping real titles too saves 3% of
+  // the worst book's metadata, which does not pay for changing what the reader
+  // sees. A derived label is prose and would otherwise be a whole paragraph.
+  static constexpr uint16_t FB2_MAX_LABEL_CHARS = 64;
+
   // One <section> of a reading body. The vector index is the chapter id used by
   // sections/<index>.bin, progress.bin and the chapter list.
   struct SectionInfo {
-    std::string title;      // the section's OWN title, empty when it has none
-    size_t fileOffset = 0;  // offset of its "<section" start tag
-    size_t length = 0;      // own bytes: full span minus child chapters' spans
-    uint8_t level = 0;      // nesting depth in the body; 0 = direct child of <body>
+    std::string title;         // its OWN title, a derived label, or empty when it has neither
+    size_t fileOffset = 0;     // offset of its "<section" start tag
+    size_t length = 0;         // own bytes: full span minus child chapters' spans
+    uint8_t level = 0;         // nesting depth in the body; 0 = direct child of <body>
+    uint8_t titleDerived = 0;  // 1 when `title` came from the first paragraph, not a <title>
   };
 
  private:

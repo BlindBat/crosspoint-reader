@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -10,6 +11,7 @@ namespace {
 
 using fb2test::fixturePath;
 using fb2test::readAll;
+using fb2test::writeAll;
 
 // Byte offset of the n-th (0-based) occurrence of `needle` in `haystack`.
 size_t nthOccurrence(const std::string& haystack, const std::string& needle, int n) {
@@ -77,11 +79,15 @@ TEST(Fb2MetadataParser, MissingTitleInfoFieldsStayEmpty) {
   EXPECT_EQ(parser.getCoverBinaryId(), "");
 }
 
-TEST(Fb2MetadataParser, UntitledSectionKeepsEmptyTitle) {
+// Superseded by contract L2: an untitled section no longer keeps an empty title,
+// it borrows its own first paragraph so the chapter list reads as words. A section
+// with no text at all still stores nothing (L7, covered in Fb2LabelTest).
+TEST(Fb2MetadataParser, UntitledSectionIsLabelledFromItsFirstParagraph) {
   Fb2MetadataParser parser(fixturePath("no-cover.fb2"));
   ASSERT_TRUE(parser.parse());
   ASSERT_EQ(parser.getSections().size(), 1u);
-  EXPECT_EQ(parser.getSections()[0].title, "");
+  EXPECT_EQ(parser.getSections()[0].title, "A section without a title element.");
+  EXPECT_EQ(parser.getSections()[0].titleDerived, 1);
 }
 
 // Every <section> is a chapter, at any depth (contract C2/C5). A nested section
@@ -391,6 +397,110 @@ TEST(Fb2MetadataParser, Utf8CyrillicTitlesSurviveIntact) {
   ASSERT_EQ(sections.size(), 2u);
   EXPECT_EQ(sections[0].title, "Глава первая");
   EXPECT_EQ(sections[1].title, "Глава вторая");
+}
+
+// Contract L1-L8: a section with no <title> of its own is labelled from its own
+// first paragraph, so the chapter list reads as words instead of "Unnamed".
+class Fb2LabelTest : public ::testing::Test {
+ protected:
+  void SetUp() override { ASSERT_TRUE(tmp.valid()); }
+
+  const std::vector<Fb2::SectionInfo>& parseSource(const std::string& source) {
+    path_ = tmp.path() + "/labels.fb2";
+    EXPECT_TRUE(writeAll(path_, source));
+    parser_ = std::make_unique<Fb2MetadataParser>(path_);
+    EXPECT_TRUE(parser_->parse());
+    return parser_->getSections();
+  }
+
+  fb2test::TempDir tmp;
+  std::string path_;
+  std::unique_ptr<Fb2MetadataParser> parser_;
+};
+
+TEST_F(Fb2LabelTest, RealTitleWinsAndIsNotMarkedDerived) {
+  // L1: a <title> the book supplies is stored as-is, uncapped and unflagged.
+  const auto& sections = parseSource(fb2test::makeSectionTowerFb2(3, 1));
+  ASSERT_EQ(sections.size(), 3u);
+  EXPECT_EQ(sections[0].title, "Section number 0 of the tower");
+  EXPECT_EQ(sections[0].titleDerived, 0);
+}
+
+TEST_F(Fb2LabelTest, UntitledSectionTakesItsOwnFirstParagraph) {
+  // L2 and L4: the first <p> becomes the label; the second never joins it.
+  const auto& sections = parseSource(fb2test::makeUntitledSectionsFb2(4, 1));
+  ASSERT_EQ(sections.size(), 4u);
+  EXPECT_EQ(sections[2].title, "Body of section 2");
+  EXPECT_EQ(sections[2].titleDerived, 1);
+  EXPECT_EQ(sections[2].title.find("Second paragraph"), std::string::npos);
+}
+
+TEST_F(Fb2LabelTest, AChildSectionsTextNeverLabelsItsParent) {
+  // L3: "its own" excludes descendants, the same rule a child's <title> follows.
+  const std::string source =
+      "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<FictionBook>\n"
+      "<description><title-info><book-title>Nest</book-title></title-info></description>\n<body>\n"
+      "<section><section><p>Child text only</p></section></section>\n"
+      "</body>\n</FictionBook>\n";
+  const auto& sections = parseSource(source);
+  ASSERT_EQ(sections.size(), 2u);
+  EXPECT_TRUE(sections[0].title.empty()) << "parent borrowed its child's text";
+  EXPECT_EQ(sections[0].titleDerived, 0);
+  EXPECT_EQ(sections[1].title, "Child text only");
+}
+
+TEST_F(Fb2LabelTest, WhitespaceIsCollapsedAndStripped) {
+  // L5.
+  const std::string source =
+      "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<FictionBook>\n"
+      "<description><title-info><book-title>Space</book-title></title-info></description>\n<body>\n"
+      "<section><p>\n   spaced   out\n   text\n</p></section>\n"
+      "</body>\n</FictionBook>\n";
+  const auto& sections = parseSource(source);
+  ASSERT_EQ(sections.size(), 1u);
+  EXPECT_EQ(sections[0].title, "spaced out text");
+}
+
+TEST_F(Fb2LabelTest, LabelIsCutOnACharacterBoundaryNotAByteBoundary) {
+  // L6: 80 Cyrillic characters (160 bytes) must cut to 64 characters, and the
+  // result must still be valid UTF-8 - a byte-wise cut would split a character.
+  const auto& sections = parseSource(fb2test::makeUntitledSectionsFb2(3, 1));
+  ASSERT_GE(sections.size(), 1u);
+  const std::string& label = sections[0].title;
+  EXPECT_EQ(sections[0].titleDerived, 1);
+  size_t chars = 0;
+  for (size_t i = 0; i < label.size();) {
+    const unsigned char c = static_cast<unsigned char>(label[i]);
+    const size_t width = c < 0x80 ? 1 : (c >> 5) == 0x06 ? 2 : (c >> 4) == 0x0E ? 3 : 4;
+    ASSERT_LE(i + width, label.size()) << "label was cut mid-character";
+    i += width;
+    chars++;
+  }
+  EXPECT_EQ(chars, static_cast<size_t>(Fb2::FB2_MAX_LABEL_CHARS));
+}
+
+TEST_F(Fb2LabelTest, SectionWithNeitherTitleNorTextKeepsAnEmptyLabel) {
+  // L7: the UI substitutes the localized placeholder at display time.
+  const auto& sections = parseSource(fb2test::makeUntitledSectionsFb2(4, 1));
+  ASSERT_GE(sections.size(), 2u);
+  EXPECT_TRUE(sections[1].title.empty());
+  EXPECT_EQ(sections[1].titleDerived, 0);
+}
+
+TEST_F(Fb2LabelTest, DerivingALabelChangesNoOffsetLengthOrLevel) {
+  // L8: labels are display data; the chapter model is untouched.
+  const std::string source = fb2test::makeUntitledSectionsFb2(6, 2);
+  const auto& sections = parseSource(source);
+  ASSERT_EQ(sections.size(), 6u);
+  size_t partitioned = 0;
+  for (size_t i = 0; i < sections.size(); i++) {
+    EXPECT_EQ(sections[i].fileOffset, nthOccurrence(source, "<section", static_cast<int>(i)))
+        << "chapter " << i << " offset moved";
+    partitioned += sections[i].length;
+  }
+  EXPECT_GT(partitioned, 0u);
+  EXPECT_EQ(sections[0].level, 0);
+  EXPECT_EQ(sections[1].level, 1);
 }
 
 }  // namespace

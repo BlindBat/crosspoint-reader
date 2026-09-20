@@ -159,7 +159,7 @@ TEST_F(Fb2BookTest, CacheVersionMismatchIsRejectedThenRebuilt) {
   // The cache file was rewritten with the current version byte.
   const std::string fresh = readAll(cacheFile);
   ASSERT_FALSE(fresh.empty());
-  EXPECT_EQ(fresh[0], 3);
+  EXPECT_EQ(fresh[0], 4);
 }
 
 // A book.bin whose tail was replaced by zeros must be rejected (a valid
@@ -436,6 +436,95 @@ TEST_F(Fb2BookTest, CacheFromTheOldHigherCeilingIsRejectedAndRebuilt) {
   Fb2 rebuilt(path, tmp.path());
   ASSERT_TRUE(rebuilt.load(true));
   EXPECT_EQ(rebuilt.getSectionCount(), 200);
+}
+
+// book.bin v4 carries the derived-label marker, so a label survives the round trip
+// and a book shows the same chapter list on its first and second open.
+TEST_F(Fb2BookTest, DerivedLabelAndItsFlagSurviveTheCacheRoundTrip) {
+  const std::string path = tmp.path() + "/labels.fb2";
+  ASSERT_TRUE(writeAll(path, fb2test::makeUntitledSectionsFb2(4, 1)));
+
+  Fb2 built(path, tmp.path());
+  ASSERT_TRUE(built.load(true));
+  ASSERT_EQ(built.getSectionCount(), 4);
+  ASSERT_EQ(built.getSectionInfo(2).title, "Body of section 2");
+  ASSERT_EQ(built.getSectionInfo(2).titleDerived, 1);
+
+  // Second open reads the cache written by the first.
+  Fb2 cached(path, tmp.path());
+  ASSERT_TRUE(cached.load(false));
+  EXPECT_EQ(cached.getSectionInfo(2).title, "Body of section 2");
+  EXPECT_EQ(cached.getSectionInfo(2).titleDerived, 1);
+  EXPECT_EQ(cached.getSectionInfo(0).titleDerived, 1);
+  EXPECT_TRUE(cached.getSectionInfo(1).title.empty());
+  EXPECT_EQ(cached.getSectionInfo(1).titleDerived, 0);
+}
+
+// A version-3 cache predates the flags byte; reading it as v4 would shift every
+// field after the first chapter's level. It must be rejected, not reinterpreted.
+TEST_F(Fb2BookTest, VersionThreeCacheIsRejectedAndRebuilt) {
+  Fb2 book(fixturePath("basic.fb2"), tmp.path());
+  book.setupCacheDir();
+  const std::string cacheFile = book.getCachePath() + "/book.bin";
+
+  std::string v3;
+  v3.push_back(3);
+  appendString(v3, "The Crosspoint Chronicle");
+  appendString(v3, "John Doe");
+  appendString(v3, "en");
+  appendString(v3, "");
+  appendPod<uint16_t>(v3, 1);
+  appendString(v3, "Chapter One");
+  appendPod<uint32_t>(v3, 100u);
+  appendPod<uint32_t>(v3, 200u);
+  appendPod<uint8_t>(v3, 0u);  // level, and then nothing: v3 has no flags byte
+  ASSERT_TRUE(writeAll(cacheFile, v3));
+
+  Fb2 cacheOnly(fixturePath("basic.fb2"), tmp.path());
+  EXPECT_FALSE(cacheOnly.load(false));
+
+  Fb2 rebuilt(fixturePath("basic.fb2"), tmp.path());
+  ASSERT_TRUE(rebuilt.load(true));
+  EXPECT_EQ(rebuilt.getSectionCount(), 2);
+}
+
+// The flags byte is untrusted input: only bit 0 is defined, and a derived marker
+// on an empty title cannot come from any parse.
+TEST_F(Fb2BookTest, CorruptFlagsByteIsRejected) {
+  Fb2 first(fixturePath("basic.fb2"), tmp.path());
+  ASSERT_TRUE(first.load());
+  const std::string cacheFile = first.getCachePath() + "/book.bin";
+  const std::string good = readAll(cacheFile);
+  ASSERT_FALSE(good.empty());
+
+  // The last byte of the file is the final chapter's flags byte.
+  std::string reserved = good;
+  reserved[reserved.size() - 1] = 0x40;  // a bit outside the defined 0x01
+  ASSERT_TRUE(writeAll(cacheFile, reserved));
+  Fb2 reservedBitSet(fixturePath("basic.fb2"), tmp.path());
+  EXPECT_FALSE(reservedBitSet.load(false)) << "an undefined flags bit must be rejected";
+
+  // A chapter claiming a derived label while storing no title at all.
+  std::string lying;
+  lying.push_back(good[0]);
+  appendString(lying, "Title");
+  appendString(lying, "Author");
+  appendString(lying, "en");
+  appendString(lying, "");
+  appendPod<uint16_t>(lying, 1);
+  appendString(lying, "");  // empty title...
+  appendPod<uint32_t>(lying, 0u);
+  appendPod<uint32_t>(lying, 10u);
+  appendPod<uint8_t>(lying, 0u);
+  appendPod<uint8_t>(lying, 1u);  // ...but flagged as derived
+  ASSERT_TRUE(writeAll(cacheFile, lying));
+  Fb2 derivedButEmpty(fixturePath("basic.fb2"), tmp.path());
+  EXPECT_FALSE(derivedButEmpty.load(false)) << "a derived flag with no label must be rejected";
+
+  // ...and the book still opens by reparsing.
+  Fb2 rebuilt(fixturePath("basic.fb2"), tmp.path());
+  ASSERT_TRUE(rebuilt.load(true));
+  EXPECT_EQ(rebuilt.getSectionCount(), 2);
 }
 
 // Contract C7 end to end: chapter lengths partition the body, so progress rises

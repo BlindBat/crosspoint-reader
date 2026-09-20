@@ -13,7 +13,12 @@ namespace {
 // v3: every <section> is a chapter at any depth, which renumbers chapters for
 // any nesting book, and each entry gains a `level` byte; the trailing TOC list
 // is gone because the chapter list IS the TOC.
-constexpr uint8_t FB2_CACHE_VERSION = 3;
+// v4: each entry gains a `flags` byte whose bit 0 marks a title derived from the
+// section's first paragraph rather than read from a <title>.
+constexpr uint8_t FB2_CACHE_VERSION = 4;
+
+// The only defined bit of a chapter's `flags` byte.
+constexpr uint8_t FB2_CHAPTER_FLAG_TITLE_DERIVED = 0x01;
 
 // Upper bound for any string stored in book.bin (title/author/language/cover
 // id/section titles). Real values are far below this; a corrupted length
@@ -27,7 +32,7 @@ constexpr uint32_t FB2_CACHE_MAX_STRING = 4096;
 // BEFORE reserve(): a 0xFFFF chapter count would request megabytes of vector
 // storage up front, which on the ~380KB-RAM device means a bare-new abort.
 constexpr uint32_t FB2_CACHE_MIN_SECTION_ENTRY =
-    sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint8_t);
+    sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint8_t) + sizeof(uint8_t);
 
 // Checked variants of the serialization readers: fail instead of accepting
 // short reads or unbounded string lengths, so a corrupted/truncated book.bin
@@ -108,10 +113,18 @@ bool Fb2::loadMetadataCache() {
   for (uint16_t i = 0; i < sectionCount; i++) {
     SectionInfo info;
     uint32_t offset, length;
-    uint8_t level;
+    uint8_t level, flags;
     if (!readStringChecked(file, info.title) || !readPodChecked(file, offset) || !readPodChecked(file, length) ||
-        !readPodChecked(file, level)) {
+        !readPodChecked(file, level) || !readPodChecked(file, flags)) {
       LOG_DBG("FB2", "Cache section %u corrupted", i);
+      sections.clear();
+      return false;
+    }
+    // Only bit 0 is defined, and a derived marker on an empty title cannot come
+    // from any parse, so either is corruption rather than an unknown future flag.
+    if ((flags & ~FB2_CHAPTER_FLAG_TITLE_DERIVED) != 0 ||
+        ((flags & FB2_CHAPTER_FLAG_TITLE_DERIVED) != 0 && info.title.empty())) {
+      LOG_DBG("FB2", "Cache section %u flags %u invalid", i, flags);
       sections.clear();
       return false;
     }
@@ -126,6 +139,7 @@ bool Fb2::loadMetadataCache() {
     info.fileOffset = offset;
     info.length = length;
     info.level = level;
+    info.titleDerived = (flags & FB2_CHAPTER_FLAG_TITLE_DERIVED) != 0 ? 1 : 0;
     sections.push_back(std::move(info));
   }
 
@@ -153,6 +167,7 @@ bool Fb2::saveMetadataCache() const {
     serialization::writePod(file, static_cast<uint32_t>(info.fileOffset));
     serialization::writePod(file, static_cast<uint32_t>(info.length));
     serialization::writePod(file, info.level);
+    serialization::writePod(file, static_cast<uint8_t>(info.titleDerived ? FB2_CHAPTER_FLAG_TITLE_DERIVED : 0));
   }
 
   LOG_DBG("FB2", "Saved metadata cache");

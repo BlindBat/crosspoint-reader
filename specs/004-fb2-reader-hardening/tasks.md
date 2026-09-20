@@ -210,7 +210,7 @@ selecting any row opens the chapter it names.
 
 ### Tests for User Story 3 ⚠️ write first, watch them fail
 
-- [ ] T018 [P] [US3] In `test/fb2_metadata_parser/Fb2MetadataParserTest.cpp`, cover L1–L8 from
+- [X] T018 [P] [US3] In `test/fb2_metadata_parser/Fb2MetadataParserTest.cpp`, cover L1–L8 from
       [contracts/reader-behaviour.md](contracts/reader-behaviour.md) with the T002 generators and
       the existing fixtures: a real `<title>` wins and `titleDerived` is 0 (L1); an untitled
       section takes its own first `<p>` with `titleDerived` 1 (L2); a child section's text never
@@ -219,7 +219,7 @@ selecting any row opens the chapter it names.
       (L6); a section with neither title nor printable text stores an empty title (L7); and no
       `fileOffset`, `length`, `level` or chapter index changes versus the same file parsed before
       the feature (L8).
-- [ ] T019 [P] [US3] In `test/fb2_book/Fb2BookTest.cpp`, cover the v4 format from
+- [X] T019 [P] [US3] In `test/fb2_book/Fb2BookTest.cpp`, cover the v4 format from
       [contracts/file-formats.md](contracts/file-formats.md): a derived label and its flag
       survive the write/read round trip; a valid **v3** cache is rejected and the book reparsed
       (no partial read, nothing unbounded allocated); `flags` with any bit outside `0x01` is
@@ -228,13 +228,13 @@ selecting any row opens the chapter it names.
 
 ### Implementation for User Story 3
 
-- [ ] T020 [US3] In `lib/Fb2/Fb2.h`, add the two things US3 owns — and nothing else, so the
+- [X] T020 [US3] In `lib/Fb2/Fb2.h`, add the two things US3 owns — and nothing else, so the
       commit stays separable from US1's T006: `static constexpr uint16_t FB2_MAX_LABEL_CHARS =
       64;` (the character cap for a **derived** label only, never for a real `<title>`), and
       `uint8_t titleDerived = 0;` in `Fb2::SectionInfo` **immediately after `level`**, so it packs
       into the existing padding — verified on riscv32, `sizeof(SectionInfo)` stays 36 B
       (research.md M2).
-- [ ] T021 [US3] In `lib/Fb2/Fb2/Fb2MetadataParser.h/.cpp`, derive the label. Add a context for
+- [X] T021 [US3] In `lib/Fb2/Fb2/Fb2MetadataParser.h/.cpp`, derive the label. Add a context for
       "inside the first `<p>` of a section that has no title yet", gated on the innermost open
       section (`openSections.back()`) being a chapter, so L3 holds by construction. Append into
       that chapter's existing `title` field — it is empty by definition here — set
@@ -244,22 +244,22 @@ selecting any row opens the chapter it names.
       `<title>` arrives afterwards, clear the derived text, reset `titleDerived` to 0 and store
       the title uncapped (L1). No new buffer member: reusing the `title` field is what keeps the
       per-chapter cost at the measured 36 B.
-- [ ] T022 [US3] In `lib/Fb2/Fb2.cpp`, take `book.bin` to v4: bump `FB2_CACHE_VERSION` 3 → 4
+- [X] T022 [US3] In `lib/Fb2/Fb2.cpp`, take `book.bin` to v4: bump `FB2_CACHE_VERSION` 3 → 4
       (line 16), write and read the per-chapter `flags` byte after `level`, grow
       `FB2_CACHE_MIN_SECTION_ENTRY` by one byte so the pre-`reserve()` size check stays honest,
       and validate before use — `flags & ~0x01` must be 0, and `flags & 0x01` implies a non-empty
       title. Any failure keeps the existing reject-and-reparse path (FR-021, Principle VI).
-- [ ] T023 [P] [US3] In `lib/I18n/translations/english.yaml`, add
+- [X] T023 [P] [US3] In `lib/I18n/translations/english.yaml`, add
       `STR_DERIVED_CHAPTER_LABEL_FORMAT: "“%s”"` following the existing `*_FORMAT` naming
       convention (e.g. `STR_DEVICE_FROM_FORMAT`). English is the reference; the other 33
       languages fall back to it until translated, so no other YAML file is edited here.
-- [ ] T024 [US3] In `src/activities/reader/Fb2ReaderChapterSelectionActivity.cpp`'s
+- [X] T024 [US3] In `src/activities/reader/Fb2ReaderChapterSelectionActivity.cpp`'s
       `refreshTocWindow`, render a row whose `titleDerived` is set through
       `tr(STR_DERIVED_CHAPTER_LABEL_FORMAT)` with `snprintf` into a stack buffer, so a derived
       label reads as the book's words rather than as a title the book supplied (FR-016). Real
       titles and the `STR_UNNAMED` placeholder are unchanged. **Depends on T009** (the window) —
       the only cross-story dependency in the feature.
-- [ ] T025 [P] [US3] In `docs/file-formats.md`, rewrite the `book.bin` section (lines ~700-730)
+- [X] T025 [P] [US3] In `docs/file-formats.md`, rewrite the `book.bin` section (lines ~700-730)
       for version 4: the `u8 flags` field with bit 0 documented, the two new validation rules,
       the derived-label rule and its 64-character cap, and a line saying real titles are stored
       as the book supplies them. Add the v3 → v4 note to the version history the way v2 → v3 is

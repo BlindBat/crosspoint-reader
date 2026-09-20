@@ -697,10 +697,10 @@ described above.
 
 ## FB2 caches *(fork-only)*
 
-### `book.bin` version 3
+### `book.bin` version 4
 
 ```c++
-u8     version;         // 3
+u8     version;         // 4
 String title;
 String author;
 String language;
@@ -711,7 +711,14 @@ String chapterTitle;    // the section's OWN title, may be empty
 u32    fileOffset;      // offset of its "<section" start tag
 u32    ownLength;       // own bytes: full span minus child chapters' spans
 u8     level;           // nesting depth; 0 = direct child of <body>
+u8     flags;           // bit0: title was derived from the first paragraph; other bits reserved 0
 ```
+
+A section with no `<title>` of its own is labelled from its own first `<p>`, cut to
+`FB2_MAX_LABEL_CHARS` (64) codepoints on a character boundary, and `flags` bit 0 records that the
+title was derived rather than supplied by the book. A title the book does supply is stored as it
+is written, bounded on read by the 4096-byte string cap. A section with neither a title nor text
+of its own stores an empty title, and the UI substitutes its localized placeholder.
 
 Every `<section>` of a reading body is a chapter, numbered in start-tag order at
 any depth, so the chapter list is the TOC: there is no separate TOC list, and
@@ -725,11 +732,14 @@ Reads are bounded: any string longer than 4096 bytes is rejected, a chapter coun
 of zero or above `FB2_MAX_CHAPTERS` (256) is treated as corruption (the parser
 always emits at least a whole-file fallback chapter and never more than the cap),
 the count is checked against the bytes remaining in the file before `reserve()`,
-and a `level` that jumps more than one step past its predecessor — or a non-zero
-level on the first chapter — fails the load. Any failure falls back to reparsing
+a `level` that jumps more than one step past its predecessor — or a non-zero
+level on the first chapter — fails the load, and a `flags` byte with any bit outside
+bit 0 set, or a derived marker on an empty title, is corruption. Any failure falls back to reparsing
 the FB2 file.
 
-Version 2 stopped counting auxiliary `<body name="...">` sections as chapters,
+Version 4 added the `flags` byte; a version-3 cache is rejected and the book's
+metadata reparsed, which does not touch `sections/<index>.bin` and so re-paginates
+nothing. Version 2 stopped counting auxiliary `<body name="...">` sections as chapters,
 which shifts section numbering for books with footnote bodies. Version 3 makes
 every nested `<section>` a chapter of its own and adds the `level` byte, which
 renumbers chapters for any book that nests sections; the chapter count is capped

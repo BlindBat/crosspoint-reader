@@ -33,6 +33,7 @@ class Fb2MetadataParser {
     BODY,
     SECTION_TITLE,
     SECTION_TITLE_P,
+    SECTION_LABEL_P,
     BINARY_SCAN
   };
   Context context = Context::NONE;
@@ -56,6 +57,7 @@ class Fb2MetadataParser {
     size_t startOffset;  // byte offset of its "<section" start tag
     size_t childBytes;   // bytes claimed by child chapters
     int elemDepth;       // element depth of the <section> itself
+    bool labelTaken;     // its first direct <p> has already been offered as a label
   };
   static constexpr size_t NOT_A_CHAPTER = static_cast<size_t>(-1);
   std::vector<OpenSection> openSections;

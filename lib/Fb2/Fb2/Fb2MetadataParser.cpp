@@ -29,6 +29,36 @@ std::string getXlinkHref(const char** atts) {
   return "";
 }
 
+// Collapses internal whitespace runs to single spaces, strips the ends, and cuts
+// the result to FB2_MAX_LABEL_CHARS codepoints (never mid-character). Used only for
+// a derived label: a <p> is prose, so without this a label could be a paragraph.
+void normalizeLabel(std::string& text) {
+  std::string out;
+  out.reserve(text.size() < 256 ? text.size() : 256);
+  bool pendingSpace = false;
+  size_t chars = 0;
+  for (const char rawChar : text) {
+    const unsigned char byte = static_cast<unsigned char>(rawChar);
+    if (byte <= ' ') {
+      pendingSpace = !out.empty();
+      continue;
+    }
+    const bool isContinuation = (byte & 0xC0) == 0x80;
+    if (!isContinuation) {
+      if (chars >= Fb2::FB2_MAX_LABEL_CHARS) break;
+      if (pendingSpace) {
+        out += ' ';
+        chars++;
+        pendingSpace = false;
+        if (chars >= Fb2::FB2_MAX_LABEL_CHARS) break;
+      }
+      chars++;
+    }
+    out += rawChar;
+  }
+  text.swap(out);
+}
+
 // True when the element carries a name attribute (e.g. <body name="notes">).
 bool hasNameAttribute(const char** atts) {
   if (!atts) return false;
@@ -37,6 +67,7 @@ bool hasNameAttribute(const char** atts) {
   }
   return false;
 }
+constexpr size_t LABEL_SCAN_BYTES = Fb2::FB2_MAX_LABEL_CHARS * 4;
 }  // namespace
 
 void Fb2MetadataParser::startElement(void* userData, const char* name, const char** atts) {
@@ -112,17 +143,31 @@ void Fb2MetadataParser::startElement(void* userData, const char* name, const cha
         entryIndex = self->sections.size();
         self->sections.push_back(std::move(info));
       }
-      self->openSections.push_back({entryIndex, startOffset, 0, depth});
+      self->openSections.push_back({entryIndex, startOffset, 0, depth, false});
       self->inSectionTitle = false;
     } else if (strcmp(tag, "title") == 0 && !self->openSections.empty() &&
                depth == self->openSections.back().elemDepth + 1 &&
                self->openSections.back().entryIndex != NOT_A_CHAPTER) {
       // Only a <title> that is a DIRECT child of the section is its title; a
-      // <poem><title> or a child section's title is not.
+      // <poem><title> or a child section's title is not. A real title always wins
+      // over a label derived from the section's first paragraph.
+      auto& entry = self->sections[self->openSections.back().entryIndex];
+      if (entry.titleDerived) {
+        entry.title.clear();
+        entry.titleDerived = 0;
+      }
       self->inSectionTitle = true;
       self->charBuffer.clear();
     } else if (strcmp(tag, "p") == 0 && self->inSectionTitle) {
       self->context = Context::SECTION_TITLE_P;
+      self->charBuffer.clear();
+    } else if (strcmp(tag, "p") == 0 && !self->openSections.empty() &&
+               self->openSections.back().entryIndex != NOT_A_CHAPTER && !self->openSections.back().labelTaken &&
+               depth == self->openSections.back().elemDepth + 1 &&
+               self->sections[self->openSections.back().entryIndex].title.empty()) {
+      // A title-less section borrows its own first direct <p> as a chapter-list
+      // label. Direct child only, so a child section's text never labels a parent.
+      self->context = Context::SECTION_LABEL_P;
       self->charBuffer.clear();
     }
   }
@@ -197,6 +242,18 @@ void Fb2MetadataParser::endElement(void* userData, const char* name) {
       }
       self->charBuffer.clear();
       self->context = Context::NONE;
+    } else if (strcmp(tag, "p") == 0 && self->context == Context::SECTION_LABEL_P) {
+      if (!self->openSections.empty() && self->openSections.back().entryIndex != NOT_A_CHAPTER) {
+        self->openSections.back().labelTaken = true;
+        normalizeLabel(self->charBuffer);
+        if (!self->charBuffer.empty()) {
+          auto& entry = self->sections[self->openSections.back().entryIndex];
+          entry.title = self->charBuffer;
+          entry.titleDerived = 1;
+        }
+      }
+      self->charBuffer.clear();
+      self->context = Context::NONE;
     } else if (strcmp(tag, "section") == 0) {
       if (!self->openSections.empty()) {
         const OpenSection closed = self->openSections.back();
@@ -233,6 +290,10 @@ void Fb2MetadataParser::characterData(void* userData, const char* s, int len) {
   if (self->context == Context::BOOK_TITLE || self->context == Context::AUTHOR_FIRST_NAME ||
       self->context == Context::AUTHOR_MIDDLE_NAME || self->context == Context::AUTHOR_LAST_NAME ||
       self->context == Context::LANG || self->context == Context::SECTION_TITLE_P) {
+    self->charBuffer.append(s, len);
+  } else if (self->context == Context::SECTION_LABEL_P && self->charBuffer.size() < LABEL_SCAN_BYTES) {
+    // Bounded: normalizeLabel cuts to FB2_MAX_LABEL_CHARS codepoints, and 4 bytes
+    // per codepoint is the UTF-8 worst case, so nothing longer can matter.
     self->charBuffer.append(s, len);
   }
 }
