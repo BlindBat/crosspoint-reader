@@ -41,6 +41,14 @@ Three scope decisions were settled with the requester before drafting, so no
 3. **#10 (untitled sections)** — labelled from the chapter's own first line of text, with the
    localized placeholder kept as the fallback.
 
+**Post-plan amendment (2026-09-20)**: the ceiling was re-derived from measurement rather than
+judgement — a firmware RAM report, `sizeof` values read from a riscv32 object file, and 2,899
+real FB2 books parsed through this repo's own parser. Three spec items changed as a result:
+FR-001 now requires the ceiling to be justified against measured device figures; SC-002 is
+restated against the measured usable heap instead of a host test's synthetic figure; and FR-018
+no longer caps real titles, because capping them was measured to save 3%. See research.md M1–M3
+and Decisions 1 and 4.
+
 Validation notes on two items that needed a second pass:
 
 - *No implementation details*: the spec names files and line numbers in the Context and in

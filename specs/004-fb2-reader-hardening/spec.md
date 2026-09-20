@@ -37,12 +37,12 @@ onto the SD card and opens it. The book opens, its chapter list scrolls, and the
 not run out of memory, regardless of how many sections the file contains. The reader is never
 shown a chapter list that the device cannot afford to build.
 
-**Why this priority**: this is the only item in the feature that can cost a reader their book.
-The chapter cap is currently 1024, and a book that actually reached it would allocate
-**148,328 bytes** of chapter metadata (measured, `test/fb2_book/Fb2BookTest.cpp`
-`ChapterMetadataAllocatesOneTitlePerChapterAndStaysCapped`) — most of what remains of the
-ESP32-C3's ~380 KB after a 48 KB framebuffer and ~56 KB of static allocation. The cap bounds
-growth but is not a value the device can survive reaching.
+**Why this priority**: this is the only item in the feature that can cost a reader their book,
+and it is not hypothetical. Measured over **2,899 real FB2 books**, two of them already sit at
+today's cap of 1024 chapters, and the worst costs **99,716 bytes** of chapter metadata on the
+ESP32-C3 — **44.9% of the 222,180 bytes of heap the reader has left** once the measured 56,348
+bytes of static allocation and the 48 KB framebuffer are accounted for, before a single page is
+paginated. The cap bounds growth but is not a value the device can survive reaching.
 
 **Independent Test**: build a synthetic FB2 whose section count exceeds the ceiling, open it
 on the most constrained target, and confirm the book opens, every byte of text is still
@@ -163,7 +163,8 @@ placeholder.
 
 - **FR-001**: The FB2 chapter ceiling MUST be a value the most constrained supported target can
   reach without exhausting memory: opening a book at the ceiling MUST leave the device able to
-  render pages and show the chapter list.
+  render pages and show the chapter list. The ceiling MUST be justified against measured device
+  figures — available heap and per-chapter cost — not against a round number.
 - **FR-002**: The ceiling MAY differ per board, with more generous targets (those with PSRAM)
   permitted a higher value than the ESP32-C3.
 - **FR-003**: A book whose section count exceeds the ceiling MUST still open and MUST lose no
@@ -208,7 +209,9 @@ placeholder.
 - **FR-017**: A chapter with neither a title nor direct text of its own MUST keep the localized
   placeholder (`STR_UNNAMED`) it shows today.
 - **FR-018**: Derived labels MUST be truncated at valid character boundaries for the book's
-  encoding and MUST be bounded in length by the same cap that bounds stored chapter titles.
+  encoding and MUST be bounded by a fixed character cap. Real titles the book supplies are
+  stored as-is: measured, capping them too saves 3% of the worst book's metadata, which does not
+  justify changing what the reader sees in a third of books.
 - **FR-019**: Deriving a label MUST NOT change chapter ordering, chapter indices, navigation
   targets, or the progress percentage.
 - **FR-020**: All user-facing text introduced or changed by this feature MUST go through the
@@ -244,9 +247,9 @@ placeholder.
 - **SC-001**: An FB2 whose section count exceeds the ceiling opens, is fully readable end to
   end, and its chapter list scrolls from first row to last on the most constrained supported
   board.
-- **SC-002**: Chapter-metadata allocation for a book at the ceiling is at most one quarter of
-  the 148,328 bytes measured at the current cap of 1024, and is flat as the file's section
-  count grows past the ceiling.
+- **SC-002**: No book in the 2,899-book reference corpus costs more than **20% of the device's
+  measured usable heap** (222,180 bytes) in chapter metadata — down from 44.9% today — and the
+  figure is flat as a file's section count grows past the ceiling.
 - **SC-003**: Chapter-list memory is constant with respect to chapter count: the same measured
   figure for a 4-chapter book and for a book at the ceiling.
 - **SC-004**: The reference anthology (1.9 MB, 66 chapters) shows the same chapters in the same
@@ -297,10 +300,12 @@ placeholder.
   48 KB framebuffer and ~56 KB of static allocation before any book opens.
 - The reference anthology (1.9 MB, 66 chapters, ~15 KB of chapter metadata) remains the
   calibration book; it is comfortable today and must stay so.
-- The largest real-world FB2 anyone has reported is far below the current cap of 1024, so a
-  substantially lower ceiling costs no reader a book. If a real book is later found above the
-  chosen ceiling, FR-003 means it still opens and still reads — only its chapter list is
-  coarser.
+- The chapter-count distribution of the 2,899-book reference corpus (median 18, p90 64, p99 200,
+  22 books above 256) is representative of what readers own. A ceiling that degrades 0.76% of
+  books — all of them reference works, not novels — is an acceptable price for halving the worst
+  case. FR-003 means a degraded book still opens and still reads; measured, it puts a median
+  31.5% of its text into one tail chapter, which is coarser navigation and a slower first
+  pagination of that chapter, not lost content.
 - The cover asset is already produced at import for every FB2 that has one; this feature
   consumes it and does not change extraction.
 - A cover page that occupies a position ahead of the first page of text — rather than being
@@ -308,10 +313,11 @@ placeholder.
   bump; the mechanism is a planning decision.
 - Untitled sections are common enough in nested anthologies to be worth labelling, and a book's
   own first line is a better label than any generated text.
-- All measurements cited (148,328 bytes at the cap; 8,944 bytes at 40 chapters; ~15 KB for the
-  reference book) come from the existing host test
-  `test/fb2_book/Fb2BookTest.cpp`, and the same harness measures the outcomes in SC-002 and
-  SC-003.
+- Device figures (99,716 bytes worst case, 222,180 bytes usable heap, 36 bytes per chapter) come
+  from a firmware build's RAM report, `sizeof` values read out of a riscv32 object file, and the
+  2,899-book corpus parsed through this repo's own metadata parser; the method is recorded in
+  `research.md` (M1–M3). Host allocation figures from `test/fb2_book/Fb2BookTest.cpp` remain the
+  regression proxy that guards SC-002 and SC-003 in CI.
 
 ## Dependencies
 
