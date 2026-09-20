@@ -289,7 +289,7 @@ line`.
       `pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high`.
 - [X] T029 [P] Build one S3 board — `pio run -e sticky` — since a change can build on C3 and
       fail on S3; CI builds all five environments.
-- [ ] T030 *(orientation and the dithered-cover question are settled: the four orientations are verified in the simulator, above, and the grayscale upgrade was declined — only the heap figures remain, and they need the device.)* Hand the device checks to the human tester per [quickstart.md](quickstart.md) §5 and
+- [X] T030 *(orientation and the dithered-cover question are settled: the four orientations are verified in the simulator, above, and the grayscale upgrade was declined — only the heap figures remain, and they need the device.)* Hand the device checks to the human tester per [quickstart.md](quickstart.md) §5 and
       §7, and include the **SC-003 heap check** that no host test can reach: free heap after
       opening a 4-chapter FB2 and after opening one at the ceiling, which must differ only by
       chapter metadata and not by chapter-list buffers. Also: the cover page in all four
@@ -385,6 +385,43 @@ Two of the three only became labels after a fix this verification found: the fir
 implementation required the paragraph to be a **direct** child of the section, and both of
 those sections open with an `<epigraph>` instead. Commit `ce99d047` widened L2 to the
 section's own first paragraph at any depth, which is a smaller rule, not a bigger one.
+
+## Device measurements (T030)
+
+Xteink X4 (ESP32-C3), `master @ de34ee99` vs `feature/fb2-reader-hardening`, same card, same
+book (Марсианские хроники, 66 chapters), same five-point walk. Figures are `ESP.getFreeHeap()`
+from `src/main.cpp:653`.
+
+| | master | branch | |
+|---|---|---|---|
+| Heap total reported by the device | 268,352 | 268,352 | the model predicted 271,332 — within 1% |
+| Home, idle | 138,200 | 138,200 | identical |
+| Reader, book open | 146,580 | 146,244 | |
+| Chapter list, 66 chapters | 136,620 | 142,076 | |
+| **Cost of the chapter list** | **9,960 B** | **4,168 B** | **−58%**, and flat while scrolling to chapter 66 (SC-003) |
+| **`Min Free` low-water, steady state** | **76,940** | **78,820** | branch is 1,880 B *better* |
+| `Min Free` during the v4 migration | — | 69,356 | one-time, first open only |
+
+**The v4 bump behaves as designed on hardware.** `[FB2] Cache version mismatch: 3 vs 4` → a
+4.25 s metadata reparse → `Saved metadata cache`, and then `Loading section 65` /
+`Loaded section: 30 pages` in **7 ms**: the page cache survived and nothing was re-paginated,
+which is Decision 5's central claim measured rather than argued.
+
+**The cover renders on the panel**: `Cropping 498x800 by 0x0 pix, Scaling by 0.963855` — the
+same 498x800 asset issue #5 quoted from the sleep screen, letterboxed and never cropped.
+
+**Two readings corrected during this session**, both recorded because the first version of each
+was wrong:
+
+1. A first comparison showed the branch's `Min Free` 7,928 B *worse* than master. Unfair:
+   `grep "Cache version mismatch" master.log` is empty — master never reparsed, because the
+   card already held a v3 `book.bin`. Measuring the branch's *second* open, with no migration,
+   put it 1,880 B ahead. The dip was the one-time format migration, not a steady-state cost, and
+   far too large to be T007's `shrink_to_fit` (2.4 KB at 66 chapters).
+2. The last chapter appeared to load "way faster" on the branch. It did — because master had
+   paginated section 65 from scratch during its own walk (`Cache not found, building...`) and
+   the branch then read that cache in 7 ms. Run the two in the other order and the advantage
+   flips. Not a property of this work.
 
 ## Notes
 
