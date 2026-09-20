@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <book-title>Deep Nesting</book-title>
+      <lang>en</lang>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Book Level</p></title>
+      <p>levelzeroword</p>
+      <poem>
+        <title><p>Poem Title</p></title>
+        <stanza><v>poemword</v></stanza>
+      </poem>
+      <section>
+        <title><p>Part Level</p></title>
+        <p>leveloneword</p>
+        <section>
+          <title><p>Chapter Level</p></title>
+          <p>leveltwoword</p>
+          <section>
+            <title><p>Scene Level</p></title>
+            <p>levelthreeword</p>
+          </section>
+        </section>
+      </section>
+    </section>
+  </body>
+</FictionBook>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook>
+  <description>
+    <title-info>
+      <book-title>Body Prefix</book-title>
+      <lang>en</lang>
+    </title-info>
+  </description>
+  <body>
+    <title><p>Bodytitleword of the part</p></title>
+    <epigraph><p>Bodyepigraphword stands alone.</p></epigraph>
+    <section>
+      <title><p>Firstchapter</p></title>
+      <p>Firstword of the first chapter.</p>
+    </section>
+    <section>
+      <title><p>Secondchapter</p></title>
+      <p>Secondword of the second chapter.</p>
+    </section>
+  </body>
+</FictionBook>

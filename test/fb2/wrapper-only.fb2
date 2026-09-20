@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <book-title>Wrapper Only</book-title>
+      <lang>en</lang>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Outer</p></title>
+      <p>outerword</p>
+      <section>
+        <section>
+          <title><p>Inner Leaf</p></title>
+          <p>innerleafword</p>
+        </section>
+      </section>
+    </section>
+  </body>
+</FictionBook>

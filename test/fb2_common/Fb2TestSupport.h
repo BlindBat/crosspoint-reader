@@ -63,4 +63,31 @@ class TempDir {
   std::string path_;
 };
 
+// Deterministic FB2 body of `sectionCount` sections, emitted as sibling chains
+// `depth` levels deep (so 1100 sections at depth 2 give 550 two-level towers,
+// and 64 at depth 64 give one 64-deep chain). Section i carries the word "wordI"
+// and a title long enough to exceed std::string's small-buffer optimisation, so
+// allocation-counting tests see one heap allocation per stored title.
+inline std::string makeSectionTowerFb2(const int sectionCount, const int chainDepth) {
+  const int depth = chainDepth < 1 ? 1 : chainDepth;
+  std::string out =
+      "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<FictionBook>\n"
+      "<description><title-info><book-title>Tower</book-title><lang>en</lang></title-info></description>\n<body>\n";
+  int emitted = 0;
+  while (emitted < sectionCount) {
+    const int chain = (sectionCount - emitted) < depth ? (sectionCount - emitted) : depth;
+    for (int i = 0; i < chain; i++) {
+      const std::string n = std::to_string(emitted + i);
+      out += "<section><title><p>Section number " + n + " of the tower</p></title><p>word" + n + "</p>";
+    }
+    for (int i = 0; i < chain; i++) {
+      out += "</section>";
+    }
+    out += "\n";
+    emitted += chain;
+  }
+  out += "</body>\n</FictionBook>\n";
+  return out;
+}
+
 }  // namespace fb2test
