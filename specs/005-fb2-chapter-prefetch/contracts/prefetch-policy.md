@@ -106,7 +106,14 @@ prefetch" case (SC-006): correct, no popup mismatch, no lost position, just no s
 
 ## P8 — Side effects
 
-Prefetch's only writes are `sections/<N+1>.bin` and its `.part`. It MUST NOT touch
+Prefetch writes `sections/<N+1>.bin` and its `.part`, and **deletes a stale
+`sections/<N+1>.bin`**: the P4 header probe calls `loadSectionFile()`, which calls
+`clearCache()` on a version or render-spec mismatch
+([Fb2Section.cpp:83, 99, 113, 131](../../../lib/Fb2/Fb2/Fb2Section.cpp)). That delete is
+intended — the file is unusable under the current spec and would be discarded at the
+crossing anyway — but it is named here so it is not a surprise in a diff.
+
+Those three paths are the whole side-effect surface. Prefetch MUST NOT touch
 `progress.bin`, the recent-books store, `SETTINGS`, `APP_STATE`, the framebuffer, or any
 displayed state (FR-019). It MUST NOT show the indexing popup — that popup means *the
 user is waiting*, and during prefetch nobody is. `startBuild()` is therefore called with

@@ -59,11 +59,26 @@ Budgets are checked **between** `XML_ParseBuffer` calls, never inside a handler.
 therefore always ends on a buffer boundary and may overrun its page budget by however many
 pages one 1024-byte buffer completes.
 
-## B4 — Atomicity
+## B4 — Commit and swap
 
 - A build writes to `binTmpPath()` = `<filePath> + ".part"`, never to `filePath`.
-- `filePath` is replaced by a single `Storage.rename()` **after** the page stream, the LUT
-  and the patched header are all written.
+- `filePath` is replaced **after** the page stream, the LUT and the patched header are all
+  written, by `Storage.remove(filePath)` (if it exists) followed by
+  `Storage.rename(binTmpPath(), filePath)` — in that order, exactly as
+  `Section::commitBuildFile` does ([Section.cpp:651-657](../../../lib/Epub/Epub/Section.cpp)).
+
+  **The rename alone is not enough and is not atomic.** `FatFile::rename` opens the
+  destination with `O_CREAT | O_EXCL | O_WRONLY`
+  ([SdFat FatFile.cpp:973](../../../.pio/libdeps/default/SdFat/src/FatLib/FatFile.cpp)), so
+  renaming onto an existing path **fails**. The remove is what makes the swap work on FAT,
+  and it leaves a window in which neither file exists — a crash there loses the old cache
+  but leaves a fully-committed `.part` that the next `startBuild()` removes and rebuilds.
+  That is the same trade EPUB already makes.
+
+  The host stub's `rename` is POSIX `::rename`, which silently overwrites
+  ([test/fb2_common/stubs/HalStorage.h:72](../../../test/fb2_common/stubs/HalStorage.h)).
+  It MUST be made to refuse an existing destination before any test relies on this rule,
+  or the suite passes on host while the device fails (Principle V).
 - A pre-existing `sections/<n>.bin` stays readable and valid for the entire build. A build
   that is abandoned leaves it exactly as it was.
 - `abandonBuild()` removes the `.part`. So does the destructor.

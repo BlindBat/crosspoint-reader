@@ -133,11 +133,20 @@ plan's Spec Deviations too) and belongs with issue #8's metadata rework.
 
 ---
 
-## D6 — `.part` file and atomic rename
+## D6 — `.part` file and the remove-then-rename swap
 
 **Decision**: a build writes to `sections/<n>.bin.part` and renames it over
 `sections/<n>.bin` only after the page LUT and the header's page count are written.
 `abandonBuild()` removes the `.part`.
+
+**The rename does not overwrite.** `FatFile::rename` opens the destination with
+`O_CREAT | O_EXCL | O_WRONLY`
+([SdFat FatFile.cpp:973](../../.pio/libdeps/default/SdFat/src/FatLib/FatFile.cpp)), so a
+rename onto an existing path fails on FAT. The swap MUST therefore be
+`Storage.remove(filePath)` (if present) followed by the rename, exactly as
+`Section::commitBuildFile` already does ([Section.cpp:651-657](../../lib/Epub/Epub/Section.cpp)).
+The host stub uses POSIX `::rename`, which overwrites silently, so the stub MUST be made to
+refuse an existing destination or no test can catch this (Principle V).
 
 **Rationale**: `Storage.rename()` exists ([HalStorage.h:60](../../lib/hal/HalStorage.h))
 and `Section::binTmpPath()` sets the precedent

@@ -42,9 +42,10 @@ between the two, no lifetime is coupled, and the reader's own path is unchanged.
 
 **No new cache format.** Prefetch writes byte-identical output to an on-demand build, so
 `FB2_SECTION_FILE_VERSION` does not move and `docs/file-formats.md` needs no edit. A
-build in progress writes to `sections/<N+1>.bin.part` and is renamed over the real path
+build in progress writes to `sections/<N+1>.bin.part` and is swapped over the real path
 only on completion, so an abandoned prefetch leaves nothing a reader can mistake for a
-cache (mirroring `Section::binTmpPath()`).
+cache (mirroring `Section::binTmpPath()` and `commitBuildFile`'s remove-then-rename —
+FAT refuses a rename onto an existing path, see [contracts/build-api.md B4](contracts/build-api.md)).
 
 **No new task, no new dependency, no new UI, no new setting.**
 
@@ -60,6 +61,10 @@ a prefetch that gets abandoned. This is what makes the feature cheap enough to j
 **Prefetch cannot resume across a power cycle, so FR-015 is partly unmet.** See
 [Spec Deviations](#spec-deviations).
 
+**Vocabulary**: the spec says *preparation* and *the chapter ahead* because it avoids
+implementation words; this plan, the contracts and the tasks say *prefetch* and *chapter
+N+1* for the same things.
+
 ## Technical Context
 
 **Language/Version**: C++20 (`-std=gnu++2a`), `-fno-exceptions`, no RTTI
@@ -72,8 +77,10 @@ a prefetch that gets abandoned. This is what makes the feature cheap enough to j
 plus a transient `<n>.bin.part` during a build. No format or version change.
 
 **Testing**: host gtest via `bin/run-tests` (plain + `--asan`). Existing suites extended:
-`fb2_section_cache`, `fb2_section_parser`. New device/simulator verification for timing
-and heap. `alloc_guards` for the allocation-count proxy.
+`fb2_section_cache`, `fb2_section_parser`, `xtc_fb2_readers` (target predicate),
+`alloc_guards` (allocation-count proxy). The host storage stub's `rename` must be made to
+refuse an existing destination first, or the swap tests pass on host and fail on device.
+New device/simulator verification for timing and heap.
 
 **Target Platform**: ESP32-C3 (`default`, ~380 KB RAM, single core, no PSRAM) is the
 binding target; ESP32-S3 boards inherit. Interaction verified in crosspoint-simulator,
@@ -92,8 +99,10 @@ duration is a direct tax on render latency. Three numbers — slice page budget,
 budget, idle settle interval — are deliberately unset here and fixed by measurement in
 Phase 0 tasks R1–R3 ([research.md](research.md)).
 
-**Scale/Scope**: three files changed (`Fb2SectionParser.{h,cpp}`, `Fb2Section.{h,cpp}`,
-`Fb2ReaderActivity.{h,cpp}`). No change to EPUB, TXT, XTC, or any cache format.
+**Scale/Scope**: five source files (`Fb2SectionParser.{h,cpp}`, `Fb2Section.{h,cpp}`,
+`Fb2ReaderActivity.{h,cpp}`, `Fb2ReaderMath.{h,cpp}` for the target predicate) plus four
+test targets (`fb2_section_cache`, `fb2_section_parser`, `xtc_fb2_readers`, `alloc_guards`)
+and the host storage stub. No change to EPUB, TXT, XTC, or any cache format.
 
 ## Constitution Check
 
@@ -103,10 +112,10 @@ Phase 0 tasks R1–R3 ([research.md](research.md)).
 |-----------|------------|
 | **I. A Focused Reading Device** | PASS. Removing a four-second stall at every chapter boundary is the core reading experience. No new surface: no setting, no screen, no connectivity. The feature exists because nested-chapter navigation (003) redistributed pagination work into many small waits. |
 | **II. Memory Is the Design Constraint** | PASS with a budget. One additional live `Fb2SectionParser` + expat instance + open `HalFile` + one in-flight `ParsedText`/`Page`. `BuildContext` is `makeUniqueNoThrow`; the page LUT gets `.reserve()` (research R4); prefetch is gated on free heap and largest block before it starts and pauses when either falls, reusing the reader's existing 32 KB / 16 KB thresholds ([EpubReaderActivity.h:110-111](../../src/activities/reader/EpubReaderActivity.h)) unless R4 measures that FB2 needs more. Peak live set is *lower* than the status quo's, because today's on-demand build holds the same objects — prefetch just holds them at a different time. |
-| **III. Portability Behind the HAL** | PASS. All new logic is in `lib/Fb2/`, which is already host-compilable and reached by two gtest suites. The only `src/` change is the activity that drives it. No Arduino or hardware include crosses the seam. |
+| **III. Portability Behind the HAL** | PASS. All new logic is in `lib/Fb2/`, which is already host-compilable and reached by two gtest suites. The `src/` changes are the activity that drives it plus a pure target-selection predicate in `Fb2ReaderMath`, which is itself host-compiled by `xtc_fb2_readers`. No Arduino or hardware include crosses the seam. |
 | **IV. Evidence Over Claims** | PASS. Every claim cites a file/line or the issue's device log. Three numeric parameters are named but left unset, with a measurement procedure each (R1–R3); none is written down as a round number with a story. The "prefetch is free in aggregate" claim states its mechanism (the scan already happens per chapter today, [Fb2SectionParser.cpp:459-460](../../lib/Fb2/Fb2/Fb2SectionParser.cpp)). |
 | **V. Tests Prove Behavior** | PASS. The load-bearing test is **incremental output ≡ one-shot output** for the same chapter and spec, mirroring [EpubSectionBuildTest.cpp:170](../../test/epub_section/EpubSectionBuildTest.cpp). Slice-boundary tests cover pausing mid-page, mid-tag and mid-text-node. Each new suite must name a production mutation it catches ([contracts/build-api.md](contracts/build-api.md) §T). |
-| **VI. Untrusted Input Is Hostile** | PASS. Prefetch reads the same bytes through the same parser as an on-demand build, so the existing malformed-input corpus covers it. The one new surface is the `.part` file: it is never read back, is removed on abandon, and becomes visible to a reader only via an atomic rename after the LUT and page count are written. An abandoned in-place write is already rejected by `loadSectionFile`'s extent check ([Fb2Section.cpp:124-136](../../lib/Fb2/Fb2/Fb2Section.cpp)); `.part` means that path is not exercised at all. |
+| **VI. Untrusted Input Is Hostile** | PASS. Prefetch reads the same bytes through the same parser as an on-demand build, so the existing malformed-input corpus covers it. The one new surface is the `.part` file: it is never read back, is removed on abandon, and becomes visible to a reader only by the remove-then-rename swap after the LUT and page count are written ([contracts/build-api.md B4](contracts/build-api.md) — FAT cannot rename onto an existing path, so the swap is not atomic and copies `Section::commitBuildFile`'s sequence). An abandoned in-place write is already rejected by `loadSectionFile`'s extent check ([Fb2Section.cpp:124-136](../../lib/Fb2/Fb2/Fb2Section.cpp)); `.part` means that path is not exercised at all. |
 | **VII. Upstream-First Fork Hygiene** | PASS. On `feature/fb2-chapter-prefetch`, not `master`. Issue #4 is the fork's own, opened from hardware verification; no upstream PR covers it (checked at spec time). The `lib/Fb2/` change is self-contained and cherry-pickable; host suites stay fork-only. Non-test diff is expected to sit near the 200-line guidance — see [Complexity Tracking](#complexity-tracking). |
 
 ## Project Structure
@@ -141,11 +150,15 @@ lib/Fb2/Fb2/
 src/activities/reader/
 ├── Fb2ReaderActivity.h    # + prefetch section, prefetch target index, idle timestamp,
 │                          #   prefetchTick(), loop() override
-└── Fb2ReaderActivity.cpp  # loop() { ReaderActivity::loop(); prefetchTick(); }
+├── Fb2ReaderActivity.cpp  # loop() { ReaderActivity::loop(); prefetchTick(); }
+└── Fb2ReaderMath.{h,cpp}  # + the pure target-selection predicate (host-reachable)
 
 test/
 ├── fb2_section_cache/     # + incremental-equivalence, slice boundaries, abandon/.part
-└── fb2_section_parser/    # + resume-across-slices parity with one-shot
+├── fb2_section_parser/    # + resume-across-slices parity with one-shot
+├── xtc_fb2_readers/       # + target-predicate tests (Fb2ReaderMathTest.cpp)
+├── alloc_guards/          # + sliced-build allocation proxy
+└── fb2_common/stubs/      # HalStorage rename must refuse an existing destination
 ```
 
 **Structure Decision**: unchanged layout. The resumable machinery lives in the
@@ -220,6 +233,12 @@ Re-evaluated after Phase 1 artifacts. No gate moved.
   so no suite can be written that passes against broken code.
 - **VI (untrusted input)**: the `.part` file is write-only and never parsed; no new
   deserialization surface exists.
+- **Corrected after `/speckit-analyze`**: the first draft claimed the `.part` was swapped
+  into place by a single atomic `Storage.rename()`. `FatFile::rename` opens the destination
+  `O_CREAT | O_EXCL | O_WRONLY`, so it fails on an existing path; the swap is
+  remove-then-rename, as `Section::commitBuildFile` already does. The host stub's POSIX
+  `rename` overwrites silently and hid the difference, so the stub is fixed first (T017).
+  `Storage.rename` existing in the HAL was not evidence that it replaces an existing file.
 - **Spec conformance**: FR-001 to FR-014 and FR-016 to FR-020 are met by the design;
   FR-015 is partially met and the gap is documented above rather than silently dropped
   (Constitution Governance: "silent exceptions are not permitted").
