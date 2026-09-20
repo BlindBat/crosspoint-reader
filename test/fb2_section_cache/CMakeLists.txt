@@ -4,6 +4,7 @@
 # genuine, plus in-tree expat with device-parity flags.
 add_executable(Fb2SectionCacheTest
   Fb2SectionCacheTest.cpp
+  Fb2SectionGoldenTest.cpp
   Fb2SectionCacheLinkStubs.cpp
   ${REPO_ROOT}/lib/Fb2/Fb2.cpp
   ${REPO_ROOT}/lib/Fb2/Fb2/Fb2MetadataParser.cpp
