@@ -1,31 +1,27 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.0.0 → 2.0.0 (MAJOR: Principle VII's "master/develop MUST remain clean
-upstream mirrors" rule is redefined; fork `master` becomes the integration branch)
+Version change: 2.0.0 → 2.1.0 (MINOR: Principle IV gains an explicit rule for numeric
+limits; Development Workflow gains the macOS gate caveat)
 Modified principles:
-  - VII. Upstream-First Fork Hygiene (title unchanged): branch model redefined. Fork
-    `master` carries fork work; no direct commits on `master`/`develop`; short-lived
-    feature/fix branches land by fast-forward or merge and are deleted; upstream syncs
-    merge `origin/develop` through a sync branch; upstream PR branches are cut from
-    `origin/develop`; tests/QA tooling stay out of upstream PR branches. Rationale extended.
-  - V. Tests Prove Behavior (title unchanged): merge gate is now "merge into fork `master`";
-    rationale no longer cites the retired `qa/autotests` branch.
+  - IV. Evidence Over Claims (title unchanged): adds that any numeric limit, threshold or
+    capacity MUST cite the measurement that chose it. Added after a ceiling was written
+    into a spec as "~4x the largest real book" on a sample of one; a 2,899-book corpus
+    then showed 22 books above it and two already pinned at the old cap. Principle IV was
+    in force the whole time and did not prevent it, because it never fired at the moment
+    the number was written down.
 Modified sections:
-  - Development Workflow & Quality Gates: gates apply to every merge into fork `master`
-    (feature, fix, upstream sync); gate tooling lives on `master`, never in upstream PR
-    branches.
+  - Development Workflow & Quality Gates: records that on macOS gates 2, 3 and 5 do not
+    predict CI (libc++ resolves headers libstdc++ does not; `pio check` analyses nothing
+    and still reports PASSED), so a green local run is not a merge signal on its own.
 Added sections: none
 Removed sections: none
-Templates reviewed: none edited (plan/spec/tasks templates resolve this file at runtime
-  and carry no branch-model text)
+Templates reviewed: none edited (spec-kit's own skill copies under .claude/skills/ are
+  gitignored and regenerated, so the rule lives here rather than in a generated checklist)
 Runtime guidance reviewed:
-  - AGENTS.md ✅ ("PR comparisons target develop" governs upstream-bound work; consistent
-    with PR branches cut from `origin/develop`)
-  - .specify/scripts/bash/speckit-commit.sh ⚠ comments and refusal message still call
-    master/develop "clean upstream mirrors" (guard behavior itself stays correct)
-  - .specify/extensions/speckit-git-commit/SKILL.md ⚠ same "mirrors" wording
-Deferred TODOs: none in this file (the two wording follow-ups above live outside it)
+  - AGENTS.md ✅ (its anti-hallucination and no-unfounded-claims rules are what Principle IV
+    distils; the numeric-limit rule is a narrowing, not a conflict)
+Deferred TODOs: none
 -->
 
 # CrossPoint Reader Constitution
@@ -82,7 +78,10 @@ only compiles for one board or only on-device resists both goals.
 ### IV. Evidence Over Claims
 
 Performance and memory claims MUST state their mechanism (allocation count, DRAM
-vs flash placement, I/O eliminated) and MUST NOT assert unmeasured numbers.
+vs flash placement, I/O eliminated) and MUST NOT assert unmeasured numbers. Any
+numeric limit, threshold or capacity — a cap, a ceiling, a budget, a window size —
+MUST cite the measurement that chose it: a corpus, a device reading, or a
+benchmark. A round number with a plausible story attached is not a measurement.
 On-device behavior (e-ink refresh, deep sleep, real heap pressure) is verified on
 the device or the official simulator, never assumed from host results. Proposed
 changes cite the specific files and lines that justify them. Host-side allocation
@@ -192,6 +191,12 @@ cheapness:
    Local Development Configuration — `pio run -e simulator`); for e-ink timing,
    sleep, or memory pressure claims: verify on hardware with serial output.
 
+On macOS these gates are weaker than they look. Gates 2 and 3 compile against Apple
+libc++, which resolves headers CI's libstdc++ does not, so a tree that is green here
+can fail to compile there; and gate 5's `pio check` analyses nothing on macOS while
+still reporting PASSED. A green local run is therefore not a merge signal by itself —
+the CI run MUST be read before a merge is declared clean.
+
 These gates and their tooling (`bin/run-tests`, `bin/install-hooks`,
 `clang-format-fix -c`) live on fork `master` and MUST NOT be carried into upstream
 PR branches.
@@ -222,4 +227,4 @@ and PRs MUST check compliance with Principles I–VII; violations require a
 documented justification in the plan's Complexity Tracking table or a change to
 this document — silent exceptions are not permitted.
 
-**Version**: 2.0.0 | **Ratified**: 2026-09-14 | **Last Amended**: 2026-09-14
+**Version**: 2.1.0 | **Ratified**: 2026-09-14 | **Last Amended**: 2026-09-21
