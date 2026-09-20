@@ -15,6 +15,7 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <PlatformSeam.h>
 #include <SPI.h>
 #include <WiFi.h>
 #include <XteinkDetect.h>
@@ -54,6 +55,42 @@ static unsigned long lastX4ProPowerClickAt = 0;
 namespace {
 constexpr unsigned long X4PRO_POWER_DOUBLE_CLICK_MS = 500;
 constexpr unsigned long X4PRO_POWER_CLICK_MAX_HOLD_MS = 300;
+
+// Generous for any host that is actually reading: 48 KB over USB CDC takes
+// milliseconds. It only bounds a host that stopped.
+constexpr uint32_t SCREENSHOT_SERIAL_TIMEOUT_MS = 2000;
+
+// HWCDC treats tx_timeout_ms as its "is the host still there" budget: it allows
+// that many 1 ms no-progress retries before declaring the host unplugged, after
+// which write() silently discards data through flushTXBuffer() and still
+// returns the full count. One millisecond is far too tight for a 48 KB dump.
+constexpr uint32_t SCREENSHOT_TX_TIMEOUT_MS = 200;
+
+// Lets CMD:SCREENSHOT reuse platform::writeAll, which is host-tested; this file
+// is device-only.
+//
+// HWCDC::write() discards data through flushTXBuffer() and still returns the
+// full count whenever the driver has decided the host is gone, so the raw count
+// cannot drive a retry. Testing the connection first is also what re-arms the
+// interrupt that clears that state, so reporting 0 while it is down keeps
+// writeAll's retry loop honest and lets the link recover. Each call is capped
+// so the gate is re-evaluated through a long dump rather than once at the top.
+class SerialByteSink : public platform::ByteSink {
+ public:
+  size_t write(const uint8_t byte) override { return logSerial ? logSerial.write(byte) : 0; }
+
+  size_t write(const uint8_t* data, const size_t length) override {
+    if (!logSerial) {
+      return 0;
+    }
+    return logSerial.write(data, length < CHUNK ? length : CHUNK);
+  }
+
+  void flush() override { logSerial.flush(); }
+
+ private:
+  static constexpr size_t CHUNK = 4096;
+};
 }  // namespace
 
 // A wake hold must never become an in-app power-button action.  Boot may continue
@@ -628,9 +665,26 @@ void loop() {
       if (cmd == "SCREENSHOT") {
         const uint32_t bufferSize = display.getBufferSize();
         logSerial.printf("SCREENSHOT_START:%d\n", bufferSize);
-        uint8_t* buf = display.getFrameBuffer();
-        logSerial.write(buf, bufferSize);
+        // The boot-time 1 ms keeps logging from stalling the loop when no host
+        // drains the port, but it also makes HWCDC give up on this dump after a
+        // single 1 ms stall and silently drop the rest. CMD:SCREENSHOT is
+        // host-initiated, so a host is present: widen the budget for the dump
+        // only, and restore it before returning to normal logging.
+#if LOG_SERIAL_HAS_TX_TIMEOUT
+        logSerial.setTxTimeoutMs(SCREENSHOT_TX_TIMEOUT_MS);
+#endif
+        SerialByteSink sink;
+        const size_t sent =
+            platform::writeAll(sink, display.getFrameBuffer(), bufferSize, SCREENSHOT_SERIAL_TIMEOUT_MS);
+        logSerial.flush();
+#if LOG_SERIAL_HAS_TX_TIMEOUT
+        logSerial.setTxTimeoutMs(1);
+#endif
         logSerial.printf("SCREENSHOT_END\n");
+        if (sent < bufferSize) {
+          LOG_ERR("SCR", "Serial screenshot sent %u of %u bytes", static_cast<unsigned>(sent),
+                  static_cast<unsigned>(bufferSize));
+        }
       }
     }
   }

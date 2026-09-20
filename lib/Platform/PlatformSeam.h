@@ -39,4 +39,12 @@ class ByteSink {
   virtual void flush() = 0;
 };
 
+// Push every byte of `data` into `sink`, which may accept only part of a write:
+// Arduino's USB CDC abandons whatever the endpoint cannot take within its TX
+// timeout, so one bulk write of a large buffer arrives truncated. Retries the
+// remainder, yielding between attempts, and gives up `timeoutMs` after the
+// first attempt so a host that stops reading cannot wedge the caller. Returns
+// the number of bytes the sink accepted.
+size_t writeAll(ByteSink& sink, const uint8_t* data, size_t length, uint32_t timeoutMs);
+
 }  // namespace platform
