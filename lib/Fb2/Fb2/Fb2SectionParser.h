@@ -6,6 +6,7 @@
 #include <Epub/ReaderRenderSpec.h>
 #include <Epub/blocks/BlockStyle.h>
 #include <Epub/blocks/TextBlock.h>
+#include <HalStorage.h>
 #include <expat.h>
 
 #include <climits>
@@ -29,6 +30,17 @@ class Fb2SectionParser {
   BuildPopupFn popupFn;
 
   int targetSectionIndex;
+
+  // Feed state. These live across slices: an incremental build stops between
+  // XML_ParseBuffer calls and resumes later with the parser and the input file
+  // exactly where it left them.
+  XML_Parser xmlParser = nullptr;
+  HalFile file;
+  bool inputDone = false;
+  // Reset at every slice entry, and only there -- see parseSome().
+  uint16_t slicePagesEmitted = 0;
+  uint32_t sliceBytesFed = 0;
+
   int depth = 0;
   int skipUntilDepth = INT_MAX;
   int boldUntilDepth = INT_MAX;
@@ -95,5 +107,20 @@ class Fb2SectionParser {
     blockStyleStack.reserve(4);
   }
 
+  // One-shot parse: begin, feed to completion, flush. Unchanged behaviour.
   bool parseAndBuildPages();
+
+  // Incremental parse. beginParse() once, then parseSome() until it stops
+  // returning Paused, then finishParse().
+  enum class ParseStatus { Paused, Finished, Failed };
+  bool beginParse();
+  // Feed the parser until either budget is spent (0 = unbounded for that
+  // dimension), the target section ends, the input runs out, or it fails.
+  ParseStatus parseSome(int pageBudget, uint32_t byteBudget);
+  // Flush the trailing page and release the parser. Idempotent.
+  void finishParse();
+
+ private:
+  // Expat feed granularity. Also the smallest possible byte budget.
+  static constexpr int PARSE_BUFFER_SIZE = 1024;
 };
