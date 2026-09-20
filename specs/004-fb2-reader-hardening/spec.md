@@ -58,9 +58,9 @@ inside the stated budget. Delivers value with neither of the other stories built
 2. **Given** an FB2 at the chapter ceiling, **When** the reader opens the chapter list,
    **Then** the list scrolls from first row to last and the memory it holds does not grow with
    the chapter count.
-3. **Given** a board with more memory than the ESP32-C3, **When** the same book is opened on
-   it, **Then** it may support a higher ceiling, and a cache written on one board is either
-   read correctly on the other or rejected and rebuilt — never misread.
+3. **Given** an SD card moved between boards, **When** the same book is opened on each,
+   **Then** it is split into the same chapters on both, and a cache written on one board is
+   either read correctly on the other or rejected and rebuilt — never misread.
 4. **Given** the reference anthology (1.9 MB, 66 chapters, ~15 KB of chapter metadata),
    **When** it is opened after this change, **Then** its chapter list, navigation and progress
    are unchanged from today.
@@ -165,8 +165,9 @@ placeholder.
   reach without exhausting memory: opening a book at the ceiling MUST leave the device able to
   render pages and show the chapter list. The ceiling MUST be justified against measured device
   figures — available heap and per-chapter cost — not against a round number.
-- **FR-002**: The ceiling MAY differ per board, with more generous targets (those with PSRAM)
-  permitted a higher value than the ESP32-C3.
+- **FR-002**: The ceiling MUST be a single value shared by every board. A board-dependent
+  ceiling was considered and rejected: it makes the same SD card carry caches one board accepts
+  and another rejects, to serve 22 books in a 2,899-book corpus.
 - **FR-003**: A book whose section count exceeds the ceiling MUST still open and MUST lose no
   text; sections past the ceiling read as part of their containing chapter.
 - **FR-004**: Chapter-metadata memory MUST NOT grow with a file's section count once the
@@ -257,7 +258,9 @@ placeholder.
 - **SC-005**: An FB2 with a cover opens on that cover; one page turn reaches the first page of
   text; a book reopened from a position saved before this change lands on exactly the text it
   left, in 100% of tested positions.
-- **SC-006**: No FB2 cache written before this feature is invalidated by it.
+- **SC-006**: No *page* cache (`sections/<n>.bin`) written before this feature is invalidated by
+  it, and no reading position is lost. The book-metadata cache is rebuilt once per book, by one
+  metadata pass on first open, to carry the derived-label marker — no book is re-paginated.
 - **SC-007**: In the reference anthology's chapter list, zero rows show the placeholder where
   the section has text of its own.
 - **SC-008**: A malformed chapter cache, a truncated `cover.bmp`, and a cover that lies about
