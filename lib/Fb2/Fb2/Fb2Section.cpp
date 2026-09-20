@@ -299,6 +299,12 @@ bool Fb2Section::finalizeBuild() {
   return true;
 }
 
+// ponytail: an in-flight build is discarded, not resumed. expat cannot start
+// mid-document and FB2 has no per-chapter extracted file to seek within, so
+// there is no cheap byte watermark to resume from (EPUB has one only because
+// its parser starts at the chapter's own unzipped HTML). Upgrade path: give FB2
+// chapters an extracted-text intermediate file, which would make builds
+// resumable AND remove the per-chapter full-file rescan -- see issue #8.
 void Fb2Section::abandonBuild() {
   if (!build_) return;
   build_.reset();

@@ -7,6 +7,7 @@
 #include <string>
 
 #include "EpubReaderMenuActivity.h"
+#include "Fb2ReaderMath.h"
 #include "ReaderActivity.h"
 #include "ReaderProgressGuard.h"
 
@@ -37,6 +38,45 @@ class Fb2ReaderActivity final : public ReaderActivity {
   // Skips a progress.bin write when the position has not moved.
   ReaderProgressGuard progressGuard;
 
+  // Chapter-ahead prefetch. The build's only product is the chapter's section
+  // file: when the reader crosses the boundary it constructs its own Fb2Section
+  // and loadSectionFile() simply finds the work already done. Nothing is handed
+  // over, so nothing here is on the reader's critical path.
+  std::unique_ptr<Fb2Section> prefetch;
+  int prefetchIndex = fb2_reader::NO_PREFETCH_TARGET;
+  // Last chapter a prefetch finished (or found already cached), so it is not
+  // prepared twice.
+  int prefetchDoneIndex = fb2_reader::NO_PREFETCH_TARGET;
+  // The spec the in-flight build was started with; a change invalidates it.
+  ReaderRenderSpec prefetchSpec;
+  // Origin of the idle settle timer, set when a page render finishes.
+  unsigned long lastRenderCompleteMs = 0;
+  // Viewport of the last render, so the tick can rebuild the spec without
+  // repeating the margin arithmetic.
+  uint16_t prefetchViewportWidth = 0;
+  uint16_t prefetchViewportHeight = 0;
+
+  // One bounded slice of the chapter-ahead build, or nothing if any gate fails.
+  void prefetchTick();
+  // Drop an in-flight prefetch and release everything it holds. Called whenever
+  // the reader moves: a new chapter, a sub-activity, a settings change, exit.
+  void stopPrefetch();
+
+  // Slice budgets and the idle settle interval.
+  //
+  // PROVISIONAL — these three are the numbers research.md R1/R2/R3 exist to
+  // choose, and they have NOT been measured on device yet. They are deliberately
+  // conservative: too small only makes prefetch slower, while too large would
+  // hold RenderLock long enough to stutter a page turn. Do not treat them as
+  // measured values, and do not raise them without the R1/R2 readings.
+  static constexpr int PREFETCH_PAGES_PER_TICK = 2;
+  static constexpr uint32_t PREFETCH_BYTES_PER_TICK = 4096;
+  static constexpr unsigned long PREFETCH_SETTLE_MS = 400;
+  // Heap floor, reused from the EPUB reader's background build gate rather than
+  // invented; research.md R4 confirms or raises it.
+  static constexpr size_t PREFETCH_MIN_FREE_HEAP = 32 * 1024;
+  static constexpr size_t PREFETCH_MIN_MAX_ALLOC = 16 * 1024;
+
   void loadProgress();
   void saveProgress(int sectionIndex, int currentPage, int pageCount);
   void jumpToPercent(int percent);
@@ -62,6 +102,8 @@ class Fb2ReaderActivity final : public ReaderActivity {
       : ReaderActivity("Fb2Reader", renderer, mappedInput, std::move(bookPath), allowFastInitialRefresh) {}
   ~Fb2ReaderActivity() override = default;
 
+  void loop() override;
+  void onExit() override;
   bool pageTurn(bool isForward) override;
   bool skipPages(int amount) override;
   bool isAtEndOfBook() const override;

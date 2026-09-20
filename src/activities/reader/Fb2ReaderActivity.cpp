@@ -140,6 +140,7 @@ void Fb2ReaderActivity::openReaderMenu() {
   const int currentPage = section ? section->currentPage + 1 : 0;
   const int totalPages = section ? section->pageCount : 0;
   const int progressPercent = fb2_reader::roundedPercent(bookProgressPercent());
+  stopPrefetch();
   startActivityForResult(
       makeUniqueNoThrow<EpubReaderMenuActivity>(renderer, mappedInput, fb2->getTitle(), currentPage, totalPages,
                                                 progressPercent, SETTINGS.orientation, /*hasFootnotes=*/false,
@@ -171,6 +172,7 @@ void Fb2ReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
         }
         section.reset();
       }
+      stopPrefetch();
       startActivityForResult(
           makeUniqueNoThrow<Fb2ReaderChapterSelectionActivity>(renderer, mappedInput, fb2, sectionIdx),
           [this](const ActivityResult& result) {
@@ -189,6 +191,7 @@ void Fb2ReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
       break;
     }
     case EpubReaderMenuActivity::MenuAction::TEXT_SETTINGS: {
+      stopPrefetch();
       startActivityForResult(makeUniqueNoThrow<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
                                                                      TextSettingsActivity::Tab::Family),
                              [this](const ActivityResult&) {
@@ -209,6 +212,7 @@ void Fb2ReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
     }
     case EpubReaderMenuActivity::MenuAction::GO_TO_PERCENT: {
       const int initialPercent = fb2_reader::roundedPercent(bookProgressPercent());
+      stopPrefetch();
       startActivityForResult(
           makeUniqueNoThrow<EpubReaderPercentSelectionActivity>(renderer, mappedInput, initialPercent),
           [this](const ActivityResult& result) {
@@ -404,6 +408,8 @@ void Fb2ReaderActivity::renderBook() {
   const uint16_t viewportWidth = renderer.getScreenWidth() - orientedMarginLeft - orientedMarginRight;
   const uint16_t viewportHeight = renderer.getScreenHeight() - orientedMarginTop - orientedMarginBottom;
   const ReaderRenderSpec renderSpec = SETTINGS.readerRenderSpec(viewportWidth, viewportHeight);
+  prefetchViewportWidth = viewportWidth;
+  prefetchViewportHeight = viewportHeight;
 
   if (!section) {
     LOG_DBG("FBR", "Loading section %d", currentSectionIndex);
@@ -444,6 +450,10 @@ void Fb2ReaderActivity::renderBook() {
       pendingPercentJump = false;
     }
   }
+
+  // Origin of the prefetch settle timer: a render is about to put pixels on the
+  // glass, so the reader is by definition not idle until this many ms later.
+  lastRenderCompleteMs = millis();
 
   renderer.clearScreen();
 
@@ -488,6 +498,119 @@ void Fb2ReaderActivity::renderBook() {
   if (pendingScreenshot) {
     pendingScreenshot = false;
     ScreenshotUtil::takeScreenshot(renderer);
+  }
+}
+
+void Fb2ReaderActivity::stopPrefetch() {
+  if (!prefetch) return;
+  prefetch->abandonBuild();
+  prefetch.reset();
+  prefetchIndex = fb2_reader::NO_PREFETCH_TARGET;
+}
+
+void Fb2ReaderActivity::loop() {
+  ReaderActivity::loop();
+  prefetchTick();
+}
+
+void Fb2ReaderActivity::onExit() {
+  stopPrefetch();
+  ReaderActivity::onExit();
+}
+
+// Lay out the chapter ahead while the reader is idle, a bounded slice at a
+// time, so crossing a boundary finds a finished cache file instead of a build.
+// Every gate here resolves the same way when in doubt: skip this tick. A
+// skipped tick costs a few milliseconds of prefetch; a tick that should have
+// been skipped costs the user a visible stutter.
+void Fb2ReaderActivity::prefetchTick() {
+  if (!fb2 || !section || onCoverPage || prefetchViewportWidth == 0) {
+    return;
+  }
+  // The reader's own chapter changed under an in-flight build: its target is no
+  // longer the chapter ahead.
+  if (prefetch && prefetchIndex != currentSectionIndex + 1) {
+    stopPrefetch();
+  }
+  // A screen update is running, or one has just finished and the reader may
+  // still be turning pages.
+  if (RenderLock::peek()) return;
+  if (lastRenderCompleteMs == 0 || millis() - lastRenderCompleteMs < PREFETCH_SETTLE_MS) return;
+
+  const ReaderRenderSpec spec = SETTINGS.readerRenderSpec(prefetchViewportWidth, prefetchViewportHeight);
+  // Text settings or the viewport changed: whatever is in flight is already
+  // stale, and a finished prefetch no longer matches.
+  if (prefetch && !(prefetchSpec == spec)) {
+    stopPrefetch();
+    prefetchDoneIndex = fb2_reader::NO_PREFETCH_TARGET;
+  }
+
+  const int target = fb2_reader::prefetchTarget(currentSectionIndex, fb2->getSectionCount(), onCoverPage,
+                                                isAtEndOfBook(), prefetchDoneIndex);
+  if (target == fb2_reader::NO_PREFETCH_TARGET) {
+    stopPrefetch();
+    return;
+  }
+
+  if (ESP.getFreeHeap() < PREFETCH_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < PREFETCH_MIN_MAX_ALLOC) {
+    // Pause, do not stand down: the build keeps its place and resumes when the
+    // heap recovers. The reader's own rendering always wins this contest.
+    return;
+  }
+
+  RenderLock lock;
+
+  if (!prefetch) {
+    // Cheap header probe: the chapter may already be on the card from an
+    // earlier visit. This reads the fixed header and no pages. It also clears a
+    // cache whose version or spec no longer matches, which is intended -- that
+    // file is unusable and would be discarded at the crossing anyway.
+    auto probe = makeUniqueNoThrow<Fb2Section>(fb2, target, renderer);
+    if (!probe) {
+      LOG_ERR("FBR", "OOM: prefetch probe");
+      return;
+    }
+    if (probe->loadSectionFile(spec)) {
+      prefetchDoneIndex = target;
+      LOG_DBG("FBR", "Chapter %d already prepared", target);
+      return;
+    }
+    probe.reset();
+
+    prefetch = makeUniqueNoThrow<Fb2Section>(fb2, target, renderer);
+    if (!prefetch) {
+      LOG_ERR("FBR", "OOM: prefetch section");
+      return;
+    }
+    // No BuildPopupFn: the indexing popup means the user is waiting, and during
+    // a prefetch nobody is.
+    if (!prefetch->startBuild(spec)) {
+      LOG_ERR("FBR", "Failed to start prefetch of chapter %d", target);
+      prefetch.reset();
+      // Do not retry in a tight loop when the card is full or unwritable.
+      prefetchDoneIndex = target;
+      return;
+    }
+    prefetchIndex = target;
+    prefetchSpec = spec;
+    LOG_DBG("FBR", "Prefetching chapter %d", target);
+  }
+
+  // Exactly one slice per loop iteration: looping here would reintroduce the
+  // unbounded block this feature exists to remove.
+  if (!prefetch->buildSomeMore(PREFETCH_PAGES_PER_TICK, PREFETCH_BYTES_PER_TICK)) {
+    LOG_ERR("FBR", "Prefetch of chapter %d failed", prefetchIndex);
+    prefetch.reset();
+    prefetchDoneIndex = prefetchIndex;  // do not retry a chapter that cannot build
+    prefetchIndex = fb2_reader::NO_PREFETCH_TARGET;
+    return;
+  }
+
+  if (prefetch->isBuildComplete()) {
+    LOG_DBG("FBR", "Prefetched chapter %d: %d pages", prefetchIndex, prefetch->pageCount);
+    prefetchDoneIndex = prefetchIndex;
+    prefetch.reset();
+    prefetchIndex = fb2_reader::NO_PREFETCH_TARGET;
   }
 }
 

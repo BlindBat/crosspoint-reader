@@ -59,4 +59,14 @@ Progress decodeProgress(const uint8_t* data, int size);
 // the number of bytes written.
 int encodeProgress(uint8_t* data, int sectionIndex, int page, int pageCount);
 
+// No chapter is worth preparing ahead.
+constexpr int NO_PREFETCH_TARGET = -1;
+
+// Which chapter, if any, the reader should lay out ahead of the one being read.
+// Always the next chapter, forward only: a backward crossing lands in a chapter
+// whose layout was cached when it was read, so it costs nothing to reopen.
+// Returns NO_PREFETCH_TARGET on the last chapter, in a one-chapter book, on the
+// cover, at the end of the book, or when the next chapter is already prepared.
+int prefetchTarget(int currentIndex, int sectionCount, bool onCoverPage, bool atEndOfBook, int preparedIndex);
+
 }  // namespace fb2_reader

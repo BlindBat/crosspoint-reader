@@ -91,4 +91,14 @@ int encodeProgress(uint8_t* data, const int sectionIndex, const int page, const 
   return PROGRESS_SIZE;
 }
 
+int prefetchTarget(const int currentIndex, const int sectionCount, const bool onCoverPage, const bool atEndOfBook,
+                   const int preparedIndex) {
+  if (onCoverPage || atEndOfBook) return NO_PREFETCH_TARGET;
+  if (currentIndex < 0 || currentIndex >= sectionCount) return NO_PREFETCH_TARGET;
+  const int target = currentIndex + 1;
+  if (target >= sectionCount) return NO_PREFETCH_TARGET;
+  if (target == preparedIndex) return NO_PREFETCH_TARGET;
+  return target;
+}
+
 }  // namespace fb2_reader
