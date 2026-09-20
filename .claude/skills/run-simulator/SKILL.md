@@ -106,6 +106,40 @@ drive lists. The arrows separate in the reader, keyboard entry, the percent and
 interval pickers, the frontlight panel and the OPDS browser. In `INVERTED` and
 `LANDSCAPE_CCW` the nav axis flips, matching the rotated hints.
 
+## Driving it without a human (macOS)
+
+An agent can work the simulator end to end. Two rules learned the hard way:
+
+**Set state through the SD card, not through the menus.** Blind keystroke navigation is slow and
+goes wrong silently — an `Esc` that does not land leaves the next ten keys somewhere unintended.
+Anything persisted is faster and deterministic: write
+`fs_branches/<branch>/.crosspoint/settings.json` (e.g. `{"orientation":2}` — 0 Portrait,
+1 Landscape CW, 2 Inverted, 3 Landscape CCW, the `ORIENTATION` enum in `CrossPointSettings.h`),
+delete `.crosspoint/fb2_*/progress.bin` to reopen a book at its start, then relaunch with
+`--no-build`. Four orientations became a four-iteration shell loop that way.
+
+**Keystrokes and screenshots**, when a menu really is the only route:
+
+```bash
+PID=$(bin/run-simulator --no-build 2>&1 | grep '^running' | awk '{print $3}')
+osascript -e "tell application \"System Events\" to tell (first process whose unix id is $PID) to set position of window 1 to {40, 60}"
+osascript -e "tell application \"System Events\" to set frontmost of every process whose unix id is $PID to true"
+osascript -e 'tell application "System Events" to key code 36'   # 36 Enter, 53 Esc, 125 Down, 126 Up, 123/124 Left/Right
+screencapture -x -o -R 40,60,520,860 shot.png                     # window moved to a known origin, so the region is fixed
+```
+
+macOS may raise a screen-recording consent prompt on the first `screencapture`. That is the
+user's to accept — never click it for them.
+
+**Read the log before the screenshot.** `$TMPDIR/crosspoint-sim-<branch>-<env>.log` often
+answers the question outright: `[GFX] Cropping 581x800 by 0x0 pix` + `Scaling by 0.826162` proves
+a cover was letterboxed and not cropped, without looking at a single pixel. `[ACT] Entering
+activity: …` lines segment a walk into phases for free.
+
+**What the simulator cannot tell you**: its `[MEM]` line is a hardcoded 1 MB stub, so every heap
+number from it is fiction — see the `device-measurement` memory for the real figures and how to
+get them over serial.
+
 ## Web UI in a browser
 
 The firmware's own web server runs on the host. It binds only once **File
