@@ -9,7 +9,9 @@ inspection of the state machine in [data-model.md](../data-model.md).
 - **L1** — A `<section>` with a `<title>` of its own keeps that title, unchanged from
   `003-fb2-nested-chapters` contract rules C4/C5. Its `titleDerived` flag is false.
 - **L2** — A `<section>` with no `<title>` of its own takes its label from the text of its own
-  first `<p>`, and its `titleDerived` flag is true.
+  first `<p>`, at whatever depth that paragraph sits, and its `titleDerived` flag is true. Real
+  books routinely open a section with an `<epigraph>` or `<cite>` rather than a bare `<p>`;
+  requiring a direct child would leave those sections unlabelled.
 - **L3** — "Its own" excludes descendants: text inside a child `<section>` never labels the
   parent, exactly as a child's `<title>` never titles the parent (C4).
 - **L4** — Only the first `<p>` contributes. Text after that paragraph is not appended, even if

@@ -163,10 +163,13 @@ void Fb2MetadataParser::startElement(void* userData, const char* name, const cha
       self->charBuffer.clear();
     } else if (strcmp(tag, "p") == 0 && !self->openSections.empty() &&
                self->openSections.back().entryIndex != NOT_A_CHAPTER && !self->openSections.back().labelTaken &&
-               depth == self->openSections.back().elemDepth + 1 &&
                self->sections[self->openSections.back().entryIndex].title.empty()) {
-      // A title-less section borrows its own first direct <p> as a chapter-list
-      // label. Direct child only, so a child section's text never labels a parent.
+      // A title-less section borrows its own first paragraph as a chapter-list
+      // label, at whatever depth it sits: real books routinely open a section with
+      // an <epigraph> or <cite> rather than a bare <p>. It is still the section's
+      // OWN text, because a <p> inside a child <section> belongs to that child
+      // (openSections.back() is the innermost open section), and a <p> inside
+      // <title> is claimed by the title branch above.
       self->context = Context::SECTION_LABEL_P;
       self->charBuffer.clear();
     }

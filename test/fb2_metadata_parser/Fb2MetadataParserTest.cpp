@@ -435,6 +435,21 @@ TEST_F(Fb2LabelTest, UntitledSectionTakesItsOwnFirstParagraph) {
   EXPECT_EQ(sections[2].title.find("Second paragraph"), std::string::npos);
 }
 
+TEST_F(Fb2LabelTest, EpigraphOnlySectionIsStillLabelled) {
+  // L2: the reference anthology opens two sections with an <epigraph> and no bare
+  // <p>. Requiring a direct child left those showing "Unnamed"; the paragraph is
+  // still the section's own text, so it labels the section.
+  const std::string source =
+      "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<FictionBook>\n"
+      "<description><title-info><book-title>Epi</book-title></title-info></description>\n<body>\n"
+      "<section><epigraph><p>Great is the power of wonder</p></epigraph><empty-line/></section>\n"
+      "</body>\n</FictionBook>\n";
+  const auto& sections = parseSource(source);
+  ASSERT_EQ(sections.size(), 1u);
+  EXPECT_EQ(sections[0].title, "Great is the power of wonder");
+  EXPECT_EQ(sections[0].titleDerived, 1);
+}
+
 TEST_F(Fb2LabelTest, AChildSectionsTextNeverLabelsItsParent) {
   // L3: "its own" excludes descendants, the same rule a child's <title> follows.
   const std::string source =

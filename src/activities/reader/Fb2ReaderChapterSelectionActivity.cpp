@@ -46,6 +46,9 @@ void Fb2ReaderChapterSelectionActivity::refreshTocWindow(const int start) {
   if (clamped < 0) clamped = 0;
   if (clamped == windowStart) return;
 
+  // ponytail: no fallback-glyph prewarm here. EPUB batches one per window refresh
+  // because its TOC entries are SD reads; FB2's are already in RAM. Add EPUB's
+  // prewarmFallbackText if CJK FB2 lists repaint slowly on device.
   windowCount = total - clamped < TOC_WINDOW ? total - clamped : TOC_WINDOW;
   for (int i = 0; i < windowCount; i++) {
     const auto& tocEntry = fb2->getTocEntry(clamped + i);
