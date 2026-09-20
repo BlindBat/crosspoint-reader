@@ -3,6 +3,7 @@
 #include <Epub/ReaderRenderSpec.h>
 #include <HalStorage.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
