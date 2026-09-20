@@ -9,6 +9,7 @@
 #include <Memory.h>
 
 #include <algorithm>
+#include <cmath>
 
 #include "CrossPointSettings.h"
 #include "components/UITheme.h"
