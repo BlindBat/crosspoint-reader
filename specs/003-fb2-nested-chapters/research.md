@@ -170,6 +170,10 @@ width question for no added information).
 
 ## Decision 9: bound the chapter count
 
+> **Later change**: the ceiling was lowered to 256 by `specs/004-fb2-reader-hardening`, which
+> measured it against 2,899 real books and the device's actual heap. The value below is what was
+> decided here and is kept as the record of that decision.
+
 **Decision**: `FB2_MAX_CHAPTERS = 1024`. Once the counter reaches the cap, further
 sections are not chapter boundaries — they render as part of the chapter that contains
 them, in both parsers, by the same comparison.

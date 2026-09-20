@@ -34,7 +34,7 @@ Firmware repository: reader core in `lib/`, UI in `src/activities/`, host tests 
 
 **Purpose**: capture the "before" numbers the retuned budgets will be measured against.
 
-- [ ] T001 Run `bin/run-tests --filter 'fb2'` and record, in the scratchpad, the current pass
+- [X] T001 Run `bin/run-tests --filter 'fb2'` and record, in the scratchpad, the current pass
       state and the two allocation figures printed by
       `test/fb2_book/Fb2BookTest.cpp` `ChapterMetadataAllocatesOneTitlePerChapterAndStaysCapped`
       (measured on macOS arm64 at spec time: 8,944 bytes / 57 blocks at 40 chapters; 148,328
@@ -49,7 +49,7 @@ it.
 
 **⚠️ Blocks US1 and US3. US2 (the cover page) does not depend on it.**
 
-- [ ] T002 In `test/fb2_common/Fb2TestSupport.h`, add two deterministic generators beside
+- [X] T002 In `test/fb2_common/Fb2TestSupport.h`, add two deterministic generators beside
       `makeSectionTowerFb2` (whose sections always carry titles, so it cannot exercise labels):
       (a) `makeUntitledSectionsFb2(int sectionCount, int chainDepth)` — sections with no
       `<title>`, each opening with a first `<p>` of known text, plus at least one section that is
@@ -78,41 +78,41 @@ the ceiling.
 > that is the mutation demonstration Principle V requires, and it is why the constant change sits
 > after the tests rather than in the foundational phase.
 
-- [ ] T003 [P] [US1] In `test/fb2_book/Fb2BookTest.cpp`, retune
+- [X] T003 [P] [US1] In `test/fb2_book/Fb2BookTest.cpp`, retune
       `ChapterMetadataAllocatesOneTitlePerChapterAndStaysCapped` to the new ceiling: replace the
       `320 * 1024` capped-book budget with one that **fails at 1024 and passes at 256**, and
       record the newly measured figures in the test comment the way the existing comment does.
       Run it before T006 and capture the failure — a budget test that passes both before and
       after guards nothing.
-- [ ] T004 [P] [US1] In `test/fb2_book/Fb2BookTest.cpp`, add a case that a `book.bin` written at
+- [X] T004 [P] [US1] In `test/fb2_book/Fb2BookTest.cpp`, add a case that a `book.bin` written at
       the **old** ceiling (a valid v-current header claiming 1024 chapters) is rejected and the
       book reparsed at 256 — this is the upgrade path real SD cards take, and it must not be a
       partial read. Assert, with an `alloc_counter::CountingScope`, that the rejection allocates
       nothing unbounded.
-- [ ] T005 [P] [US1] In `test/fb2_book/Fb2BookTest.cpp`, extend
+- [X] T005 [P] [US1] In `test/fb2_book/Fb2BookTest.cpp`, extend
       `ChapterCountIsCappedWhenParsingAHugeBook` to assert contract C6 end to end at the new
       ceiling: `getSectionCount() == 256`, and the sum of every chapter's `length` still equals
       `getBookSize()` — no text is lost when the tail collapses into its containing chapter.
 
 ### Implementation for User Story 1
 
-- [ ] T006 [US1] In `lib/Fb2/Fb2.h`, change `FB2_MAX_CHAPTERS` `1024` → **`256`** and rewrite the
+- [X] T006 [US1] In `lib/Fb2/Fb2.h`, change `FB2_MAX_CHAPTERS` `1024` → **`256`** and rewrite the
       existing `ponytail:` comment to carry the measured justification: 99,716 B at 1024 vs
       43,732 B at 256, against 222,180 B of usable heap (research.md M1–M3); upgrade path is
       issue #8's SD-resident LUT. Use "ceiling" rather than "cap" in the new wording. This is the
       only line of `Fb2.h` US1 touches — the label constant and the `titleDerived` field belong
       to US3 (T020), so the two stories stay separately cherry-pickable.
-- [ ] T007 [US1] In `lib/Fb2/Fb2/Fb2MetadataParser.cpp`, call `sections.shrink_to_fit()` at the
+- [X] T007 [US1] In `lib/Fb2/Fb2/Fb2MetadataParser.cpp`, call `sections.shrink_to_fit()` at the
       end of `parse()` (after the whole-file fallback). `sections` grows by doubling, so a parse
       leaves up to 2× capacity allocated; the ceiling's memory guarantee is about what a book
       *holds*, not what its parse peaked at (research.md Decision 1, "free consequences").
-- [ ] T008 [US1] In `src/activities/reader/Fb2ReaderChapterSelectionActivity.h`, replace
+- [X] T008 [US1] In `src/activities/reader/Fb2ReaderChapterSelectionActivity.h`, replace
       `std::vector<std::string> rowLabels` and `std::vector<ListItem> rowItems` with the fixed
       window from data-model.md: `static constexpr int TOC_WINDOW = 24;`,
       `std::string windowLabels[TOC_WINDOW]`, `freeink::ui::ListItem windowItems[TOC_WINDOW]`,
       `int windowStart = -1`, `int windowCount = 0`, and declare `void refreshTocWindow(int
       start)` in place of `buildRowItems()`.
-- [ ] T009 [US1] In `src/activities/reader/Fb2ReaderChapterSelectionActivity.cpp`, implement
+- [X] T009 [US1] In `src/activities/reader/Fb2ReaderChapterSelectionActivity.cpp`, implement
       `refreshTocWindow(start)` on the pattern of
       `EpubReaderChapterSelectionActivity::refreshTocWindow` (`EpubReaderChapterSelectionActivity.cpp:57-80`):
       clamp `start` to `[0, max(0, total - TOC_WINDOW)]`, return early when it equals
@@ -122,13 +122,13 @@ the ceiling.
       so `activateIndex` is unchanged. Delete `buildRowItems()` and its call in `onEnter()`.
       **Do not** copy EPUB's `prewarmFallbackText` batch or its `fcm->clearCache()` — both pay
       for SD-backed TOC entries that FB2 does not have (research.md Decision 2).
-- [ ] T010 [US1] In `src/activities/reader/Fb2ReaderChapterSelectionActivity.cpp`'s
+- [X] T010 [US1] In `src/activities/reader/Fb2ReaderChapterSelectionActivity.cpp`'s
       `buildScreen`, call `refreshTocWindow(nav.top)` **after** `syncListViewport(screen, props)`
       (which is what applies follow/clamping to `nav.top`), then set `props.items = windowItems`
       and `props.itemsWindowFirst = static_cast<uint16_t>(windowStart)`. Replace the
       `rowItems.empty()` guard with `listCount() == 0`. Record the row-buffer sizes in the commit
       message: they are the evidence for SC-003, which no host test can reach.
-- [ ] T011 [P] [US1] Mirror the ceiling per FR-007 — the value lives in `lib/Fb2/Fb2.h` and
+- [X] T011 [P] [US1] Mirror the ceiling per FR-007 — the value lives in `lib/Fb2/Fb2.h` and
       nowhere else in code. Update the **live** documentation only: `docs/file-formats.md`
       (lines ~708 and ~725, `1..1024` and "`FB2_MAX_CHAPTERS` (1024)"). Do **not** rewrite the
       landed `specs/003-fb2-nested-chapters` documents, which record what was decided then —

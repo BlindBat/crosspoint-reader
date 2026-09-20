@@ -4,7 +4,6 @@
 #include <I18n.h>
 
 #include <string>
-#include <vector>
 
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -27,40 +26,37 @@ void Fb2ReaderChapterSelectionActivity::onEnter() {
     return;
   }
 
-  buildRowItems();
-
   // Open on the current chapter, which may sit past the first row; the first
   // screen build pulls the viewport to it (ListNav follow-on-build).
   const int tocIndex = fb2->getTocIndexForSectionIndex(currentSectionIndex);
   nav.selected = tocIndex >= 0 ? tocIndex : 0;
 }
 
-// Derives rowItems from the fb2's TOC. Called once from onEnter() since the
-// TOC is static for this screen's lifetime.
-void Fb2ReaderChapterSelectionActivity::buildRowItems() {
-  const int tocCount = fb2->getTocCount();
-  rowLabels.clear();
-  rowItems.clear();
-  rowLabels.reserve(tocCount);
-  rowItems.reserve(tocCount);
-  // ponytail: every row is materialized, so rowLabels holds a second copy of
-  // every chapter title — fine at the tens of chapters real FB2 books carry
-  // (the reference book: 66), but it scales with FB2_MAX_CHAPTERS. Window it
-  // like EpubReaderChapterSelectionActivity if a book ever approaches the cap.
-  for (int i = 0; i < tocCount; i++) {
-    const auto& tocEntry = fb2->getTocEntry(i);
+// Materializes the ListItem/label window starting at `start` (clamped). Runs only
+// when the viewport leaves the current window, so repaints inside it are free.
+void Fb2ReaderChapterSelectionActivity::refreshTocWindow(const int start) {
+  const int total = listCount();
+  int clamped = start;
+  if (clamped > total - TOC_WINDOW) clamped = total - TOC_WINDOW;
+  if (clamped < 0) clamped = 0;
+  if (clamped == windowStart) return;
+
+  windowCount = total - clamped < TOC_WINDOW ? total - clamped : TOC_WINDOW;
+  for (int i = 0; i < windowCount; i++) {
+    const auto& tocEntry = fb2->getTocEntry(clamped + i);
     // Indent by nesting depth so a story reads as a story inside its part, the
     // same convention the EPUB chapter list uses. Capped at three steps so a
     // deeply nested title is not pushed off the row.
     const int indentSteps = tocEntry.level > 3 ? 3 : tocEntry.level;
     std::string label(static_cast<size_t>(indentSteps) * 2, ' ');
     label += tocEntry.title.empty() ? tr(STR_UNNAMED) : tocEntry.title;
-    rowLabels.push_back(std::move(label));
+    windowLabels[i] = std::move(label);
     fui::ListItem item;
-    item.label = rowLabels.back().c_str();
-    item.actionValue = static_cast<int16_t>(i);
-    rowItems.push_back(item);
+    item.label = windowLabels[i].c_str();
+    item.actionValue = static_cast<int16_t>(clamped + i);
+    windowItems[i] = item;
   }
+  windowStart = clamped;
 }
 
 void Fb2ReaderChapterSelectionActivity::activateIndex(const int index) {
@@ -108,19 +104,22 @@ void Fb2ReaderChapterSelectionActivity::buildScreen(UiScreen& screen) {
   if (!fb2) {
     return;
   }
-  if (rowItems.empty()) {
+  if (listCount() == 0) {
     screen.centeredText(tr(STR_NO_CHAPTERS), screen.theme().bodyText);
     return;
   }
 
-  // rowItems is built once in onEnter() (see buildRowItems()) and reused
-  // here on every repaint.
   fui::ListProps props;
-  props.items = rowItems.data();
-  props.count = static_cast<uint16_t>(rowItems.size());
+  props.count = static_cast<uint16_t>(listCount());
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
   syncListViewport(screen, props);
+  // Materialize the row window for the final viewport (syncListViewport just
+  // applied follow/clamping to nav.top) and hand list() the window with its
+  // absolute base index.
+  refreshTocWindow(nav.top);
+  props.items = windowItems;
+  props.itemsWindowFirst = static_cast<uint16_t>(windowStart);
   screen.list(props);
 }
 

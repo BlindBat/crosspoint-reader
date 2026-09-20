@@ -305,5 +305,9 @@ bool Fb2MetadataParser::parse() {
     }
   }
 
+  // sections grew by doubling, so it can hold up to 2x the capacity it needs; the
+  // book keeps this vector for as long as it is open, so give the slack back.
+  sections.shrink_to_fit();
+
   return success;
 }

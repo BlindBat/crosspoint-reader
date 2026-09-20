@@ -323,9 +323,14 @@ TEST_F(Fb2BookTest, ChapterCountIsCappedWhenParsingAHugeBook) {
   ASSERT_TRUE(book.load());
   EXPECT_EQ(book.getSectionCount(), static_cast<int>(Fb2::FB2_MAX_CHAPTERS));
   EXPECT_EQ(book.getTocCount(), static_cast<int>(Fb2::FB2_MAX_CHAPTERS));
-  // The capped tail still belongs to the last chapter's bytes, so the chapter
-  // lengths keep covering the whole body.
+  // Contract C6: the capped tail still belongs to the last chapter's bytes, so the
+  // chapter lengths keep partitioning the body and no text is lost.
   EXPECT_GT(book.getBookSize(), 0u);
+  size_t partitioned = 0;
+  for (int i = 0; i < book.getSectionCount(); i++) {
+    partitioned += book.getSectionInfo(i).length;
+  }
+  EXPECT_EQ(partitioned, book.getBookSize()) << "chapters past the ceiling lost their text";
 
   // ...and the cap survives the cache round-trip.
   Fb2 cached(path, tmp.path());
@@ -373,12 +378,64 @@ TEST_F(Fb2BookTest, ChapterMetadataAllocatesOneTitlePerChapterAndStaysCapped) {
     bigBytes = scope.bytes();
   }
   ASSERT_EQ(big.getSectionCount(), static_cast<int>(Fb2::FB2_MAX_CHAPTERS));
-  // 80 extra sections past the cap must not add per-section metadata.
-  // Measured: 8,944 bytes / 57 blocks at 40 chapters, 148,328 bytes at the
-  // 1024 cap. The cap is the RAM ceiling for a book's chapter metadata, and on
-  // the ~380KB C3 it is most of the budget — the reference book's 66 chapters
-  // cost ~15KB.
-  EXPECT_LT(bigBytes, 320u * 1024u) << "capped chapter metadata allocated " << bigBytes << " bytes";
+  // 80 extra sections past the ceiling must not add per-section metadata.
+  //
+  // The budget is what makes the ceiling a guarantee rather than a hope, so it is
+  // set just above the 256-chapter figure and NOT above the 1024-chapter one: at
+  // the old ceiling this book allocated 148,328 bytes on the host, which fails
+  // here. On the device the same book costs 99,716 bytes — 44.9% of the 222,180
+  // bytes of heap left after static allocation and the framebuffer — against
+  // 43,732 bytes (19.7%) at 256. See specs/004-fb2-reader-hardening/research.md.
+  EXPECT_LT(bigBytes, 48u * 1024u) << "capped chapter metadata allocated " << bigBytes << " bytes";
+}
+
+// A book.bin written by firmware with the old, higher ceiling claims more chapters
+// than this build will hold. It must be rejected and the book reparsed at the
+// current ceiling — never read partially, and never allowed to drive a reserve()
+// past the ceiling. This is the upgrade path every existing SD card takes.
+TEST_F(Fb2BookTest, CacheFromTheOldHigherCeilingIsRejectedAndRebuilt) {
+  const std::string path = tmp.path() + "/old-ceiling.fb2";
+  ASSERT_TRUE(writeAll(path, fb2test::makeSectionTowerFb2(200, 2)));
+
+  Fb2 book(path, tmp.path());
+  ASSERT_TRUE(book.load(true));
+  const std::string cacheFile = book.getCachePath() + "/book.bin";
+  // Take the version byte from the cache the loader just wrote, so this test keeps
+  // testing "valid version, too many chapters" across future format bumps.
+  const std::string fresh = readAll(cacheFile);
+  ASSERT_FALSE(fresh.empty());
+
+  // A structurally valid cache, current version, claiming 1024 chapters.
+  std::string stale;
+  stale.push_back(fresh[0]);
+  appendString(stale, "Old Ceiling");
+  appendString(stale, "Author");
+  appendString(stale, "en");
+  appendString(stale, "");
+  appendPod<uint16_t>(stale, 1024);
+  for (int i = 0; i < 1024; i++) {
+    appendString(stale, "Chapter title that exceeds the small buffer " + std::to_string(i));
+    appendPod<uint32_t>(stale, static_cast<uint32_t>(i * 16));
+    appendPod<uint32_t>(stale, 16u);
+    appendPod<uint8_t>(stale, 0u);
+  }
+  ASSERT_TRUE(writeAll(cacheFile, stale));
+
+  Fb2 cacheOnly(path, tmp.path());
+  bool loaded = true;
+  size_t bytesAllocated = 0;
+  {
+    alloc_counter::CountingScope scope;
+    loaded = cacheOnly.load(false);
+    bytesAllocated = scope.bytes();
+  }
+  EXPECT_FALSE(loaded) << "a cache above the ceiling must not load";
+  EXPECT_LT(bytesAllocated, 64u * 1024u) << "over-ceiling cache allocated " << bytesAllocated << " bytes";
+
+  // ...and the book still opens, reparsed at the current ceiling.
+  Fb2 rebuilt(path, tmp.path());
+  ASSERT_TRUE(rebuilt.load(true));
+  EXPECT_EQ(rebuilt.getSectionCount(), 200);
 }
 
 // Contract C7 end to end: chapter lengths partition the body, so progress rises

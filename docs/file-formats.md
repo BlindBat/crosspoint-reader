@@ -705,7 +705,7 @@ String title;
 String author;
 String language;
 String coverBinaryId;
-u16    chapterCount;    // 1..1024 (FB2_MAX_CHAPTERS)
+u16    chapterCount;    // 1..256 (FB2_MAX_CHAPTERS)
 // per chapter:
 String chapterTitle;    // the section's OWN title, may be empty
 u32    fileOffset;      // offset of its "<section" start tag
@@ -722,7 +722,7 @@ chapters, so they partition the reading bodies and reading progress stays
 monotonic.
 
 Reads are bounded: any string longer than 4096 bytes is rejected, a chapter count
-of zero or above `FB2_MAX_CHAPTERS` (1024) is treated as corruption (the parser
+of zero or above `FB2_MAX_CHAPTERS` (256) is treated as corruption (the parser
 always emits at least a whole-file fallback chapter and never more than the cap),
 the count is checked against the bytes remaining in the file before `reserve()`,
 and a `level` that jumps more than one step past its predecessor — or a non-zero

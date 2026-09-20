@@ -5,12 +5,20 @@
 
 class Fb2 {
  public:
-  // Chapter metadata is RAM-resident, so the count is bounded. Past the cap a
+  // Chapter metadata is RAM-resident, so the count is bounded. Past the ceiling a
   // <section> is no longer a chapter boundary: it reads as part of the chapter
   // containing it, so no text is lost.
-  // ponytail: RAM-resident chapter list, capped. Upgrade path is an SD-resident
-  // seekable LUT like BookMetadataCache uses for EPUB, if a real book needs more.
-  static constexpr uint16_t FB2_MAX_CHAPTERS = 1024;
+  //
+  // 256 is measured, not rounded. Across 2,899 real FB2 books the worst costs
+  // 99,716 bytes of chapter metadata at a ceiling of 1024 — 44.9% of the 222,180
+  // bytes of heap the C3 has left after static allocation and the framebuffer —
+  // against 43,732 bytes (19.7%) at 256. The price is coarser navigation in 22 of
+  // those books (0.76%), none of them novels.
+  // ponytail: RAM-resident chapter list, so the count needs a ceiling at all, and a
+  // count is a weak proxy for the bytes it is protecting (books at 256 chapters span
+  // 9-44KB). Upgrade path is an SD-resident seekable LUT like BookMetadataCache uses
+  // for EPUB, which deletes this constant instead of tuning it.
+  static constexpr uint16_t FB2_MAX_CHAPTERS = 256;
 
   // One <section> of a reading body. The vector index is the chapter id used by
   // sections/<index>.bin, progress.bin and the chapter list.

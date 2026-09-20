@@ -90,4 +90,61 @@ inline std::string makeSectionTowerFb2(const int sectionCount, const int chainDe
   return out;
 }
 
+// Deterministic FB2 body of `sectionCount` sections that carry NO <title>, so the
+// label-derivation rules (contract L1-L8) can be exercised. Emitted as sibling
+// chains `chainDepth` levels deep, like makeSectionTowerFb2. Section 0 opens with a
+// long multi-byte paragraph (for the character-boundary cap, L6), section 1 is
+// title-less AND text-less (for the placeholder fallback, L7), and every other
+// section opens with "Body of section N" followed by a second paragraph that must
+// never reach the label (L4).
+inline std::string makeUntitledSectionsFb2(const int sectionCount, const int chainDepth) {
+  const int depth = chainDepth < 1 ? 1 : chainDepth;
+  std::string out =
+      "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<FictionBook>\n"
+      "<description><title-info><book-title>Untitled</book-title><lang>ru</lang></title-info></description>\n"
+      "<body>\n";
+  int emitted = 0;
+  while (emitted < sectionCount) {
+    const int chain = (sectionCount - emitted) < depth ? (sectionCount - emitted) : depth;
+    for (int i = 0; i < chain; i++) {
+      const int index = emitted + i;
+      const std::string n = std::to_string(index);
+      out += "<section>";
+      if (index == 0) {
+        // 80 Cyrillic characters (160 bytes in UTF-8): longer than the 64-character
+        // label cap, so a byte-wise cut would land mid-character.
+        out += "<p>";
+        for (int c = 0; c < 40; c++) out += "ЯЁ";
+        out += "</p>";
+      } else if (index != 1) {
+        out += "<p>Body of section " + n + "</p><p>Second paragraph " + n + "</p>";
+      }
+      // index == 1 stays empty: no title, no text.
+    }
+    for (int i = 0; i < chain; i++) {
+      out += "</section>";
+    }
+    out += "\n";
+    emitted += chain;
+  }
+  out += "</body>\n</FictionBook>\n";
+  return out;
+}
+
+// Like makeSectionTowerFb2 but with titles under the 15-character small-buffer
+// threshold, so an allocation budget can separate the per-chapter struct cost from
+// the heap block a longer title adds.
+inline std::string makeShortTitleTowerFb2(const int sectionCount) {
+  std::string out =
+      "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<FictionBook>\n"
+      "<description><title-info><book-title>Short</book-title><lang>en</lang></title-info></description>\n"
+      "<body>\n";
+  for (int i = 0; i < sectionCount; i++) {
+    const std::string n = std::to_string(i);
+    out += "<section><title><p>T" + n + "</p></title><p>w" + n + "</p></section>\n";
+  }
+  out += "</body>\n</FictionBook>\n";
+  return out;
+}
+
 }  // namespace fb2test

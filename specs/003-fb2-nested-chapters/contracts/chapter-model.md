@@ -53,7 +53,8 @@ body: 0 for a direct child of `<body>`. Levels restart at 0 in each reading body
 
 ## C6 — Cap
 
-`FB2_MAX_CHAPTERS = 1024`. Once 1024 chapters have been numbered, further `<section>`
+`FB2_MAX_CHAPTERS = 1024` (lowered to 256 by `specs/004-fb2-reader-hardening`; the rule below is
+unchanged, only the number). Once the ceiling is reached, further `<section>`
 elements are **not** chapter boundaries: they render as part of the chapter containing
 them (so no text is lost) and they get no list entry. Both parsers apply the cap at the
 same point in the same order, so the numbering stays identical.
