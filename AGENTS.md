@@ -1077,7 +1077,7 @@ rm -rf /path/to/sd/.crosspoint/epub_<hash>/sections/
 | `sections/<n>.bin` (EPUB layout)  | `SECTION_FILE_VERSION`         | **45**  | [lib/Epub/Epub/Section.cpp:50](lib/Epub/Epub/Section.cpp)      |
 | CSS cache                         | `CssParser::CSS_CACHE_VERSION` | **12**  | [lib/Epub/Epub/css/CssParser.h:53](lib/Epub/Epub/css/CssParser.h) |
 | FB2 metadata                      | `FB2_CACHE_VERSION`            | **2**   | [lib/Fb2/Fb2.cpp:13](lib/Fb2/Fb2.cpp)                          |
-| FB2 section layout                | `FB2_SECTION_FILE_VERSION`     | **4**   | [lib/Fb2/Fb2/Fb2Section.cpp:20](lib/Fb2/Fb2/Fb2Section.cpp)     |
+| FB2 section layout                | `FB2_SECTION_FILE_VERSION`     | **5**   | [lib/Fb2/Fb2/Fb2Section.cpp:23](lib/Fb2/Fb2/Fb2Section.cpp)     |
 | TXT page index                    | `CACHE_VERSION`                | **3**   | [lib/Txt/TxtPageIndex.h:15](lib/Txt/TxtPageIndex.h)            |
 
 Section files are named `sections/<spineIndex>.bin`, not `section.bin` ([lib/Epub/Epub/Section.cpp:80](lib/Epub/Epub/Section.cpp)).
