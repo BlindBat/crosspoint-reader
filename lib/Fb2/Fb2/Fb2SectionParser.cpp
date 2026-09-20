@@ -9,6 +9,7 @@
 
 #include <cstring>
 
+#include "Fb2.h"  // Fb2::FB2_MAX_CHAPTERS: the chapter cap both parsers share
 #include "Fb2XmlEncoding.h"
 
 namespace {
@@ -113,31 +114,37 @@ void XMLCALL Fb2SectionParser::startElement(void* userData, const char* name, co
       return;
     }
     self->inBody = true;
+    // The body's own content precedes its first <section>, so it belongs to
+    // whichever chapter that section will be numbered as.
+    self->inBodyPrefix = self->targetSectionIndex >= 0 && self->chapterCount == self->targetSectionIndex;
     self->depth++;
     return;
   }
 
-  // Track top-level sections within body
+  // Every section inside a reading body is a chapter, numbered in start-tag
+  // order. Counting happens before any suppression so a nested chapter's own
+  // subtree still advances the counter and the two parsers stay in lockstep.
   if (strcmp(tag, "section") == 0 && self->inBody) {
-    // Count only top-level sections (direct children of body), matching
-    // Fb2MetadataParser's numbering. Sections nested inside an earlier
-    // chapter are content of that chapter, not chapters of their own.
-    if (self->sectionNesting == 0 && !self->inTargetSection) {
-      if (self->topLevelSectionCount == self->targetSectionIndex) {
+    if (self->chapterCount < Fb2::FB2_MAX_CHAPTERS) {
+      if (!self->inTargetSection && self->chapterCount == self->targetSectionIndex) {
         self->inTargetSection = true;
         self->targetSectionDepth = self->depth;
+      } else if (self->inTargetSection && self->suppressDepth == INT_MAX) {
+        // A child chapter of the target: its text belongs to its own chapter.
+        self->suppressDepth = self->depth;
       }
-      self->topLevelSectionCount++;
+      self->chapterCount++;
     }
-    // Nested sections inside the target section are just processed normally
-    self->sectionNesting++;
+    self->inBodyPrefix = false;  // the body's own content ended here
     self->depth++;
     return;
   }
 
   // If targetSectionIndex is -1, process everything in body (single-section fallback)
-  // Otherwise, only process content when inside the target section
-  if (self->targetSectionIndex >= 0 && !self->inTargetSection) {
+  // Otherwise, only process content when inside the target section and outside
+  // any child chapter of it.
+  if ((self->targetSectionIndex >= 0 && !self->inTargetSection && !self->inBodyPrefix) ||
+      self->suppressDepth < self->depth) {
     self->depth++;
     return;
   }
@@ -237,12 +244,13 @@ void XMLCALL Fb2SectionParser::characterData(void* userData, const char* s, cons
     return;
   }
 
-  if (self->skipUntilDepth < self->depth) {
+  if (self->skipUntilDepth < self->depth || self->suppressDepth < self->depth) {
     return;
   }
 
-  // Only process text when inside the target section (or processing all body content)
-  if (self->targetSectionIndex >= 0 && !self->inTargetSection) {
+  // Only process text when inside the target section or its body's own prefix
+  // (or processing all body content)
+  if (self->targetSectionIndex >= 0 && !self->inTargetSection && !self->inBodyPrefix) {
     return;
   }
 
@@ -289,7 +297,8 @@ void XMLCALL Fb2SectionParser::endElement(void* userData, const char* name) {
   }
 
   // Flush buffer before style changes on block-closing tags
-  const bool processingContent = self->inTargetSection || self->targetSectionIndex < 0;
+  const bool processingContent = (self->inTargetSection || self->inBodyPrefix || self->targetSectionIndex < 0) &&
+                                 self->suppressDepth >= self->depth;
   if (processingContent && self->partWordBufferIndex > 0) {
     bool isBlock = strcmp(tag, "p") == 0 || strcmp(tag, "title") == 0 || strcmp(tag, "subtitle") == 0 ||
                    strcmp(tag, "epigraph") == 0 || strcmp(tag, "v") == 0 || strcmp(tag, "cite") == 0 ||
@@ -310,6 +319,11 @@ void XMLCALL Fb2SectionParser::endElement(void* userData, const char* name) {
     self->skipUntilDepth = INT_MAX;
   }
 
+  // Leaving the child chapter that suppressed the target's content.
+  if (self->suppressDepth == self->depth) {
+    self->suppressDepth = INT_MAX;
+  }
+
   if (self->boldUntilDepth == self->depth) {
     self->boldUntilDepth = INT_MAX;
   }
@@ -323,11 +337,8 @@ void XMLCALL Fb2SectionParser::endElement(void* userData, const char* name) {
     self->blockStyleStack.pop_back();
   }
 
-  // Track closing of sections — check if we're leaving the target top-level section
+  // Track closing of sections — check if we're leaving the target chapter
   if (strcmp(tag, "section") == 0 && self->inBody) {
-    if (self->sectionNesting > 0) {
-      self->sectionNesting--;
-    }
     // depth has already been decremented above; compare with the depth at which the target section opened
     if (self->inTargetSection && self->depth == self->targetSectionDepth) {
       self->inTargetSection = false;
@@ -337,6 +348,7 @@ void XMLCALL Fb2SectionParser::endElement(void* userData, const char* name) {
 
   if (strcmp(tag, "body") == 0) {
     self->inBody = false;
+    self->inBodyPrefix = false;
   }
 }
 

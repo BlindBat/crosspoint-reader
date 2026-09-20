@@ -648,10 +648,17 @@ never left torn.
 | EPUB | 6 or 10 | `u16 spineIndex`, `u16 page`, `u16 chapterPageCount`, and (10-byte form) `u32 visibleTextOffset` |
 | TXT | 4 | `u16 page`, two zero bytes |
 | XTC | 4 | `u32 page` |
-| FB2 | 6 | `u16 sectionIndex`, `u16 page`, `u16 pageCount` |
+| FB2 | 8 | `u16 chapterIndex`, `u16 page`, `u16 pageCount`, `u16 marker` (`0xFB02`) |
 
-The EPUB reader also accepts a 4-byte file (spine and page only) and an FB2
-4-byte file (no page count), both from older firmware. A saved EPUB page of
+The EPUB reader also accepts a 4-byte file (spine and page only) from older
+firmware. The FB2 reader accepts 4- and 6-byte files from older firmware too, but
+reads them differently: without the `0xFB02` marker the payload predates
+one-chapter-per-`<section>` numbering, so its first field is a **top-level
+ordinal** rather than a chapter index. It is resolved through
+`Fb2::firstChapterOfTopLevel()` — the (n+1)-th level-0 chapter — and the page
+restarts at 0, because the stored page indexed a chapter that no longer exists at
+that size. The next save writes the 8-byte form, so each book migrates once. An
+8-byte payload carrying any other marker is rejected. A saved EPUB page of
 `0xFFFF` is a stale last-page sentinel and is read back as page 0. `saveProgress`
 refuses values outside 0..65535. The TXT and XTC readers clamp the decoded page
 into range on load.
@@ -690,42 +697,53 @@ described above.
 
 ## FB2 caches *(fork-only)*
 
-### `book.bin` version 2
+### `book.bin` version 3
 
 ```c++
-u8     version;         // 2
+u8     version;         // 3
 String title;
 String author;
 String language;
 String coverBinaryId;
-u16    sectionCount;
-// per section:
-String sectionTitle;
-u32    fileOffset;
-u32    length;
-u16    tocCount;
-// per TOC entry:
-String tocTitle;
-s16    sectionIndex;
+u16    chapterCount;    // 1..1024 (FB2_MAX_CHAPTERS)
+// per chapter:
+String chapterTitle;    // the section's OWN title, may be empty
+u32    fileOffset;      // offset of its "<section" start tag
+u32    ownLength;       // own bytes: full span minus child chapters' spans
+u8     level;           // nesting depth; 0 = direct child of <body>
 ```
 
-Reads are bounded: any string longer than 4096 bytes is rejected, a section count
-of zero is treated as corruption (the parser always emits at least a whole-file
-fallback section), each count is checked against the bytes remaining in the file
-before `reserve()`, and a TOC entry whose section index is out of range fails the
-load. Any failure falls back to reparsing the FB2 file.
+Every `<section>` of a reading body is a chapter, numbered in start-tag order at
+any depth, so the chapter list is the TOC: there is no separate TOC list, and
+both index mappings are the identity. A body's own `<title>`/`<epigraph>`, which
+precedes its first `<section>`, reads with that first chapter but is in no
+chapter's `ownLength`. Chapter lengths exclude the spans of child
+chapters, so they partition the reading bodies and reading progress stays
+monotonic.
+
+Reads are bounded: any string longer than 4096 bytes is rejected, a chapter count
+of zero or above `FB2_MAX_CHAPTERS` (1024) is treated as corruption (the parser
+always emits at least a whole-file fallback chapter and never more than the cap),
+the count is checked against the bytes remaining in the file before `reserve()`,
+and a `level` that jumps more than one step past its predecessor — or a non-zero
+level on the first chapter — fails the load. Any failure falls back to reparsing
+the FB2 file.
 
 Version 2 stopped counting auxiliary `<body name="...">` sections as chapters,
-which shifts section numbering for books with footnote bodies.
+which shifts section numbering for books with footnote bodies. Version 3 makes
+every nested `<section>` a chapter of its own and adds the `level` byte, which
+renumbers chapters for any book that nests sections; the chapter count is capped
+because this metadata is RAM-resident, and past the cap a `<section>` reads as
+part of the chapter containing it rather than becoming one.
 
-### `sections/<n>.bin` version 4
+### `sections/<n>.bin` version 5
 
 FB2 sections are laid out with the EPUB page pipeline but track only the spec
 fields that affect FB2 layout — there is no CSS and no image mode — so the
 version is independent of the EPUB one. The 23-byte header is:
 
 ```c++
-u8    version;          // 4
+u8    version;          // 5
 s32   fontId;
 float lineCompression;
 bool  extraParagraphSpacing;
@@ -743,9 +761,12 @@ Page records use the same encoding as the EPUB `Page` above, followed by
 version mismatch, a render-spec mismatch, or a `lutOffset` that does not leave
 room for the page data and the whole LUT clears the cache and rebuilds it.
 
-Version 4 was bumped because container block styles (title centring,
-epigraph/cite indents) now reach wrapped `<p>` children; version 3 because
-section counting became top-level-only.
+Version 5 was bumped because the file *name* changed meaning: the chapter index
+now counts every `<section>` at any depth, so a version 4 `sections/1.bin` holds
+the old second top-level chapter and would silently render the wrong text. The
+layout itself is unchanged. Version 4 was bumped because container block styles
+(title centring, epigraph/cite indents) now reach wrapped `<p>` children; version
+3 because section counting became top-level-only.
 
 ## JSON stores
 

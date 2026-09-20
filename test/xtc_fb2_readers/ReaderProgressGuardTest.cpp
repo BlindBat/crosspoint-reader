@@ -31,13 +31,10 @@ bool saveXtcProgress(ReaderProgressGuard& guard, const std::string& cachePath, c
 // page and page count.
 bool saveFb2Progress(ReaderProgressGuard& guard, const std::string& cachePath, const int section, const int page,
                      const int pageCount) {
-  uint8_t data[6];
-  data[0] = section & 0xFF;
-  data[1] = (section >> 8) & 0xFF;
-  data[2] = page & 0xFF;
-  data[3] = (page >> 8) & 0xFF;
-  data[4] = pageCount & 0xFF;
-  data[5] = (pageCount >> 8) & 0xFF;
+  // Uses the production encoder so the payload form under test is the one the
+  // reader actually writes.
+  uint8_t data[fb2_reader::PROGRESS_SIZE];
+  fb2_reader::encodeProgress(data, section, page, pageCount);
   return guard.save(cachePath, section, page, pageCount, data, sizeof(data));
 }
 
@@ -121,7 +118,7 @@ TEST_F(ProgressGuardTest, Fb2SkipsOnlyWhenSectionPageAndCountAllMatch) {
   EXPECT_EQ(Storage.writeCount, 3);
 
   const auto bytes = savedBytes();
-  ASSERT_EQ(bytes.size(), 6u);
+  ASSERT_EQ(bytes.size(), static_cast<size_t>(fb2_reader::PROGRESS_SIZE));
   const auto decoded = fb2_reader::decodeProgress(bytes.data(), static_cast<int>(bytes.size()));
   EXPECT_TRUE(decoded.valid);
   EXPECT_TRUE(decoded.hasPageCount);
@@ -142,7 +139,7 @@ TEST_F(ProgressGuardTest, Fb2ForgetReenablesTheWriteAfterACacheClear) {
   EXPECT_EQ(Storage.writeCount, 2);
 
   const auto bytes = savedBytes();
-  ASSERT_EQ(bytes.size(), 6u);
+  ASSERT_EQ(bytes.size(), static_cast<size_t>(fb2_reader::PROGRESS_SIZE));
   const auto decoded = fb2_reader::decodeProgress(bytes.data(), static_cast<int>(bytes.size()));
   EXPECT_EQ(decoded.sectionIndex, 2);
   EXPECT_EQ(decoded.page, 7);

@@ -10,22 +10,24 @@
 namespace {
 // v2: auxiliary <body name="..."> sections are no longer counted as
 // chapters, which shifts section numbering for books with footnote bodies.
-constexpr uint8_t FB2_CACHE_VERSION = 2;
+// v3: every <section> is a chapter at any depth, which renumbers chapters for
+// any nesting book, and each entry gains a `level` byte; the trailing TOC list
+// is gone because the chapter list IS the TOC.
+constexpr uint8_t FB2_CACHE_VERSION = 3;
 
 // Upper bound for any string stored in book.bin (title/author/language/cover
 // id/section titles). Real values are far below this; a corrupted length
 // field must never drive a multi-megabyte resize on a ~380KB-RAM device.
 constexpr uint32_t FB2_CACHE_MAX_STRING = 4096;
 
-// Minimum serialized footprint of one cache list entry, derived from
-// saveMetadataCache: a section entry is a length-prefixed string (u32 prefix,
-// possibly empty) plus two u32 fields; a TOC entry is a string plus an i16
-// index. A count field claiming more entries than the remaining file bytes
-// could possibly hold is corrupt and must be rejected BEFORE reserve():
-// a 0xFFFF section count would request ~2.6MB of vector storage up front,
-// which on the ~380KB-RAM device means a bare-new abort.
-constexpr uint32_t FB2_CACHE_MIN_SECTION_ENTRY = sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t);
-constexpr uint32_t FB2_CACHE_MIN_TOC_ENTRY = sizeof(uint32_t) + sizeof(int16_t);
+// Minimum serialized footprint of one cache chapter entry, derived from
+// saveMetadataCache: a length-prefixed string (u32 prefix, possibly empty),
+// two u32 fields and the level byte. A count field claiming more entries than
+// the remaining file bytes could possibly hold is corrupt and must be rejected
+// BEFORE reserve(): a 0xFFFF chapter count would request megabytes of vector
+// storage up front, which on the ~380KB-RAM device means a bare-new abort.
+constexpr uint32_t FB2_CACHE_MIN_SECTION_ENTRY =
+    sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint8_t);
 
 // Checked variants of the serialization readers: fail instead of accepting
 // short reads or unbounded string lengths, so a corrupted/truncated book.bin
@@ -91,9 +93,9 @@ bool Fb2::loadMetadataCache() {
   }
 
   uint16_t sectionCount;
-  if (!readPodChecked(file, sectionCount) || sectionCount == 0) {
-    // parseMetadata always produces at least one section (whole-file
-    // fallback), so a section-less cache is corrupt, not empty.
+  if (!readPodChecked(file, sectionCount) || sectionCount == 0 || sectionCount > FB2_MAX_CHAPTERS) {
+    // parseMetadata always produces at least one section (whole-file fallback)
+    // and never more than the cap, so anything else is corrupt, not empty.
     LOG_DBG("FB2", "Cache section count invalid");
     return false;
   }
@@ -106,43 +108,28 @@ bool Fb2::loadMetadataCache() {
   for (uint16_t i = 0; i < sectionCount; i++) {
     SectionInfo info;
     uint32_t offset, length;
-    if (!readStringChecked(file, info.title) || !readPodChecked(file, offset) || !readPodChecked(file, length)) {
+    uint8_t level;
+    if (!readStringChecked(file, info.title) || !readPodChecked(file, offset) || !readPodChecked(file, length) ||
+        !readPodChecked(file, level)) {
       LOG_DBG("FB2", "Cache section %u corrupted", i);
+      sections.clear();
+      return false;
+    }
+    // Nesting grows one step at a time and the first chapter is always a direct
+    // child of <body>, so anything else is a corrupted level byte.
+    const uint8_t previousLevel = i == 0 ? 0 : sections.back().level;
+    if (level > previousLevel + (i == 0 ? 0 : 1)) {
+      LOG_DBG("FB2", "Cache section %u level %u out of sequence", i, level);
       sections.clear();
       return false;
     }
     info.fileOffset = offset;
     info.length = length;
+    info.level = level;
     sections.push_back(std::move(info));
   }
 
-  uint16_t tocCount;
-  if (!readPodChecked(file, tocCount)) {
-    LOG_DBG("FB2", "Cache TOC count corrupted");
-    sections.clear();
-    return false;
-  }
-  if (!countFitsRemainingFile(file, tocCount, FB2_CACHE_MIN_TOC_ENTRY)) {
-    LOG_DBG("FB2", "Cache TOC count %u exceeds file size", tocCount);
-    sections.clear();
-    return false;
-  }
-  tocEntries.clear();
-  tocEntries.reserve(tocCount);
-  for (uint16_t i = 0; i < tocCount; i++) {
-    TocEntry entry;
-    int16_t idx;
-    if (!readStringChecked(file, entry.title) || !readPodChecked(file, idx) || idx < 0 || idx >= sectionCount) {
-      LOG_DBG("FB2", "Cache TOC entry %u corrupted", i);
-      sections.clear();
-      tocEntries.clear();
-      return false;
-    }
-    entry.sectionIndex = idx;
-    tocEntries.push_back(std::move(entry));
-  }
-
-  LOG_DBG("FB2", "Loaded metadata cache: %d sections, %d TOC entries", sectionCount, tocCount);
+  LOG_DBG("FB2", "Loaded metadata cache: %d chapters", sectionCount);
   return true;
 }
 
@@ -165,13 +152,7 @@ bool Fb2::saveMetadataCache() const {
     serialization::writeString(file, info.title);
     serialization::writePod(file, static_cast<uint32_t>(info.fileOffset));
     serialization::writePod(file, static_cast<uint32_t>(info.length));
-  }
-
-  const uint16_t tocCount = static_cast<uint16_t>(tocEntries.size());
-  serialization::writePod(file, tocCount);
-  for (const auto& entry : tocEntries) {
-    serialization::writeString(file, entry.title);
-    serialization::writePod(file, static_cast<int16_t>(entry.sectionIndex));
+    serialization::writePod(file, info.level);
   }
 
   LOG_DBG("FB2", "Saved metadata cache");
@@ -189,8 +170,7 @@ bool Fb2::parseMetadata() {
   author = parser.getAuthor();
   language = parser.getLanguage();
   coverBinaryId = parser.getCoverBinaryId();
-  sections = parser.getSections();
-  tocEntries = parser.getTocEntries();
+  sections = parser.takeSections();
 
   LOG_DBG("FB2", "Parsed: title=%s, author=%s, sections=%d", title.c_str(), author.c_str(),
           static_cast<int>(sections.size()));
@@ -309,7 +289,7 @@ bool Fb2::generateThumbBmp(int height) const {
 int Fb2::getSectionCount() const { return static_cast<int>(sections.size()); }
 
 const Fb2::SectionInfo& Fb2::getSectionInfo(int index) const {
-  static SectionInfo empty = {"", 0, 0};
+  static SectionInfo empty;
   if (index < 0 || index >= static_cast<int>(sections.size())) {
     return empty;
   }
@@ -346,35 +326,39 @@ float Fb2::calculateProgress(int currentSectionIndex, float currentSectionRead) 
   return totalProgress / static_cast<float>(bookSize);
 }
 
-int Fb2::getTocCount() const { return static_cast<int>(tocEntries.size()); }
+// One chapter per section, so the TOC is `sections` itself and both index
+// mappings are the identity.
+int Fb2::getTocCount() const { return getSectionCount(); }
 
-const Fb2::TocEntry& Fb2::getTocEntry(int index) const {
-  static TocEntry empty = {"", -1};
-  if (index < 0 || index >= static_cast<int>(tocEntries.size())) {
-    return empty;
-  }
-  return tocEntries[index];
-}
+const Fb2::SectionInfo& Fb2::getTocEntry(int index) const { return getSectionInfo(index); }
 
 int Fb2::getTocIndexForSectionIndex(int sectionIndex) const {
-  for (int i = 0; i < static_cast<int>(tocEntries.size()); i++) {
-    if (tocEntries[i].sectionIndex == sectionIndex) {
-      return i;
-    }
+  if (sectionIndex < 0 || sectionIndex >= static_cast<int>(sections.size())) {
+    return -1;
   }
-  // Return closest lower TOC entry
-  int best = -1;
-  for (int i = 0; i < static_cast<int>(tocEntries.size()); i++) {
-    if (tocEntries[i].sectionIndex <= sectionIndex) {
-      best = i;
-    }
-  }
-  return best;
+  return sectionIndex;
 }
 
 int Fb2::getSectionIndexForTocIndex(int tocIndex) const {
-  if (tocIndex < 0 || tocIndex >= static_cast<int>(tocEntries.size())) {
+  if (tocIndex < 0 || tocIndex >= static_cast<int>(sections.size())) {
     return 0;
   }
-  return tocEntries[tocIndex].sectionIndex;
+  return tocIndex;
+}
+
+int Fb2::firstChapterOfTopLevel(const int ordinal) const {
+  if (sections.empty()) {
+    return 0;
+  }
+  int seen = 0;
+  for (int i = 0; i < static_cast<int>(sections.size()); i++) {
+    if (sections[i].level != 0) {
+      continue;
+    }
+    if (seen == ordinal) {
+      return i;
+    }
+    seen++;
+  }
+  return static_cast<int>(sections.size()) - 1;
 }

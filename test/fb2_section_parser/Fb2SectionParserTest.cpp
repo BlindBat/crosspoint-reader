@@ -4,6 +4,7 @@
 #include <expat.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <climits>
 #include <functional>
 #include <memory>
@@ -16,6 +17,7 @@
 #undef private
 #undef class
 
+#include "Fb2/Fb2MetadataParser.h"
 #include "Fb2TestSupport.h"
 
 namespace {
@@ -431,36 +433,172 @@ TEST(Fb2SectionParserFile, UnknownElementsAndPlaceholdersFlowThroughWholeFile) {
   EXPECT_FALSE(containsWord(words, "cellword"));
 }
 
-TEST(Fb2SectionParserFile, NestedSectionContentStaysInsideTargetSectionZero) {
+// Contract C3: a chapter renders its section's OWN direct content. The nested
+// child is a chapter of its own, so its text must NOT appear in the parent's.
+TEST(Fb2SectionParserFile, NestedChildContentIsExcludedFromTheParentChapter) {
   GfxRenderer renderer;
   auto result = parseSection(fixturePath("nested-sections.fb2"), 0, renderer, makeSpec());
   ASSERT_TRUE(result.ok);
   const auto words = collectWords(result.pages);
-  EXPECT_TRUE(containsWord(words, "innerword"));  // nested child of section 0
-  EXPECT_FALSE(containsWord(words, "level"));     // "Second top level paragraph." is section 1
+  EXPECT_TRUE(containsWord(words, "Outer"));       // the parent's own paragraphs
+  EXPECT_FALSE(containsWord(words, "innerword"));  // belongs to chapter 1
+  EXPECT_FALSE(containsWord(words, "level"));      // "Second top level paragraph." is chapter 2
 }
 
-// Section indices must match Fb2MetadataParser's numbering, which counts only
-// depth-1 sections: nested <section>s inside an earlier chapter are that
-// chapter's content, never chapters of their own. Selecting top-level section
-// 1 of nested-sections.fb2 must return "Part Two", not the nested "Inner
-// Chapter" of section 0.
-TEST(Fb2SectionParserFile, NestedSectionsDoNotSkewTargetSectionIndexing) {
+// Section indices must match Fb2MetadataParser's numbering, which counts EVERY
+// section in document-start order. Index 1 of nested-sections.fb2 is therefore
+// the nested "Inner Chapter", and index 2 is "Part Two".
+TEST(Fb2SectionParserFile, NestedSectionsAreAddressableByTheirOwnIndex) {
   GfxRenderer renderer;
-  auto second = parseSection(fixturePath("nested-sections.fb2"), 1, renderer, makeSpec());
+  auto inner = parseSection(fixturePath("nested-sections.fb2"), 1, renderer, makeSpec());
+  ASSERT_TRUE(inner.ok);
+  const auto innerWords = collectWords(inner.pages);
+  EXPECT_TRUE(containsWord(innerWords, "innerword"));
+  EXPECT_FALSE(containsWord(innerWords, "Outer"));
+
+  auto second = parseSection(fixturePath("nested-sections.fb2"), 2, renderer, makeSpec());
   ASSERT_TRUE(second.ok);
   const auto secondWords = collectWords(second.pages);
-  EXPECT_TRUE(containsWord(secondWords, "level"));       // "Second top level paragraph."
-  EXPECT_FALSE(containsWord(secondWords, "innerword"));  // nested child of section 0
+  EXPECT_TRUE(containsWord(secondWords, "level"));  // "Second top level paragraph."
+  EXPECT_FALSE(containsWord(secondWords, "innerword"));
 }
 
-TEST(Fb2SectionParserFile, NestedSectionsDoNotExtendTheTopLevelIndexRange) {
-  // Only 2 top-level sections exist; index 2 must select nothing even though
-  // three <section> tags appear in the file.
+TEST(Fb2SectionParserFile, IndexPastTheLastChapterRendersNothing) {
+  // nested-sections.fb2 has exactly 3 chapters (0, 1, 2); index 3 selects none.
   GfxRenderer renderer;
-  auto result = parseSection(fixturePath("nested-sections.fb2"), 2, renderer, makeSpec());
+  auto result = parseSection(fixturePath("nested-sections.fb2"), 3, renderer, makeSpec());
   ASSERT_TRUE(result.ok);
   EXPECT_TRUE(collectWords(result.pages).empty());
+}
+
+// Contract C3 over three levels: each chapter carries only its own marker word.
+TEST(Fb2SectionParserFile, DeepNestingKeepsEachLevelInItsOwnChapter) {
+  GfxRenderer renderer;
+  const char* markers[] = {"levelzeroword", "leveloneword", "leveltwoword", "levelthreeword"};
+  for (int chapter = 0; chapter < 4; chapter++) {
+    auto result = parseSection(fixturePath("nested-deep.fb2"), chapter, renderer, makeSpec());
+    ASSERT_TRUE(result.ok) << "chapter " << chapter;
+    const auto words = collectWords(result.pages);
+    for (int other = 0; other < 4; other++) {
+      EXPECT_EQ(containsWord(words, markers[other]), other == chapter)
+          << "chapter " << chapter << " vs marker " << markers[other];
+    }
+  }
+  // The <poem> is the first chapter's own content, so its verse stays there.
+  auto first = parseSection(fixturePath("nested-deep.fb2"), 0, renderer, makeSpec());
+  ASSERT_TRUE(first.ok);
+  EXPECT_TRUE(containsWord(collectWords(first.pages), "poemword"));
+}
+
+// Documented ceiling (research.md Decision 1): a parent's own text that follows
+// a child section reads with the parent, ahead of the child - never dropped.
+TEST(Fb2SectionParserFile, ParentTextAfterAChildStaysInTheParentChapter) {
+  GfxRenderer renderer;
+  auto parent = parseSection(fixturePath("trailing-parent-text.fb2"), 0, renderer, makeSpec());
+  ASSERT_TRUE(parent.ok);
+  const auto parentWords = collectWords(parent.pages);
+  EXPECT_TRUE(containsWord(parentWords, "beforeword"));
+  EXPECT_TRUE(containsWord(parentWords, "afterword"));
+  EXPECT_FALSE(containsWord(parentWords, "childword"));
+
+  auto child = parseSection(fixturePath("trailing-parent-text.fb2"), 1, renderer, makeSpec());
+  ASSERT_TRUE(child.ok);
+  const auto childWords = collectWords(child.pages);
+  EXPECT_TRUE(containsWord(childWords, "childword"));
+  EXPECT_FALSE(containsWord(childWords, "afterword"));
+}
+
+// Contract C8: a section whose only content is another section still renders one
+// page, so the reader never faces a zero-page chapter.
+TEST(Fb2SectionParserFile, WrapperChapterStillProducesOnePage) {
+  GfxRenderer renderer;
+  auto wrapper = parseSection(fixturePath("wrapper-only.fb2"), 1, renderer, makeSpec());
+  ASSERT_TRUE(wrapper.ok);
+  EXPECT_EQ(wrapper.pages.size(), 1u);
+  EXPECT_TRUE(collectWords(wrapper.pages).empty());
+}
+
+// FR-003/FR-004: a <body> may carry its own <title> and <epigraph> ahead of its
+// first <section>. That text is in no section, so it reads with the first
+// chapter of its body rather than being dropped.
+TEST(Fb2SectionParserFile, BodyOwnContentReadsWithTheFirstChapterOfItsBody) {
+  GfxRenderer renderer;
+  auto first = parseSection(fixturePath("body-prefix.fb2"), 0, renderer, makeSpec());
+  ASSERT_TRUE(first.ok);
+  const auto firstWords = collectWords(first.pages);
+  EXPECT_TRUE(containsWord(firstWords, "Bodytitleword"));
+  EXPECT_TRUE(containsWord(firstWords, "Bodyepigraphword"));
+  EXPECT_TRUE(containsWord(firstWords, "Firstword"));
+  EXPECT_FALSE(containsWord(firstWords, "Secondword"));
+
+  auto second = parseSection(fixturePath("body-prefix.fb2"), 1, renderer, makeSpec());
+  ASSERT_TRUE(second.ok);
+  const auto secondWords = collectWords(second.pages);
+  EXPECT_TRUE(containsWord(secondWords, "Secondword"));
+  EXPECT_FALSE(containsWord(secondWords, "Bodytitleword"));
+  EXPECT_FALSE(containsWord(secondWords, "Bodyepigraphword"));
+}
+
+// The parity + completeness property from contracts/chapter-model.md: the
+// renderer and the metadata parser must agree on numbering, and the chapters
+// together must contain every reading-body word exactly once.
+//
+// The numbering-agreement half is what the title check below asserts: chapter i's
+// rendered text must contain chapter i's own title, because a section's <title>
+// is part of its direct content. Word-multiset equality alone does NOT catch a
+// numbering divergence - reverting the renderer to top-level-only counting still
+// partitions the body, it just hands back the wrong chapter.
+//
+// Mutation check (Principle V): adding `&& sectionNesting == 0` to the renderer's
+// chapter counter (the pre-change rule) while Fb2MetadataParser keeps the new
+// numbering fails this test on the title assertion.
+TEST(Fb2SectionParserFile, ChapterTextsPartitionTheBodyForEveryFixture) {
+  static const char* kFixtures[] = {
+      "basic.fb2",        "nested-sections.fb2", "nested-deep.fb2", "trailing-parent-text.fb2",
+      "wrapper-only.fb2", "styles.fb2",          "no-sections.fb2", "long.fb2",
+      "notes-body.fb2",   "unicode-titles.fb2",  "body-prefix.fb2"};
+  for (const char* fixture : kFixtures) {
+    Fb2MetadataParser metadata(fixturePath(fixture));
+    ASSERT_TRUE(metadata.parse()) << fixture;
+    const auto& sections = metadata.getSections();
+    ASSERT_FALSE(sections.empty()) << fixture;
+
+    GfxRenderer renderer;
+    std::vector<std::string> all;
+    for (size_t i = 0; i < sections.size(); i++) {
+      const int target = (sections.size() == 1 && sections[0].fileOffset == 0) ? -1 : static_cast<int>(i);
+      auto result = parseSection(fixturePath(fixture), target, renderer, makeSpec());
+      ASSERT_TRUE(result.ok) << fixture << " chapter " << i;
+      EXPECT_FALSE(result.pages.empty()) << fixture << " chapter " << i << " produced no page";
+      const auto words = collectWords(result.pages);
+
+      // Numbering agreement: the chapter the renderer returns for index i must be
+      // the chapter the metadata parser described at index i.
+      const std::string& title = sections[i].title;
+      if (target >= 0 && !title.empty()) {
+        const size_t space = title.find(' ');
+        const std::string firstTitleWord = space == std::string::npos ? title : title.substr(0, space);
+        EXPECT_TRUE(containsWord(words, firstTitleWord))
+            << fixture << " chapter " << i << ": rendered text does not contain its own title \"" << title << "\"";
+      }
+
+      all.insert(all.end(), words.begin(), words.end());
+    }
+
+    // One pass over the whole body, which is what the reader would see if the
+    // book were a single chapter: the per-chapter texts must add up to it.
+    auto whole = parseSection(fixturePath(fixture), -1, renderer, makeSpec());
+    ASSERT_TRUE(whole.ok) << fixture;
+    auto wholeWords = collectWords(whole.pages);
+    std::sort(all.begin(), all.end());
+    std::sort(wholeWords.begin(), wholeWords.end());
+    EXPECT_EQ(all, wholeWords) << fixture << ": chapter texts do not partition the reading body";
+
+    // No off-by-one at the end of the numbering.
+    auto past = parseSection(fixturePath(fixture), static_cast<int>(sections.size()), renderer, makeSpec());
+    ASSERT_TRUE(past.ok) << fixture;
+    EXPECT_TRUE(collectWords(past.pages).empty()) << fixture << ": index past the last chapter rendered text";
+  }
 }
 
 TEST(Fb2SectionParserFile, DeclaredWindows1251BodyTextDecodesToUtf8) {

@@ -54,17 +54,6 @@ TEST(Fb2MetadataParser, SectionOffsetsPointAtTheSectionTags) {
   }
 }
 
-TEST(Fb2MetadataParser, TocEntriesMirrorTopLevelSections) {
-  Fb2MetadataParser parser(fixturePath("basic.fb2"));
-  ASSERT_TRUE(parser.parse());
-  const auto& toc = parser.getTocEntries();
-  ASSERT_EQ(toc.size(), 2u);
-  EXPECT_EQ(toc[0].title, "Chapter One");
-  EXPECT_EQ(toc[0].sectionIndex, 0);
-  EXPECT_EQ(toc[1].title, "Chapter Two");
-  EXPECT_EQ(toc[1].sectionIndex, 1);
-}
-
 // Documents a current limitation: only the first <author> is kept (the
 // middle name joins in First Middle Last order; the second author is lost).
 TEST(Fb2MetadataParser, MultipleAuthorsKeepOnlyTheFirst) {
@@ -93,40 +82,161 @@ TEST(Fb2MetadataParser, UntitledSectionKeepsEmptyTitle) {
   ASSERT_TRUE(parser.parse());
   ASSERT_EQ(parser.getSections().size(), 1u);
   EXPECT_EQ(parser.getSections()[0].title, "");
-  ASSERT_EQ(parser.getTocEntries().size(), 1u);
-  EXPECT_EQ(parser.getTocEntries()[0].title, "");
 }
 
-TEST(Fb2MetadataParser, NestedSectionsOnlyTopLevelOnesAreTracked) {
+// Every <section> is a chapter, at any depth (contract C2/C5). A nested section
+// is a chapter of its own, not content of its parent.
+TEST(Fb2MetadataParser, NestedSectionsEachBecomeTheirOwnChapter) {
   const std::string raw = readAll(fixturePath("nested-sections.fb2"));
   Fb2MetadataParser parser(fixturePath("nested-sections.fb2"));
   ASSERT_TRUE(parser.parse());
 
   const auto& sections = parser.getSections();
-  ASSERT_EQ(sections.size(), 2u);
+  ASSERT_EQ(sections.size(), 3u);
   // Multi-paragraph titles are joined with a space.
   EXPECT_EQ(sections[0].title, "Part One The Beginning");
-  EXPECT_EQ(sections[1].title, "Part Two");
+  EXPECT_EQ(sections[1].title, "Inner Chapter");
+  EXPECT_EQ(sections[2].title, "Part Two");
+  EXPECT_EQ(sections[0].level, 0);
+  EXPECT_EQ(sections[1].level, 1);
+  EXPECT_EQ(sections[2].level, 0);
 
-  // First top-level section spans through its nested child: it opens at the
-  // first "<section" and closes at the SECOND "</section>" (the inner one
-  // closes first).
+  // Chapters appear in start-tag order, each at its own "<section".
   EXPECT_EQ(sections[0].fileOffset, nthOccurrence(raw, "<section", 0));
-  EXPECT_EQ(sections[0].fileOffset + sections[0].length, nthOccurrence(raw, "</section>", 1) + 10);
-  EXPECT_EQ(sections[1].fileOffset, nthOccurrence(raw, "<section", 2));
+  EXPECT_EQ(sections[1].fileOffset, nthOccurrence(raw, "<section", 1));
+  EXPECT_EQ(sections[2].fileOffset, nthOccurrence(raw, "<section", 2));
+}
+
+// Contract C7: a chapter's length is its own span minus its children's, so the
+// chapter lengths partition the body instead of double-counting nested text.
+TEST(Fb2MetadataParser, NestedChapterLengthsExcludeChildSpans) {
+  const std::string raw = readAll(fixturePath("nested-sections.fb2"));
+  Fb2MetadataParser parser(fixturePath("nested-sections.fb2"));
+  ASSERT_TRUE(parser.parse());
+
+  const auto& sections = parser.getSections();
+  ASSERT_EQ(sections.size(), 3u);
+
+  // The inner chapter owns its whole span: "<section" (index 1) through the
+  // first "</section>".
+  const size_t innerStart = nthOccurrence(raw, "<section", 1);
+  const size_t innerEnd = nthOccurrence(raw, "</section>", 0) + 10;
+  EXPECT_EQ(sections[1].length, innerEnd - innerStart);
+
+  // The parent's own bytes are its full span minus the inner chapter's.
+  const size_t parentStart = nthOccurrence(raw, "<section", 0);
+  const size_t parentEnd = nthOccurrence(raw, "</section>", 1) + 10;
+  EXPECT_EQ(sections[0].length, (parentEnd - parentStart) - (innerEnd - innerStart));
+}
+
+// Contract C2/C5 over three levels of nesting.
+TEST(Fb2MetadataParser, DeepNestingNumbersEveryLevelInDocumentOrder) {
+  Fb2MetadataParser parser(fixturePath("nested-deep.fb2"));
+  ASSERT_TRUE(parser.parse());
+
+  const auto& sections = parser.getSections();
+  ASSERT_EQ(sections.size(), 4u);
+  EXPECT_EQ(sections[0].title, "Book Level");
+  EXPECT_EQ(sections[1].title, "Part Level");
+  EXPECT_EQ(sections[2].title, "Chapter Level");
+  EXPECT_EQ(sections[3].title, "Scene Level");
+  for (size_t i = 0; i < sections.size(); i++) {
+    EXPECT_EQ(sections[i].level, static_cast<uint8_t>(i)) << "chapter " << i;
+    if (i > 0) EXPECT_GT(sections[i].fileOffset, sections[i - 1].fileOffset) << "chapter " << i;
+  }
+}
+
+// Contract C4: only a <title> that is a DIRECT child of the section counts. A
+// <poem><title> inside the section's own content must not become its title.
+TEST(Fb2MetadataParser, PoemTitleInsideASectionIsNotTheChapterTitle) {
+  Fb2MetadataParser parser(fixturePath("nested-deep.fb2"));
+  ASSERT_TRUE(parser.parse());
+  const auto& sections = parser.getSections();
+  ASSERT_FALSE(sections.empty());
+  EXPECT_EQ(sections[0].title, "Book Level");
+  for (const auto& section : sections) {
+    EXPECT_EQ(section.title.find("Poem Title"), std::string::npos) << section.title;
+  }
+}
+
+// A section whose only content is another section is still a chapter, with an
+// empty title (the UI substitutes the localized "Unnamed" label).
+TEST(Fb2MetadataParser, WrapperSectionIsAChapterWithAnEmptyTitle) {
+  Fb2MetadataParser parser(fixturePath("wrapper-only.fb2"));
+  ASSERT_TRUE(parser.parse());
+  const auto& sections = parser.getSections();
+  ASSERT_EQ(sections.size(), 3u);
+  EXPECT_EQ(sections[0].title, "Outer");
+  EXPECT_EQ(sections[1].title, "");
+  EXPECT_EQ(sections[2].title, "Inner Leaf");
+  EXPECT_EQ(sections[1].level, 1);
+  EXPECT_EQ(sections[2].level, 2);
+}
+
+// Contract C6: the chapter count is bounded; sections past the cap are not
+// chapter boundaries.
+TEST(Fb2MetadataParser, ChapterCountIsCappedAtFb2MaxChapters) {
+  fb2test::TempDir tmp;
+  ASSERT_TRUE(tmp.valid());
+  const std::string path = tmp.path() + "/tower.fb2";
+  ASSERT_TRUE(fb2test::writeAll(path, fb2test::makeSectionTowerFb2(Fb2::FB2_MAX_CHAPTERS + 80, 2)));
+
+  Fb2MetadataParser parser(path);
+  ASSERT_TRUE(parser.parse());
+  EXPECT_EQ(parser.getSections().size(), static_cast<size_t>(Fb2::FB2_MAX_CHAPTERS));
+}
+
+// Hostile nesting must be bounded and deterministic, never a crash.
+TEST(Fb2MetadataParser, DeeplyNestedSectionsParseWithoutUnboundedGrowth) {
+  fb2test::TempDir tmp;
+  ASSERT_TRUE(tmp.valid());
+  const std::string path = tmp.path() + "/deep.fb2";
+  ASSERT_TRUE(fb2test::writeAll(path, fb2test::makeSectionTowerFb2(64, 64)));
+
+  Fb2MetadataParser parser(path);
+  ASSERT_TRUE(parser.parse());
+  const auto& sections = parser.getSections();
+  ASSERT_EQ(sections.size(), 64u);
+  EXPECT_EQ(sections[0].level, 0);
+  EXPECT_EQ(sections[63].level, 63);
 }
 
 // FB2 convention: bodies after the first with a name attribute
 // (name="notes"/"comments") hold auxiliary content. Their sections must not
 // become reading chapters or TOC entries.
+// Contract C1: a later body WITHOUT a name attribute is still a reading body,
+// and its sections restart at level 0.
+TEST(Fb2MetadataParser, SecondUnnamedBodyStillContributesChapters) {
+  fb2test::TempDir tmp;
+  ASSERT_TRUE(tmp.valid());
+  const std::string path = tmp.path() + "/two-bodies.fb2";
+  ASSERT_TRUE(fb2test::writeAll(path,
+                                "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<FictionBook>\n"
+                                "<description><title-info><book-title>Two Bodies</book-title>"
+                                "<lang>en</lang></title-info></description>\n"
+                                "<body><section><title><p>First Body</p></title><p>alpha</p>"
+                                "<section><title><p>First Child</p></title><p>beta</p></section></section></body>\n"
+                                "<body><section><title><p>Second Body</p></title><p>gamma</p></section></body>\n"
+                                "</FictionBook>\n"));
+
+  Fb2MetadataParser parser(path);
+  ASSERT_TRUE(parser.parse());
+  const auto& sections = parser.getSections();
+  ASSERT_EQ(sections.size(), 3u);
+  EXPECT_EQ(sections[0].title, "First Body");
+  EXPECT_EQ(sections[1].title, "First Child");
+  EXPECT_EQ(sections[2].title, "Second Body");
+  EXPECT_EQ(sections[0].level, 0);
+  EXPECT_EQ(sections[1].level, 1);
+  EXPECT_EQ(sections[2].level, 0);
+}
+
 TEST(Fb2MetadataParser, NotesBodySectionsAreNotReadingSections) {
   Fb2MetadataParser parser(fixturePath("notes-body.fb2"));
   ASSERT_TRUE(parser.parse());
   const auto& sections = parser.getSections();
   ASSERT_EQ(sections.size(), 1u);
   EXPECT_EQ(sections[0].title, "Story");
-  ASSERT_EQ(parser.getTocEntries().size(), 1u);
-  EXPECT_EQ(parser.getTocEntries()[0].title, "Story");
 }
 
 TEST(Fb2MetadataParser, UnnamedSecondBodyIsStillReadingContent) {
@@ -174,8 +284,34 @@ TEST(Fb2MetadataParser, SectionlessBodyFallsBackToOneWholeFileSection) {
   EXPECT_EQ(parser.getSections()[0].title, "Plain Stream");
   EXPECT_EQ(parser.getSections()[0].fileOffset, 0u);
   EXPECT_EQ(parser.getSections()[0].length, raw.size());
-  ASSERT_EQ(parser.getTocEntries().size(), 1u);
-  EXPECT_EQ(parser.getTocEntries()[0].sectionIndex, 0);
+}
+
+// Unbalanced <section> markup is an XML well-formedness error: expat rejects it,
+// so the parse fails deterministically instead of leaving the section stack in a
+// half-open state.
+TEST(Fb2MetadataParser, UnbalancedSectionTagsFailParseDeterministically) {
+  fb2test::TempDir tmp;
+  ASSERT_TRUE(tmp.valid());
+
+  const std::string unclosed = tmp.path() + "/unclosed.fb2";
+  ASSERT_TRUE(fb2test::writeAll(unclosed,
+                                "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<FictionBook>\n"
+                                "<description><title-info><book-title>Unbalanced</book-title>"
+                                "<lang>en</lang></title-info></description>\n"
+                                "<body><section><title><p>Open</p></title><p>alpha</p>"
+                                "<section><title><p>Never closed</p></title><p>beta</p>\n"));
+  Fb2MetadataParser openParser(unclosed);
+  EXPECT_FALSE(openParser.parse());
+
+  const std::string stray = tmp.path() + "/stray-close.fb2";
+  ASSERT_TRUE(fb2test::writeAll(stray,
+                                "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<FictionBook>\n"
+                                "<description><title-info><book-title>Stray</book-title>"
+                                "<lang>en</lang></title-info></description>\n"
+                                "<body></section><section><title><p>After</p></title>"
+                                "<p>gamma</p></section></body>\n</FictionBook>\n"));
+  Fb2MetadataParser strayParser(stray);
+  EXPECT_FALSE(strayParser.parse());
 }
 
 TEST(Fb2MetadataParser, EmptyFileFailsParse) {

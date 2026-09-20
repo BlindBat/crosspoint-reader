@@ -37,7 +37,7 @@ using fb2test::writeAll;
 // paragraphAlignment(1) + viewportWidth(2) + viewportHeight(2) +
 // hyphenationEnabled(1) + focusReadingEnabled(1) + pageCount(2) + lutOffset(4).
 constexpr uint32_t kHeaderSize = 23;
-constexpr uint8_t kSectionFileVersion = 4;
+constexpr uint8_t kSectionFileVersion = 5;
 
 ReaderRenderSpec makeSpec() {
   ReaderRenderSpec spec;
@@ -130,6 +130,41 @@ TEST_F(Fb2SectionCacheTest, CreateSectionFileWritesSpecStampedHeader) {
   const uint32_t lutOffset = readAt<uint32_t>(bytes, 19);
   EXPECT_GE(lutOffset, kHeaderSize);
   EXPECT_LT(lutOffset, bytes.size());
+}
+
+// FR-006: a chapter is paginated over its OWN content, so page counts differ
+// per chapter and none of them is the whole book's.
+TEST_F(Fb2SectionCacheTest, PageCountsArePerChapterNotPerBook) {
+  auto nested = std::make_shared<Fb2>(fixturePath("nested-deep.fb2"), tmp.path());
+  ASSERT_TRUE(nested->load());
+  ASSERT_EQ(nested->getSectionCount(), 4);
+
+  int total = 0;
+  std::vector<int> counts;
+  for (int i = 0; i < nested->getSectionCount(); i++) {
+    auto section = std::make_unique<Fb2Section>(nested, i, renderer);
+    ASSERT_TRUE(section->createSectionFile(makeSpec())) << "chapter " << i;
+    EXPECT_GT(section->pageCount, 0) << "chapter " << i;
+    counts.push_back(section->pageCount);
+    total += section->pageCount;
+  }
+  for (size_t i = 0; i < counts.size(); i++) {
+    EXPECT_LT(counts[i], total) << "chapter " << i << " was paginated over the whole book";
+  }
+}
+
+// Contract C8: a section whose only content is a child section still yields one
+// page, so the reader never sees a zero-page chapter (loadPage would return
+// nullptr for every page and the progress percentage would divide by zero).
+TEST_F(Fb2SectionCacheTest, WrapperChapterGetsExactlyOnePage) {
+  auto wrapper = std::make_shared<Fb2>(fixturePath("wrapper-only.fb2"), tmp.path());
+  ASSERT_TRUE(wrapper->load());
+  ASSERT_EQ(wrapper->getSectionCount(), 3);
+
+  auto section = std::make_unique<Fb2Section>(wrapper, 1, renderer);
+  ASSERT_TRUE(section->createSectionFile(makeSpec()));
+  EXPECT_EQ(section->pageCount, 1);
+  EXPECT_NE(section->loadPage(0), nullptr);
 }
 
 TEST_F(Fb2SectionCacheTest, LutEntriesAreMonotonicAndStartAfterHeader) {

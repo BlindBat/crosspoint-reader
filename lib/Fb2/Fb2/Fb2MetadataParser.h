@@ -19,7 +19,6 @@ class Fb2MetadataParser {
 
   // Section scanning
   std::vector<Fb2::SectionInfo> sections;
-  std::vector<Fb2::TocEntry> tocEntries;
 
   // Parser state
   enum class Context {
@@ -37,9 +36,8 @@ class Fb2MetadataParser {
     BINARY_SCAN
   };
   Context context = Context::NONE;
-  int bodyDepth = 0;
   int bodyCount = 0;
-  int sectionDepth = 0;
+  int elemDepth = 0;
   bool inBody = false;
   bool inTitleInfo = false;
   bool inAuthor = false;
@@ -47,11 +45,20 @@ class Fb2MetadataParser {
   std::string authorFirstName;
   std::string authorMiddleName;
   std::string authorLastName;
-  std::string currentSectionTitle;
   bool inSectionTitle = false;
-  size_t currentSectionOffset = 0;
-  size_t previousSectionEnd = 0;
-  int currentSectionIndex = 0;
+
+  // One entry per currently open <section>. Chapters are pushed to `sections`
+  // at their start tag (so the vector is in document order) and their own byte
+  // length is filled in at the end tag: full span minus the spans of the child
+  // chapters, which are chapters of their own.
+  struct OpenSection {
+    size_t entryIndex;   // index into `sections`, or NOT_A_CHAPTER past the cap
+    size_t startOffset;  // byte offset of its "<section" start tag
+    size_t childBytes;   // bytes claimed by child chapters
+    int elemDepth;       // element depth of the <section> itself
+  };
+  static constexpr size_t NOT_A_CHAPTER = static_cast<size_t>(-1);
+  std::vector<OpenSection> openSections;
 
   // Track byte offset from expat
   void* parser = nullptr;
@@ -61,7 +68,11 @@ class Fb2MetadataParser {
   static void characterData(void* userData, const char* s, int len);
 
  public:
-  explicit Fb2MetadataParser(const std::string& filepath) : filepath(filepath) {}
+  explicit Fb2MetadataParser(const std::string& filepath) : filepath(filepath) {
+    // FB2 sections nest two or three deep in practice; reserve once so the
+    // stack never reallocates mid-parse.
+    openSections.reserve(8);
+  }
   bool parse();
 
   const std::string& getTitle() const { return title; }
@@ -69,5 +80,7 @@ class Fb2MetadataParser {
   const std::string& getLanguage() const { return language; }
   const std::string& getCoverBinaryId() const { return coverBinaryId; }
   const std::vector<Fb2::SectionInfo>& getSections() const { return sections; }
-  const std::vector<Fb2::TocEntry>& getTocEntries() const { return tocEntries; }
+  // Hands the chapter list over instead of copying it: a copy would duplicate
+  // every chapter title on the heap.
+  std::vector<Fb2::SectionInfo>&& takeSections() { return std::move(sections); }
 };

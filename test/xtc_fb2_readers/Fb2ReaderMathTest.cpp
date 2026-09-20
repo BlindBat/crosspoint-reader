@@ -158,29 +158,54 @@ TEST(Fb2PercentJump, MapsFractionToPageAndClampsToLast) {
 
 // ---------------------------------------------------------------- progress decode
 
-TEST(Fb2ProgressDecode, SixBytesCarrySectionPageAndPageCount) {
-  const uint8_t data[6] = {0x02, 0x01, 0x34, 0x12, 0x10, 0x00};
-  const auto p = fb2_reader::decodeProgress(data, 6);
+TEST(Fb2ProgressDecode, MarkedEightBytesCarryChapterPageAndPageCount) {
+  const uint8_t data[8] = {0x02, 0x01, 0x34, 0x12, 0x10, 0x00, 0x02, 0xFB};
+  const auto p = fb2_reader::decodeProgress(data, 8);
   EXPECT_TRUE(p.valid);
+  EXPECT_FALSE(p.legacyOrdinal);
   EXPECT_EQ(p.sectionIndex, 0x0102);
   EXPECT_EQ(p.page, 0x1234);
   EXPECT_TRUE(p.hasPageCount);
   EXPECT_EQ(p.pageCount, 16);
 }
 
-TEST(Fb2ProgressDecode, FourBytesAcceptedWithoutPageCount) {
+TEST(Fb2ProgressDecode, EightBytesWithTheWrongMarkerAreRejected) {
+  uint8_t data[8] = {1, 0, 2, 0, 3, 0, 0x02, 0xFB};
+  ASSERT_TRUE(fb2_reader::decodeProgress(data, 8).valid);
+  data[7] = 0xFA;  // anything but the marker
+  EXPECT_FALSE(fb2_reader::decodeProgress(data, 8).valid);
+  data[6] = 0x00;
+  data[7] = 0x00;
+  EXPECT_FALSE(fb2_reader::decodeProgress(data, 8).valid);
+}
+
+// A payload with no marker was written before every section became a chapter:
+// its first field is a top-level ordinal, and its page number indexed a chapter
+// that no longer exists at that size, so the page restarts at 0.
+TEST(Fb2ProgressDecode, SixBytesDecodeAsALegacyTopLevelOrdinal) {
+  const uint8_t data[6] = {0x02, 0x01, 0x34, 0x12, 0x10, 0x00};
+  const auto p = fb2_reader::decodeProgress(data, 6);
+  EXPECT_TRUE(p.valid);
+  EXPECT_TRUE(p.legacyOrdinal);
+  EXPECT_EQ(p.sectionIndex, 0x0102);
+  EXPECT_EQ(p.page, 0);
+  EXPECT_FALSE(p.hasPageCount) << "a legacy page count must not seed the save guard";
+}
+
+TEST(Fb2ProgressDecode, FourBytesDecodeAsALegacyTopLevelOrdinal) {
   const uint8_t data[4] = {3, 0, 7, 0};
   const auto p = fb2_reader::decodeProgress(data, 4);
   EXPECT_TRUE(p.valid);
+  EXPECT_TRUE(p.legacyOrdinal);
   EXPECT_EQ(p.sectionIndex, 3);
-  EXPECT_EQ(p.page, 7);
+  EXPECT_EQ(p.page, 0);
   EXPECT_FALSE(p.hasPageCount);
   EXPECT_EQ(p.pageCount, 0);
 }
 
 TEST(Fb2ProgressDecode, OtherSizesAreRejected) {
-  const uint8_t data[6] = {1, 0, 1, 0, 1, 0};
-  for (const int size : {0, 1, 2, 3, 5}) {
+  const uint8_t data[8] = {1, 0, 1, 0, 1, 0, 0x02, 0xFB};
+  for (const int size : {0, 1, 2, 3, 5, 7, 9}) {
     const auto p = fb2_reader::decodeProgress(data, size);
     EXPECT_FALSE(p.valid) << size;
     EXPECT_FALSE(p.hasPageCount) << size;
@@ -189,10 +214,25 @@ TEST(Fb2ProgressDecode, OtherSizesAreRejected) {
 }
 
 TEST(Fb2ProgressDecode, ZeroPageCountStillCountsAsPresent) {
-  const uint8_t data[6] = {0, 0, 0, 0, 0, 0};
-  const auto p = fb2_reader::decodeProgress(data, 6);
+  const uint8_t data[8] = {0, 0, 0, 0, 0, 0, 0x02, 0xFB};
+  const auto p = fb2_reader::decodeProgress(data, 8);
   EXPECT_TRUE(p.hasPageCount);
   EXPECT_EQ(p.pageCount, 0);
+}
+
+// Writing always emits the current form, so a book that was read once migrates.
+TEST(Fb2ProgressEncode, EncodeRoundTripsThroughDecodeWithTheMarker) {
+  uint8_t data[fb2_reader::PROGRESS_SIZE] = {};
+  EXPECT_EQ(fb2_reader::encodeProgress(data, 300, 12, 40), fb2_reader::PROGRESS_SIZE);
+  EXPECT_EQ(data[6], 0x02);
+  EXPECT_EQ(data[7], 0xFB);
+
+  const auto p = fb2_reader::decodeProgress(data, fb2_reader::PROGRESS_SIZE);
+  EXPECT_TRUE(p.valid);
+  EXPECT_FALSE(p.legacyOrdinal);
+  EXPECT_EQ(p.sectionIndex, 300);
+  EXPECT_EQ(p.page, 12);
+  EXPECT_EQ(p.pageCount, 40);
 }
 
 TEST(Fb2PercentToSection, BookSmallerThanHundredBytesUsesRemainderMath) {
@@ -232,8 +272,8 @@ TEST(Fb2Rescale, EmptyNewSectionCollapsesToPageZero) {
 }
 
 TEST(Fb2ProgressDecode, SixteenBitFieldsAreUnsigned) {
-  const uint8_t data[6] = {0xFF, 0xFF, 0xFE, 0xFF, 0xFD, 0xFF};
-  const auto p = fb2_reader::decodeProgress(data, 6);
+  const uint8_t data[8] = {0xFF, 0xFF, 0xFE, 0xFF, 0xFD, 0xFF, 0x02, 0xFB};
+  const auto p = fb2_reader::decodeProgress(data, 8);
   ASSERT_TRUE(p.valid);
   EXPECT_EQ(p.sectionIndex, 0xFFFF);
   EXPECT_EQ(p.page, 0xFFFE);

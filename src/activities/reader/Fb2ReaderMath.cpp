@@ -58,16 +58,37 @@ int percentJumpPage(const float sectionProgress, const int pageCount) {
 }
 
 Progress decodeProgress(const uint8_t* data, const int size) {
-  Progress progress{0, 0, 0, false, false};
-  if (size != 4 && size != 6) return progress;
+  Progress progress{0, 0, 0, false, false, false};
+  if (size != 4 && size != 6 && size != PROGRESS_SIZE) return progress;
+  if (size == PROGRESS_SIZE) {
+    const uint16_t marker = static_cast<uint16_t>(data[6] | (data[7] << 8));
+    if (marker != PROGRESS_MARKER) return progress;
+  }
   progress.sectionIndex = data[0] | (data[1] << 8);
-  progress.page = data[2] | (data[3] << 8);
   progress.valid = true;
-  if (size == 6) {
+  if (size == PROGRESS_SIZE) {
+    progress.page = data[2] | (data[3] << 8);
     progress.pageCount = data[4] | (data[5] << 8);
     progress.hasPageCount = true;
+    return progress;
   }
+  // No marker: written before every section became a chapter. The stored index
+  // counted top-level sections only, and the stored page indexed a chapter that
+  // no longer exists at that size, so the page restarts at 0.
+  progress.legacyOrdinal = true;
   return progress;
+}
+
+int encodeProgress(uint8_t* data, const int sectionIndex, const int page, const int pageCount) {
+  data[0] = static_cast<uint8_t>(sectionIndex & 0xFF);
+  data[1] = static_cast<uint8_t>((sectionIndex >> 8) & 0xFF);
+  data[2] = static_cast<uint8_t>(page & 0xFF);
+  data[3] = static_cast<uint8_t>((page >> 8) & 0xFF);
+  data[4] = static_cast<uint8_t>(pageCount & 0xFF);
+  data[5] = static_cast<uint8_t>((pageCount >> 8) & 0xFF);
+  data[6] = static_cast<uint8_t>(PROGRESS_MARKER & 0xFF);
+  data[7] = static_cast<uint8_t>((PROGRESS_MARKER >> 8) & 0xFF);
+  return PROGRESS_SIZE;
 }
 
 }  // namespace fb2_reader

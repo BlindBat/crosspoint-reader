@@ -50,18 +50,21 @@ void Fb2ReaderActivity::applyInitialOrientation() {
 void Fb2ReaderActivity::loadProgress() {
   HalFile f;
   if (Storage.openFileForRead("FBR", fb2->getCachePath() + "/progress.bin", f)) {
-    uint8_t data[6];
-    const auto progress = fb2_reader::decodeProgress(data, f.read(data, 6));
+    uint8_t data[fb2_reader::PROGRESS_SIZE];
+    const auto progress = fb2_reader::decodeProgress(data, f.read(data, sizeof(data)));
     if (progress.valid) {
-      currentSectionIndex = progress.sectionIndex;
+      // A payload without the marker stored a top-level ordinal, not a chapter
+      // index: resolve it to that part's own chapter and restart at its page 0.
+      currentSectionIndex =
+          progress.legacyOrdinal ? fb2->firstChapterOfTopLevel(progress.sectionIndex) : progress.sectionIndex;
       nextPageNumber = progress.page;
       cachedSectionIndex = currentSectionIndex;
     }
     if (progress.hasPageCount) {
       cachedSectionTotalPageCount = progress.pageCount;
       // progress.bin already holds this position, so an unchanged first render
-      // must not write it straight back. A 4-byte legacy file has no page count
-      // and is left unseeded so the first save upgrades it to the 6-byte form.
+      // must not write it straight back. A legacy payload is deliberately left
+      // unseeded so the first save rewrites it in the current form.
       progressGuard.markSaved(progress.sectionIndex, progress.page, progress.pageCount);
     }
     LOG_DBG("FBR", "Loaded progress: section %d page %d", currentSectionIndex, nextPageNumber);
@@ -69,13 +72,8 @@ void Fb2ReaderActivity::loadProgress() {
 }
 
 void Fb2ReaderActivity::saveProgress(const int sectionIndex, const int currentPage, const int pageCount) {
-  uint8_t data[6];
-  data[0] = sectionIndex & 0xFF;
-  data[1] = (sectionIndex >> 8) & 0xFF;
-  data[2] = currentPage & 0xFF;
-  data[3] = (currentPage >> 8) & 0xFF;
-  data[4] = pageCount & 0xFF;
-  data[5] = (pageCount >> 8) & 0xFF;
+  uint8_t data[fb2_reader::PROGRESS_SIZE];
+  fb2_reader::encodeProgress(data, sectionIndex, currentPage, pageCount);
   if (!progressGuard.save(fb2->getCachePath(), sectionIndex, currentPage, pageCount, data, sizeof(data))) {
     LOG_ERR("FBR", "Failed to save progress: section %d page %d", sectionIndex, currentPage);
   }
@@ -458,7 +456,7 @@ void Fb2ReaderActivity::renderStatusBar() const {
     if (fb2) {
       const int tocIndex = fb2->getTocIndexForSectionIndex(currentSectionIndex);
       if (tocIndex != -1) {
-        const Fb2::TocEntry& tocEntry = fb2->getTocEntry(tocIndex);
+        const Fb2::SectionInfo& tocEntry = fb2->getTocEntry(tocIndex);
         if (!tocEntry.title.empty()) title = tocEntry.title.c_str();
       }
     }

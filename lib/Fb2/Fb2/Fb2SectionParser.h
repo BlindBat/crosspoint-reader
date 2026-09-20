@@ -32,8 +32,16 @@ class Fb2SectionParser {
   int skipUntilDepth = INT_MAX;
   int boldUntilDepth = INT_MAX;
   int italicUntilDepth = INT_MAX;
-  int topLevelSectionCount = 0;
-  int sectionNesting = 0;       // how many <section> elements are currently open
+  // Chapters are numbered in <section> start-tag order at every depth, matching
+  // Fb2MetadataParser exactly; the counter must keep advancing inside a
+  // suppressed child chapter, which is why suppression cannot reuse
+  // skipUntilDepth (that check returns before the <section> branch).
+  int chapterCount = 0;
+  int suppressDepth = INT_MAX;  // depth of a child chapter open inside the target
+  // A <body> may carry its own <title>/<epigraph> ahead of its first
+  // <section> (FB2 puts nothing else there). That content is in no section,
+  // so it reads with the first chapter of its body instead of being dropped.
+  bool inBodyPrefix = false;
   int targetSectionDepth = -1;  // depth at which the target section was entered
   bool inTargetSection = false;
   bool pastTargetSection = false;

@@ -42,6 +42,7 @@ bool hasNameAttribute(const char** atts) {
 void Fb2MetadataParser::startElement(void* userData, const char* name, const char** atts) {
   auto* self = static_cast<Fb2MetadataParser*>(userData);
   const char* tag = stripNs(name);
+  const int depth = self->elemDepth++;  // depth of this element
 
   if (strcmp(tag, "title-info") == 0 && !self->inBody) {
     self->inTitleInfo = true;
@@ -86,22 +87,38 @@ void Fb2MetadataParser::startElement(void* userData, const char* name, const cha
       return;
     }
     self->inBody = true;
-    self->bodyDepth = 0;
-    // Record byte offset of body start
-    self->previousSectionEnd = XML_GetCurrentByteIndex(static_cast<XML_Parser>(self->parser));
+    // ponytail: a body's own <title>/<epigraph>, ahead of its first <section>,
+    // is in no chapter's length, so it carries no progress weight (it reads
+    // with the first chapter — see Fb2SectionParser::inBodyPrefix). It is a few
+    // hundred bytes of a whole body; give it its own chapter if that ever shows.
     return;
   }
 
   if (self->inBody) {
     if (strcmp(tag, "section") == 0) {
-      self->sectionDepth++;
-      // Only track top-level sections (depth 1 within body)
-      if (self->sectionDepth == 1) {
-        self->currentSectionOffset = XML_GetCurrentByteIndex(static_cast<XML_Parser>(self->parser));
-        self->currentSectionTitle.clear();
-        self->inSectionTitle = false;
+      // Every section is a chapter, at any depth, numbered in start-tag order.
+      // Past FB2_MAX_CHAPTERS a section is no longer a boundary: it reads as
+      // part of the chapter containing it, so no text is lost.
+      const bool isChapter = self->sections.size() < Fb2::FB2_MAX_CHAPTERS;
+      const size_t startOffset = static_cast<size_t>(XML_GetCurrentByteIndex(static_cast<XML_Parser>(self->parser)));
+      size_t entryIndex = NOT_A_CHAPTER;
+      if (isChapter) {
+        Fb2::SectionInfo info;
+        // Untitled sections keep an empty title; the UI substitutes the
+        // localized "Unnamed" label at display time.
+        info.fileOffset = startOffset;
+        const size_t level = self->openSections.size();
+        info.level = static_cast<uint8_t>(level > 255 ? 255 : level);
+        entryIndex = self->sections.size();
+        self->sections.push_back(std::move(info));
       }
-    } else if (strcmp(tag, "title") == 0 && self->sectionDepth == 1) {
+      self->openSections.push_back({entryIndex, startOffset, 0, depth});
+      self->inSectionTitle = false;
+    } else if (strcmp(tag, "title") == 0 && !self->openSections.empty() &&
+               depth == self->openSections.back().elemDepth + 1 &&
+               self->openSections.back().entryIndex != NOT_A_CHAPTER) {
+      // Only a <title> that is a DIRECT child of the section is its title; a
+      // <poem><title> or a child section's title is not.
       self->inSectionTitle = true;
       self->charBuffer.clear();
     } else if (strcmp(tag, "p") == 0 && self->inSectionTitle) {
@@ -114,6 +131,8 @@ void Fb2MetadataParser::startElement(void* userData, const char* name, const cha
 void Fb2MetadataParser::endElement(void* userData, const char* name) {
   auto* self = static_cast<Fb2MetadataParser*>(userData);
   const char* tag = stripNs(name);
+  if (self->elemDepth > 0) self->elemDepth--;
+  const int depth = self->elemDepth;  // depth of this element
 
   if (strcmp(tag, "title-info") == 0 && self->inTitleInfo) {
     self->inTitleInfo = false;
@@ -163,44 +182,47 @@ void Fb2MetadataParser::endElement(void* userData, const char* name) {
   }
 
   if (self->inBody) {
-    if (strcmp(tag, "title") == 0 && self->inSectionTitle && self->sectionDepth == 1) {
+    if (strcmp(tag, "title") == 0 && self->inSectionTitle && !self->openSections.empty() &&
+        depth == self->openSections.back().elemDepth + 1) {
       self->inSectionTitle = false;
       self->context = Context::NONE;
     } else if (strcmp(tag, "p") == 0 && self->context == Context::SECTION_TITLE_P) {
-      // Append paragraph text to section title
-      if (!self->currentSectionTitle.empty() && !self->charBuffer.empty()) {
-        self->currentSectionTitle += " ";
+      // Append paragraph text to the open section's own title.
+      if (!self->openSections.empty() && self->openSections.back().entryIndex != NOT_A_CHAPTER) {
+        std::string& title = self->sections[self->openSections.back().entryIndex].title;
+        if (!title.empty() && !self->charBuffer.empty()) {
+          title += " ";
+        }
+        title += self->charBuffer;
       }
-      self->currentSectionTitle += self->charBuffer;
       self->charBuffer.clear();
       self->context = Context::NONE;
     } else if (strcmp(tag, "section") == 0) {
-      if (self->sectionDepth == 1) {
-        // Finalize the previous section's length
-        size_t endOffset = XML_GetCurrentByteIndex(static_cast<XML_Parser>(self->parser));
-        // Estimate end position (expat gives us the start of the end tag)
-        // Add a reasonable estimate for the closing tag length
-        endOffset += strlen(name) + 3;  // "</section>" roughly
+      if (!self->openSections.empty()) {
+        const OpenSection closed = self->openSections.back();
+        self->openSections.pop_back();
 
-        Fb2::SectionInfo info;
-        info.title = self->currentSectionTitle;
-        info.fileOffset = self->currentSectionOffset;
-        info.length = endOffset - self->currentSectionOffset;
-        self->sections.push_back(std::move(info));
+        // expat reports the start of the end tag; add its own length.
+        const size_t endOffset =
+            static_cast<size_t>(XML_GetCurrentByteIndex(static_cast<XML_Parser>(self->parser))) + strlen(name) + 3;
+        const size_t span = endOffset > closed.startOffset ? endOffset - closed.startOffset : 0;
 
-        // Add TOC entry. Untitled sections keep an empty title; the UI
-        // substitutes the localized "Unnamed" label at display time.
-        Fb2::TocEntry tocEntry;
-        tocEntry.title = self->sections.back().title;
-        tocEntry.sectionIndex = self->currentSectionIndex;
-        self->tocEntries.push_back(std::move(tocEntry));
-
-        self->currentSectionIndex++;
-        self->previousSectionEnd = endOffset;
+        if (closed.entryIndex != NOT_A_CHAPTER) {
+          // Own bytes only: the child chapters' spans belong to those chapters,
+          // so the chapter lengths partition the body instead of overlapping.
+          self->sections[closed.entryIndex].length = span > closed.childBytes ? span - closed.childBytes : 0;
+          if (!self->openSections.empty()) {
+            self->openSections.back().childBytes += span;
+          }
+        }
+        // A section past the cap is not a chapter, so its bytes stay with the
+        // enclosing chapter and are deliberately not subtracted above.
       }
-      self->sectionDepth--;
+      self->inSectionTitle = false;
     } else if (strcmp(tag, "body") == 0) {
       self->inBody = false;
+      // Unbalanced markup can leave sections open; a body never spans another.
+      self->openSections.clear();
     }
   }
 }
@@ -278,12 +300,8 @@ bool Fb2MetadataParser::parse() {
       info.title = title;
       info.fileOffset = 0;
       info.length = sizeFile.size();
+      info.level = 0;
       sections.push_back(std::move(info));
-
-      Fb2::TocEntry tocEntry;
-      tocEntry.title = sections.back().title;
-      tocEntry.sectionIndex = 0;
-      tocEntries.push_back(std::move(tocEntry));
     }
   }
 

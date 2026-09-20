@@ -36,14 +36,27 @@ int rescalePage(int currentPage, int oldPageCount, int newPageCount);
 // Page for a fraction of a section, clamped to the last page.
 int percentJumpPage(float sectionProgress, int pageCount);
 
-// progress.bin payload: u16 section, u16 page, optional u16 page count.
+// progress.bin payload: u16 chapter, u16 page, u16 page count, u16 marker.
+// The marker is what distinguishes the current form from the pre-nested-chapter
+// one: a 4- or 6-byte payload has no marker, so its first field is a TOP-LEVEL
+// ORDINAL under the old numbering rather than a chapter index. The caller then
+// resolves it through Fb2::firstChapterOfTopLevel() and starts at page 0, and the
+// next save writes the 8-byte form, so each book migrates once.
+constexpr uint16_t PROGRESS_MARKER = 0xFB02;
+constexpr int PROGRESS_SIZE = 8;
+
 struct Progress {
-  int sectionIndex;
-  int page;
+  int sectionIndex;  // chapter index, or a top-level ordinal when legacyOrdinal
+  int page;          // always 0 for a legacy payload
   int pageCount;
   bool hasPageCount;
-  bool valid;  // size was 4 or 6
+  bool legacyOrdinal;  // payload predates one-chapter-per-section numbering
+  bool valid;          // size was 4, 6, or 8 with the right marker
 };
 Progress decodeProgress(const uint8_t* data, int size);
+
+// Fills `data` (PROGRESS_SIZE bytes) with the current payload form and returns
+// the number of bytes written.
+int encodeProgress(uint8_t* data, int sectionIndex, int page, int pageCount);
 
 }  // namespace fb2_reader

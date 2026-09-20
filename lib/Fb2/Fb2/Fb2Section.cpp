@@ -17,7 +17,10 @@ namespace {
 // older firmware can hold a nested chapter's pages under a top-level index.
 // v4: container block styles (title centering, epigraph/cite indents) now
 // reach wrapped <p> children, changing the laid-out pages.
-constexpr uint8_t FB2_SECTION_FILE_VERSION = 4;
+// v5: every <section> is a chapter, so the file NAME (the chapter index) means
+// something different — a v4 sections/1.bin holds the old second top-level
+// chapter and would silently render the wrong text. The layout is unchanged.
+constexpr uint8_t FB2_SECTION_FILE_VERSION = 5;
 // version + fontId + lineCompression + extraParagraphSpacing + paragraphAlignment +
 // viewportWidth + viewportHeight + hyphenationEnabled + focusReadingEnabled +
 // pageCount + lutOffset
