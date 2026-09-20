@@ -14,7 +14,7 @@ string  title
 string  author
 string  language
 string  coverBinaryId
-u16     chapterCount             # 1 .. FB2_MAX_CHAPTERS  (cap is now 256, was 1024)
+u16     chapterCount             # 1 .. FB2_MAX_CHAPTERS  (now 256, was 1024 — see research.md M1-M3)
 repeat chapterCount times:
   string  title                  # own title, OR a derived first-line label, may be empty
   u32     fileOffset             # offset of its <section start tag
@@ -53,8 +53,13 @@ Rejection is never fatal: `Fb2::load()` reparses the source file and rewrites th
 
 ## Strings written
 
-Every `title` written to `book.bin` is at most `FB2_MAX_TITLE_CHARS` (64) **characters**,
-truncated on a UTF-8 character boundary by `utf8TruncateChars`. This applies to real titles and
-derived labels alike, and is what bounds the format's per-chapter cost:
-`256 × (4 + 64×4 + 4 + 4 + 1 + 1)` worst case on disk, and one bounded heap block per title in
-RAM.
+A **derived** label written to `book.bin` is at most `FB2_MAX_LABEL_CHARS` (64) **characters**,
+truncated on a UTF-8 character boundary by `utf8TruncateChars` — a `<p>` is prose and would
+otherwise be unbounded. A real `<title>` is written as the book supplies it, bounded on read by
+the existing `FB2_CACHE_MAX_STRING` (4096); measured across 2,899 real books, capping real
+titles too would save 3% of the worst book's metadata, which does not pay for changing what the
+reader sees (research.md Decision 4).
+
+Measured per-chapter cost in RAM (riscv32, from the object file): 36 B of `SectionInfo` plus one
+heap block of `align4(len+1) + 8` for any title longer than 15 characters. At the 256 ceiling
+the worst real book in the corpus costs **43,732 B**.

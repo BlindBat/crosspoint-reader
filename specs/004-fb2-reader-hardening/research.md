@@ -3,39 +3,99 @@
 All findings are from the code in this repository at `feature/fb2-reader-hardening`, cited by
 file and line. No API is assumed that was not read.
 
-## Decision 1 — Chapter ceiling: one value, 256, not board-dependent
+## Measurement basis
+
+Three things were measured before any ceiling was chosen. All are reproducible.
+
+**M1 — Device budget** (`pio run -e default`, this tree):
+
+```text
+RAM:   [==        ]  17.2% (used 56348 bytes from 327680 bytes)
+```
+
+327,680 B DRAM − 56,348 B static = **271,332 B free at boot**; minus the 48 KB framebuffer =
+**222,180 B** of heap for everything the reader does (section pagination, page cache, font
+decompression, activities).
+
+**M2 — Device ABI** (`riscv32-esp-elf-g++ -std=gnu++2a`, sizes read out of the object file's
+`.srodata`, not guessed): `sizeof(std::string)` = **24** (SSO capacity 15 chars),
+`sizeof(Fb2::SectionInfo)` = **36**, and adding a second `uint8_t` beside `level` keeps it at
+**36** — the derived-label flag is free in existing padding.
+
+Device cost model for a book's chapter metadata, used throughout:
+
+```text
+bytes = chapters × 36  +  Σ over titles ( len > 15 ? align4(len+1) + 8 : 0 )
+```
+
+(8 B = ESP-IDF heap block header; the SSO threshold is M2's measured 15.)
+
+**M3 — Real corpus**: **2,899 real FB2 books** (2.7 GB, a Calibre library) parsed through this
+repo's own `Fb2MetadataParser`, not by counting `<section` with grep — the parser skips
+`<body name="notes">`, and grep overstates chapter counts by ~40%.
+
+| | chapters |
+|---|---|
+| median | 18 |
+| mean | 29.4 |
+| p90 | 64 |
+| p99 | 200 |
+| max | 1024 — **2 books sit exactly at today's cap**, i.e. the cap already degrades real books |
+
+Device metadata cost across the corpus: median **988 B**, p99 **19.4 KB**, worst **99,716 B**.
+
+## Decision 1 — Chapter ceiling: 256, chosen from the corpus, not from a round number
 
 **Decision**: `Fb2::FB2_MAX_CHAPTERS` becomes **256**, a single value on every board.
 
-**Rationale (mechanism, not assertion)**: chapter metadata is a
-`std::vector<Fb2::SectionInfo>` ([lib/Fb2/Fb2.h:19-24](../../lib/Fb2/Fb2.h)). One entry on a
-32-bit target is `std::string` (24 B: pointer + size + 16 B SSO buffer) + two `size_t` (8 B) +
-`level` (1 B), padded to 36 B, **plus** one heap block per title longer than the 15-char SSO
-limit. At 1024 the vector alone is ~37 KB and titles add a block each; the host allocator
-measured the whole of `Fb2::load()` at **148,328 bytes** at the cap
-([test/fb2_book/Fb2BookTest.cpp:340-382](../../test/fb2_book/Fb2BookTest.cpp)). At 256 the same
-structure costs a quarter of that — ~9.2 KB of vector plus ≤256 title blocks, bounded to
-~36 KB worst case by Decision 4's title cap. That is affordable beside the 48 KB framebuffer
-on the C3; 148 KB is not.
+**The trade, measured**. "Degraded" means chapters past the ceiling stop being boundaries and
+read as part of the chapter containing them (contract C6) — no text is lost, but the tail
+collapses into one very large chapter.
 
-**Why 256 and not lower**: the reference anthology is 66 chapters. 256 is ~4× the largest book
-anyone has reported, so FR-003's degradation (sections past the ceiling read as part of their
-parent) stays theoretical for real books while the worst case drops by 111 KB.
+| Ceiling | Worst real book's metadata | Share of the 222,180 B usable heap | Books degraded (of 2,899) | Median share of a degraded book's text in the tail chapter |
+|---|---|---|---|---|
+| 1024 (today) | 99,716 B | **44.9 %** | 0 (2 sit at the cap) | — |
+| 512 | 89,908 B | 40.5 % | 9 (0.31 %) | 10.5 % |
+| 384 | 63,240 B | 28.5 % | 12 (0.41 %) | 27.4 % |
+| **256** | **43,732 B** | **19.7 %** | **22 (0.76 %)** | **31.5 %** |
+| 128 | 21,516 B | 9.7 % | 70 (2.41 %) | 33.3 % |
+
+**Rationale**: 1024 is not a ceiling the device can afford — one real book in this corpus costs
+**45 % of the heap the reader has left after the framebuffer**, before a single page is
+paginated. 256 more than halves that to 19.7 % and costs coarser navigation in 0.76 % of books,
+all of them reference works (encyclopaedias, collected letters, legal codes), none of them
+novels. Every one of those 22 books still opens and still contains all of its text.
+
+**What the measurement also shows, and what it costs us**: a count cap is a *weak proxy* for the
+resource it is protecting. At 256 chapters, real books span roughly 9 KB to 44 KB of metadata —
+a 5× spread — because the cost is dominated by title lengths, not chapter count. And the
+degradation is not free: at 256, the worst affected book (a 1.79 MB encyclopaedia) puts **77 %
+of its text into a single chapter**, which is a pagination cost, not just coarser navigation.
+Both are arguments for issue #8's SD-resident LUT, which removes the ceiling rather than tuning
+it. 256 is the best available answer while the metadata stays in RAM; it is not a good answer in
+absolute terms.
+
+**The alternative the data suggests, and why it is not taken here**: cap the *bytes*, not the
+count — stop creating boundaries once chapter metadata reaches a fixed budget (say 24 KB). That
+bounds the actual resource and adapts to title length, where a count cannot. It costs one
+running accumulator in each parser, but it needs a count bound anyway for cache validation
+(`u16 chapterCount`, `countFitsRemainingFile`), so it adds a second constant rather than
+replacing one. Recorded as the upgrade path if #8 is deferred again.
 
 **Why not board-dependent** (FR-002 permits it; we decline): two ceilings mean the same SD card
-carries caches one board accepts and the other rejects. The rejection path exists and is
-correct ([lib/Fb2/Fb2.cpp:96](../../lib/Fb2/Fb2.cpp) already rejects
-`sectionCount > FB2_MAX_CHAPTERS`), so nothing breaks — but it buys a silent reparse on every
-card swap to serve a book that does not exist. YAGNI; a single constant is also what makes
-FR-007's "one place in the code" true. If a real book ever exceeds 256, issue #8's SD-resident
-LUT is the answer, not a second constant.
+carries caches one board accepts and the other rejects. The rejection path already exists
+([lib/Fb2/Fb2.cpp:96](../../lib/Fb2/Fb2.cpp) rejects `sectionCount > FB2_MAX_CHAPTERS`), so
+nothing breaks — but it buys a reparse on every card swap to serve 22 books out of 2,899. A
+single constant is also what makes FR-007's "one place in the code" true.
 
-**Alternatives considered**: 512 (halves the saving for no known benefit); board-gated
-256/1024 (above); keeping 1024 and relying on the OOM path (the device aborts, per
-`-fno-exceptions`).
+**Alternatives considered**: 512 (40.5 % of heap is still most of the budget, for 13 fewer
+degraded books); 128 (9.7 %, but triples the degraded set to 70 books); keeping 1024 (the
+measured hazard above).
 
-**Free consequence**: no new invalidation logic is needed for caches built at the old ceiling —
-`loadMetadataCache` already rejects a count above the cap and reparses.
+**Free consequences**: caches built at the old ceiling are rejected and reparsed by the existing
+count check — no new code. And on the parse path `sections` grows by doubling, so peak metadata
+during a parse is up to ~1.5× the steady-state figure (new block + old block before the copy is
+freed); one `shrink_to_fit()` after the parse returns the slack.
 
 ## Decision 2 — Chapter list: copy EPUB's window, skip its prewarm
 
@@ -88,21 +148,30 @@ per chapter (doubles the per-chapter cost this feature is trying to cut); encodi
 marker inside the string (a format change in disguise, and it leaks into anything that prints a
 title).
 
-## Decision 4 — One title cap, shared by real titles and derived labels
+## Decision 4 — Cap derived labels only; do **not** cap real titles
 
-**Decision**: add `Fb2::FB2_MAX_TITLE_CHARS = 64`, applied with
-`utf8TruncateChars` ([lib/Utf8/Utf8.h:13](../../lib/Utf8/Utf8.h)) to both a parsed `<title>` and
-a derived label before either is stored.
+**Decision**: add `Fb2::FB2_MAX_LABEL_CHARS = 64`, applied with `utf8TruncateChars`
+([lib/Utf8/Utf8.h:13](../../lib/Utf8/Utf8.h)) to a **derived** label only. A `<title>` the book
+actually supplies is stored as-is, unchanged from today.
 
-**Rationale**: FR-018 requires derived labels bounded and cut on character boundaries; the repo
-already has the UTF-8-safe truncator, so this is rung 2 (reuse), not new code. Applying the same
-cap to real titles is what makes the ceiling's memory bound tight: without it a chapter title is
-bounded only by `FB2_CACHE_MAX_STRING` (4096,
-[lib/Fb2/Fb2.cpp:21](../../lib/Fb2/Fb2.cpp)), i.e. 256 × 4 KB = 1 MB in the worst case. 64
-characters is more than any chapter list row can display at any orientation.
+**Rationale**: the draft of this plan capped every stored title, on the assumption that titles
+were a meaningful part of the ceiling's memory. The corpus says they are not. Applying a 64-char
+cap to every title in the worst real book moves its metadata from 99,716 B to 96,668 B — **a
+3 % saving** — because only 13.6 % of chapters across 85,128 real chapters have a title longer
+than 64 characters, and the per-chapter 36 B struct dominates. Capping real titles would change
+what the reader sees in 34 % of books to save 3 % of a figure the ceiling already bounds. Not
+worth it.
 
-**Alternatives considered**: capping only derived labels (leaves the real-title worst case);
-capping in bytes (cuts multi-byte characters in half — the reference book is Russian).
+A derived label is different in kind: it is prose, and a `<p>` can be a whole paragraph, so
+without a cap one untitled section could store kilobytes. The cap is there to bound the
+*unbounded* case, which is the only case that needs it. It is also what FR-018 asks for.
+
+`utf8TruncateChars` is reused rather than written: FR-018 requires truncation on character
+boundaries and the repo already has the UTF-8-safe truncator.
+
+**Alternatives considered**: capping all titles (measured above — 3 % for a visible behaviour
+change); capping in bytes (cuts multi-byte characters in half; the corpus is overwhelmingly
+Russian); no cap at all (leaves a paragraph-sized label in RAM and in `book.bin`).
 
 ## Decision 5 — `book.bin` v4, and what it costs
 

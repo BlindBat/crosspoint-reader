@@ -7,18 +7,18 @@ unchanged.
 
 | Field | Type | Change | Meaning |
 |---|---|---|---|
-| `title` | `std::string` | **capped** | The section's own title, **or** a derived first-line label when it had none. Bounded to `FB2_MAX_TITLE_CHARS` characters. Empty only when the section has neither. |
+| `title` | `std::string` | **may be derived** | The section's own title as the book supplies it, **or** a derived first-line label when it had none. A derived label is bounded to `FB2_MAX_LABEL_CHARS`; a real title is stored unchanged. Empty only when the section has neither. |
 | `fileOffset` | `size_t` | — | Offset of its `<section` start tag. |
 | `length` | `size_t` | — | Own bytes: full span minus child chapters' spans. |
 | `level` | `uint8_t` | — | Nesting depth in the body; 0 = direct child of `<body>`. |
-| `titleDerived` | `bool` | **new** | True when `title` was derived from the section's first paragraph rather than read from a `<title>`. Display-only. |
+| `titleDerived` | `uint8_t` | **new** | True when `title` was derived from the section's first paragraph rather than read from a `<title>`. Display-only. Packs into `SectionInfo`'s existing padding — measured `sizeof` stays 36 B. |
 
 Invariants (validated on cache load, before any allocation the value drives):
 
 1. `0 < chapterCount <= FB2_MAX_CHAPTERS` — **now 256**, was 1024.
 2. `chapterCount * FB2_CACHE_MIN_SECTION_ENTRY <= remaining file bytes`.
-3. Every stored string `<= FB2_CACHE_MAX_STRING` (4096) on read; every string *written* is
-   `<= FB2_MAX_TITLE_CHARS` characters.
+3. Every stored string `<= FB2_CACHE_MAX_STRING` (4096) on read; every *derived* label written
+   is `<= FB2_MAX_LABEL_CHARS` characters.
 4. First `level == 0`; `level <= previous + 1`.
 5. `flags` has no bit set other than bit 0 — any other bit is corruption.
 6. `titleDerived` implies `!title.empty()`.
@@ -27,8 +27,8 @@ Invariants (validated on cache load, before any allocation the value drives):
 
 | Constant | Where | Value | Role |
 |---|---|---|---|
-| `Fb2::FB2_MAX_CHAPTERS` | `lib/Fb2/Fb2.h` | `1024` → **`256`** | The single source of truth for the ceiling (FR-007). Mirrored in `docs/file-formats.md` and the `003` spec documents, never re-declared in code. |
-| `Fb2::FB2_MAX_TITLE_CHARS` | `lib/Fb2/Fb2.h` | **new, `64`** | Character cap for a stored title or derived label (FR-018). |
+| `Fb2::FB2_MAX_CHAPTERS` | `lib/Fb2/Fb2.h` | `1024` → **`256`** | The single source of truth for the ceiling (FR-007). Measured: 256 costs the worst real book 43,732 B (19.7% of usable heap) against 99,716 B (44.9%) at 1024. Mirrored in `docs/file-formats.md` and the `003` spec documents, never re-declared in code. |
+| `Fb2::FB2_MAX_LABEL_CHARS` | `lib/Fb2/Fb2.h` | **new, `64`** | Character cap for a **derived** label (FR-018). Real titles are not capped — measured, capping them saves 3% (research.md Decision 4). |
 | `FB2_CACHE_VERSION` | `lib/Fb2/Fb2.cpp` | `3` → **`4`** | v4 adds the per-chapter `flags` byte. |
 | `FB2_CACHE_MIN_SECTION_ENTRY` | `lib/Fb2/Fb2.cpp` | `+1` | Grows by the `flags` byte, so the pre-`reserve()` size check stays honest. |
 | `FB2_SECTION_FILE_VERSION` | `lib/Fb2/Fb2/Fb2Section.cpp` | **unchanged** | No page cache is invalidated. |

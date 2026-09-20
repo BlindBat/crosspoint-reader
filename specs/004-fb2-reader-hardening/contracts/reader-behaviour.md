@@ -16,8 +16,8 @@ inspection of the state machine in [data-model.md](../data-model.md).
   the label is shorter than the cap.
 - **L5** — Leading and trailing whitespace is stripped, and internal runs of whitespace are
   collapsed to single spaces, before the cap is applied.
-- **L6** — A label is truncated to `FB2_MAX_TITLE_CHARS` (64) characters on a UTF-8 character
-  boundary. The same cap applies to a real title (L1).
+- **L6** — A **derived** label is truncated to `FB2_MAX_LABEL_CHARS` (64) characters on a UTF-8
+  character boundary. A real title (L1) is **not** truncated at parse time — only at display.
 - **L7** — A section with no title and no printable text of its own keeps an empty stored title;
   the chapter list substitutes the localized `STR_UNNAMED` placeholder at display time, as it
   does today.

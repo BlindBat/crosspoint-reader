@@ -15,7 +15,7 @@ Expect, once the feature is built:
 
 | What it proves | Where |
 |---|---|
-| SC-002 — chapter metadata at the ceiling is at most a quarter of the 148,328 B measured at 1024 | `Fb2BookTest.ChapterMetadataAllocatesOneTitlePerChapterAndStaysCapped`, budgets retuned to the new ceiling |
+| SC-002 — chapter metadata stays flat past the ceiling and inside the retuned budget (device model: 36 B/chapter + one bounded title block; worst real book 43,732 B) | `Fb2BookTest.ChapterMetadataAllocatesOneTitlePerChapterAndStaysCapped`, budgets retuned to the new ceiling |
 | FR-003 / SC-001 — a book past the ceiling still opens and loses no text | `Fb2BookTest.ChapterCountIsCappedWhenParsingAHugeBook` |
 | FR-006 — an over-ceiling or corrupt `book.bin` is rejected before `reserve()` | `Fb2BookTest.ChapterCountAboveTheCapIsRejectedWithoutReserving` and its siblings |
 | L1–L8 — label derivation | new cases in the `fb2_metadata_parser` and `fb2_book` suites |
@@ -75,7 +75,15 @@ flashing:
   speed (~7 ms), not after a rebuild (SC-006 as narrowed in plan.md).
 - Its `book.bin` is rewritten once, on that first open (Decision 5).
 
-## 6. Hardware (human tester)
+## 6. Re-running the corpus measurement (optional)
+
+The ceiling's justification is reproducible. Build a small tool against `lib/Fb2` + the
+`test/fb2_common` stubs, walk a directory of real `.fb2` files, and for each book sum
+`chapters × 36 + Σ(len > 15 ? align4(len+1) + 8 : 0)` over `getSectionInfo(i).title`. Compare
+the worst result to the usable heap from a `pio run -e default` RAM report minus the 48 KB
+framebuffer. Method and the 2,899-book result: [research.md](research.md) M1–M3.
+
+## 7. Hardware (human tester)
 
 - Free heap after opening the reference anthology, via serial: compare to the pre-change figure;
   the chapter list should no longer scale with chapter count.
