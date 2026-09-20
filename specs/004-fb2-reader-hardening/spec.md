@@ -180,8 +180,10 @@ placeholder.
   the running firmware MUST be rejected and the book re-parsed — never truncated, never
   partially trusted.
 - **FR-007**: The ceiling's value MUST be stated in exactly one place in the code and mirrored
-  in `docs/file-formats.md` and the affected `specs/003-fb2-nested-chapters` documents, so the
-  documented range and the enforced range cannot diverge.
+  in the live format documentation (`docs/file-formats.md`), so the documented range and the
+  enforced range cannot diverge. A landed feature's specification is a record of what was decided
+  then and MUST NOT be rewritten to a later value; `specs/003-fb2-nested-chapters` gets a forward
+  pointer to this feature instead.
 
 **Cover as first page (#5)**
 
@@ -196,8 +198,9 @@ placeholder.
   position, and MUST NOT alter the progress percentage of any position in the book.
 - **FR-012**: The cover page MUST NOT invalidate existing FB2 caches: no cache version bump may
   be required by this requirement alone.
-- **FR-013**: The cover MUST be scaled to the screen using the same fit rule the sleep screen
-  already applies to the same asset.
+- **FR-013**: The cover MUST be scaled so the whole image is visible — centred and letterboxed,
+  never cropped — at any orientation. (The sleep screen's crop is a user setting for the sleep
+  screen; the reader does not inherit it.)
 - **FR-014**: Inline FB2 images other than the cover remain unrendered; their current textual
   placeholder behaviour is unchanged by this feature.
 
@@ -250,9 +253,13 @@ placeholder.
   board.
 - **SC-002**: No book in the 2,899-book reference corpus costs more than **20% of the device's
   measured usable heap** (222,180 bytes) in chapter metadata — down from 44.9% today — and the
-  figure is flat as a file's section count grows past the ceiling.
-- **SC-003**: Chapter-list memory is constant with respect to chapter count: the same measured
-  figure for a 4-chapter book and for a book at the ceiling.
+  figure is flat as a file's section count grows past the ceiling. Measured once, at spec time
+  (`research.md` M1–M3, reproducible per `quickstart.md` §6); CI guards it by proxy through the
+  host allocation budget, since the corpus is not in the repository.
+- **SC-003**: Chapter-list memory is constant with respect to chapter count — a fixed row window,
+  so a 4-chapter book and a book at the ceiling hold the same buffers. Verified by inspection of
+  the row buffers and by a device heap check: host tests cannot reach activities, and a host-only
+  guard for activity memory would pass on host while being dead on device.
 - **SC-004**: The reference anthology (1.9 MB, 66 chapters) shows the same chapters in the same
   order, at the same progress percentages, as it does today.
 - **SC-005**: An FB2 with a cover opens on that cover; one page turn reaches the first page of
@@ -264,7 +271,9 @@ placeholder.
 - **SC-007**: In the reference anthology's chapter list, zero rows show the placeholder where
   the section has text of its own.
 - **SC-008**: A malformed chapter cache, a truncated `cover.bmp`, and a cover that lies about
-  its dimensions each produce a bounded failure with no crash and no sanitizer finding.
+  its dimensions each produce a bounded failure with no crash and no sanitizer finding. The
+  bitmap half is already guarded by `test/gfx_renderer/BitmapTest.cpp`; what this feature adds is
+  the reader's response to that rejection (FR-010).
 
 ## Out of Scope
 
