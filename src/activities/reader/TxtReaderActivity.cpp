@@ -123,7 +123,7 @@ TxtPageIndex::CacheKey TxtReaderActivity::cacheKey() const {
           static_cast<int32_t>(cachedScreenMargin),  cachedParagraphAlignment};
 }
 
-void TxtReaderActivity::buildPageIndex(GfxRenderer& renderer) {
+void TxtReaderActivity::buildPageIndex(const GfxRenderer& renderer) {
   LOG_DBG("TRS", "Building page index for %zu bytes...", txt->getFileSize());
 
   GUI.drawPopup(renderer, tr(STR_INDEXING));
@@ -134,7 +134,7 @@ void TxtReaderActivity::buildPageIndex(GfxRenderer& renderer) {
   LOG_DBG("TRS", "Built page index: %d pages", totalPages);
 }
 
-bool TxtReaderActivity::loadPageAtOffset(GfxRenderer& renderer, size_t offset, std::vector<std::string>& outLines,
+bool TxtReaderActivity::loadPageAtOffset(const GfxRenderer& renderer, size_t offset, std::vector<std::string>& outLines,
                                          size_t& nextOffset) {
   TxtContentReader content(*txt);
   RendererMeasurer measurer(renderer, cachedFontId);

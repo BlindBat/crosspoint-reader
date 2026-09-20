@@ -352,8 +352,10 @@ void HomeActivity::render(RenderLock&&) {
       static_cast<int>(menuItems.size()),
       metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size(),
       MenuLabelFn{
+          // cppcheck-suppress constParameterPointer  ; signature fixed by MenuLabelFn::fn
           [](void* ctx, int index) { return std::string((*static_cast<const std::vector<const char*>*>(ctx))[index]); },
           &menuItems},
+      // cppcheck-suppress constParameterPointer  ; signature fixed by MenuIconFn::fn
       MenuIconFn{[](void* ctx, int index) { return (*static_cast<const std::vector<UIIcon>*>(ctx))[index]; },
                  &menuIcons});
 

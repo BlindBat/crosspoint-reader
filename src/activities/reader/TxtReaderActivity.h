@@ -40,8 +40,9 @@ class TxtReaderActivity final : public ReaderActivity {
   TxtPageIndex::CacheKey cacheKey() const;
   void renderPage(GfxRenderer& renderer);
   void initializeReader(GfxRenderer& renderer);
-  bool loadPageAtOffset(GfxRenderer& renderer, size_t offset, std::vector<std::string>& outLines, size_t& nextOffset);
-  void buildPageIndex(GfxRenderer& renderer);
+  bool loadPageAtOffset(const GfxRenderer& renderer, size_t offset, std::vector<std::string>& outLines,
+                        size_t& nextOffset);
+  void buildPageIndex(const GfxRenderer& renderer);
   bool loadPageIndexCache();
   void savePageIndexCache() const;
   void saveProgress();
