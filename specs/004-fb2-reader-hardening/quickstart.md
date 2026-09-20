@@ -20,7 +20,8 @@ Expect, once the feature is built:
 | FR-006 — an over-ceiling or corrupt `book.bin` is rejected before `reserve()` | `Fb2BookTest.ChapterCountAboveTheCapIsRejectedWithoutReserving` and its siblings |
 | L1–L8 — label derivation | new cases in the `fb2_metadata_parser` and `fb2_book` suites |
 | v4 round trip, and a v3 cache rejected and rebuilt | new case in `fb2_book` |
-| SC-008 — malformed `flags`, truncated strings, lying lengths | `fb2_book` corrupt-cache cases, plus ASan clean |
+| SC-008 (cache half) — malformed `flags`, truncated strings, lying lengths | `fb2_book` corrupt-cache cases, plus ASan clean |
+| SC-008 (bitmap half) — truncated `cover.bmp`, bad magic, lying dimensions | **already covered** by `test/gfx_renderer/BitmapTest.cpp`; do not rewrite it. What this feature adds is the reader's *response* to the rejection, which is a simulator check (T017) |
 
 The full program must pass, not just the filter, before anything merges:
 
@@ -50,7 +51,9 @@ The chapter list and the cover page are rendering, so they are verified by runni
 not by the suites. Use the `run-simulator` skill (it handles the toolchain, a per-branch SD card
 and the version stamp).
 
-Put a nested FB2 anthology with a cover on the simulator's SD card, then walk:
+Put a nested FB2 anthology with a cover on the simulator's SD card, then walk the steps below.
+Steps 1, 2, 5 and 6 belong to the cover story (task T017); steps 3 and 4 to the chapter-list
+story (task T026) — every step has an owner, so none is left unrun:
 
 1. Open the book with no cache present → it opens **on the cover** (V1). One forward turn →
    first page of text (V4). One back turn → the cover again (V4).
@@ -62,8 +65,10 @@ Put a nested FB2 anthology with a cover on the simulator's SD card, then walk:
    rows, selection opens the chapter the row names (FR-005, L8).
 5. Select a chapter in the middle, back out of the book, reopen it → it lands on that chapter,
    **not** on the cover (V3).
-6. Delete the book's `cover.bmp` from `/.crosspoint/fb2_<hash>/` and reopen → the book opens on
-   its first page of text, no blank page (V2).
+6. Break the cover three ways and reopen after each — **delete** `cover.bmp` from
+   `/.crosspoint/fb2_<hash>/`, **truncate** it mid-file, and edit its header so it **lies about
+   its dimensions**. Each time the book opens on its first page of text: no blank page, no error
+   screen (V2, FR-010, SC-008).
 
 ## 5. Position compatibility (the check that protects existing readers)
 
