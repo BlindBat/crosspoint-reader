@@ -19,6 +19,7 @@
 #include "activities/settings/TextSettingsActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/ScreenshotUtil.h"
 
 namespace {
 size_t cumulativeSectionSize(const void* ctx, const int index) {
@@ -181,6 +182,14 @@ void Fb2ReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
               jumpToPercent(std::get<PercentResult>(result.data).percent);
             }
           });
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::SCREENSHOT: {
+      {
+        RenderLock lock;
+        pendingScreenshot = true;
+      }
+      requestUpdate();
       break;
     }
     case EpubReaderMenuActivity::MenuAction::GO_HOME: {
@@ -415,6 +424,11 @@ void Fb2ReaderActivity::renderBook() {
 
   renderContents(std::move(page), orientedMarginTop, orientedMarginLeft);
   saveProgress(currentSectionIndex, section->currentPage, section->pageCount);
+
+  if (pendingScreenshot) {
+    pendingScreenshot = false;
+    ScreenshotUtil::takeScreenshot(renderer);
+  }
 }
 
 void Fb2ReaderActivity::renderContents(std::unique_ptr<Page> page, const int orientedMarginTop,

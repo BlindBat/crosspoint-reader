@@ -21,6 +21,7 @@ class Fb2ReaderActivity final : public ReaderActivity {
   int cachedSectionIndex = 0;
   int cachedSectionTotalPageCount = 0;
   bool pendingPercentJump = false;
+  bool pendingScreenshot = false;
   float pendingSectionProgress = 0.0f;
   uint8_t appliedOrientation = 0;
   uint8_t pageLoadRetryCount = 0;
