@@ -289,7 +289,7 @@ line`.
       `pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high`.
 - [X] T029 [P] Build one S3 board — `pio run -e sticky` — since a change can build on C3 and
       fail on S3; CI builds all five environments.
-- [ ] T030 Hand the device checks to the human tester per [quickstart.md](quickstart.md) §5 and
+- [ ] T030 *(orientation and the dithered-cover question are settled: the four orientations are verified in the simulator, above, and the grayscale upgrade was declined — only the heap figures remain, and they need the device.)* Hand the device checks to the human tester per [quickstart.md](quickstart.md) §5 and
       §7, and include the **SC-003 heap check** that no host test can reach: free heap after
       opening a 4-chapter FB2 and after opening one at the ceiling, which must differ only by
       chapter metadata and not by chapter-list buffers. Also: the cover page in all four
@@ -364,6 +364,7 @@ Simulator session on `feature/fb2-reader-hardening @ 73b4ceda`, X4 (SSD1677), re
 | V3 | Left the book at chapter 2, reopened: landed on "Глава 1 / Нат" — the saved position, not the cover. |
 | V4 | Forward from the cover → chapter 0 page 0. Back from it → the cover redrew with the identical scale signature. |
 | V5 | Reader menu on the cover read `Chapter: 1/66 pages | Book: 0%` — the real page count, which is why the section is loaded before the cover is drawn. |
+| Orientation | The cover was opened in all four orientations by setting `orientation` in `.crosspoint/settings.json` and relaunching, rather than by blind menu keystrokes. Scale factors: Portrait **0.826**, Landscape CW **0.600**, Inverted **0.826**, Landscape CCW **0.600** — the fit adapts to the swapped axes, and `Cropping 581x800 by 0x0` in all four means nothing is ever cropped. Whole cover visible and centred each time. A text page in `INVERTED` renders the same way the cover does (status bar at the window's bottom edge), so the renderer applies the orientation transform identically to text and bitmaps — the cover path adds no orientation special case. |
 | T026 | Chapter list renders windowed and scrolls: rows 1–13 visible, selection tracked to row 11 of 66. Label content verified against the reference anthology through the parser itself (below), which is stronger evidence than a screenshot of one window. |
 
 **Issue #10's own book**, `Марсианские хроники. Полное издание.fb2`, 66 chapters, before → after:
