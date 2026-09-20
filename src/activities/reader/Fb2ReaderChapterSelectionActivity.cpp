@@ -4,6 +4,7 @@
 #include <I18n.h>
 
 #include <cstdio>
+#include <memory>
 #include <string>
 
 #include "MappedInputManager.h"

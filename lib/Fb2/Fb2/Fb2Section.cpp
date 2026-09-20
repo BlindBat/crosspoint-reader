@@ -6,6 +6,7 @@
 #include <Logging.h>
 #include <Serialization.h>
 
+#include <memory>
 #include <vector>
 
 #include "Fb2SectionParser.h"

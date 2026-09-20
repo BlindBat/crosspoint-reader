@@ -8,6 +8,7 @@
 #include <expat.h>
 
 #include <cstring>
+#include <memory>
 
 #include "Fb2.h"  // Fb2::FB2_MAX_CHAPTERS: the chapter cap both parsers share
 #include "Fb2XmlEncoding.h"

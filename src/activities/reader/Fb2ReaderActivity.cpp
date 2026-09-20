@@ -8,6 +8,7 @@
 #include <Memory.h>
 
 #include <algorithm>
+#include <memory>
 
 #include "CrossPointSettings.h"
 #include "EpubReaderPercentSelectionActivity.h"
