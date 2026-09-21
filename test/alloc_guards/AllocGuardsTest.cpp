@@ -489,6 +489,26 @@ TEST(MemoryAllocGuard, ForOverwriteReturnsNullForAnUnsatisfiableRequest) {
   EXPECT_EQ(overflowing, nullptr);
 }
 
+// The count check must happen before the new-expression, not inside the allocation function:
+// on libstdc++ an unrepresentable count makes the new-expression itself throw
+// bad_array_new_length, which under -fno-exceptions aborts. Zero operator-new[] calls is the
+// portable evidence that the guard ran first; both array overloads carry it.
+TEST(MemoryAllocGuard, OverflowingArrayCountsAreRejectedWithoutReachingTheAllocator) {
+  constexpr size_t kOverflowing = PTRDIFF_MAX / sizeof(uint64_t) + 1;
+  size_t allocations = 0;
+  bool bothNull = false;
+  {
+    alloc_counter::CountingScope scope;
+    auto zeroed = makeUniqueNoThrow<uint64_t[]>(kOverflowing);
+    auto raw = makeUniqueNoThrowForOverwrite<uint64_t[]>(kOverflowing);
+    bothNull = zeroed == nullptr && raw == nullptr;
+    allocations = scope.count();
+  }
+
+  EXPECT_TRUE(bothNull);
+  EXPECT_EQ(allocations, 0u);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Coarse wall-time ceilings — DISABLED BY DEFAULT. Set CROSSPOINT_PERF_TIME=1 to enable.
 // Ceilings are set orders of magnitude above measured times so they only catch complexity-class
