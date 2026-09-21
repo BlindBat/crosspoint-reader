@@ -254,3 +254,66 @@ prefetch disabled at compile time. Also record in-chapter page-turn latency in b
 for SC-003.
 
 **Blocks**: the completion claim. Nothing may be reported as "instant" without this.
+
+---
+
+## Simulator session, 2026-09-21 — what it settled and what it did not
+
+Run on the **reference book itself**: `Марсианские хроники. Полное издание.fb2`,
+1,915,806 bytes, which the reader parsed as **66 chapters** — the exact book and
+chapter count issue #4 measured. Logs quoted below are from
+`crosspoint-sim-feature-fb2-chapter-prefetch-simulator.log`.
+
+### Settled (behavioural — the simulator is authoritative for these)
+
+- **A prepared boundary does no work.** `[FBR] Loading section 2` is followed in the
+  *same millisecond* by `[FBS] Loaded section: 21 pages`, with no
+  `Cache not found, building...` and therefore no indexing popup. Across a session
+  visiting twelve chapters, `Cache not found, building` appeared **once** — for
+  chapter 0, which by definition cannot be prefetched. (SC-002, FR-006.)
+- **Outrunning prefetch degrades to today's behaviour, never worse.** Holding page
+  forward crossed five boundaries faster than prefetch could keep up; sections 4–8
+  each logged `Cache not found, building...`, rendered correctly, lost no position
+  and raised no error. Prefetch resumed by itself at chapter 9. (SC-006.)
+- **Non-linear arrival retargets.** Jumping to chapter 33 from the chapter list
+  built 33 on demand, then `Prefetching chapter 34` / `Prefetched chapter 34: 30 pages`.
+  (Spec edge case "Non-linear arrival".)
+- **Completed prefetch survives a kill.** With the process killed and relaunched,
+  `Loading section 34` → `Loaded section: 30 pages` in the same millisecond: the
+  chapter prepared before the kill was not rebuilt. (SC-005, and the half of FR-015
+  this feature delivers.)
+- **No `.part` ever leaks.** After every session above, `find` for `*.part` over the
+  whole card returned nothing.
+
+### A defect this session found
+
+Ticking prefetch *after* `ReaderActivity::loop()` let it **restart a build that had
+just been stood down**. Navigation from `loop()` is deferred, so the reader is still
+the current activity when the tick runs; the log showed `Prefetching chapter 51`
+twice, the second immediately before `Entering activity: EpubReaderMenu`, and the
+`.part` survived under the menu. Fixed by ticking *before* the base loop, which
+removes the ordering hazard without new state — all navigation is requested during
+the base call. Re-tested with the byte budget temporarily cut to 128 (widening the
+prefetch window to ~20 s so the race could be hit deliberately): one
+`Prefetching chapter 51`, and no `.part` after the menu opened.
+
+### NOT settled — still needs hardware
+
+- **R1/R2/R3 remain open.** The simulator's loop rate is not the C3's, so no slice
+  budget or settle interval can be chosen from it. One directional finding worth
+  carrying to the device: at `PREFETCH_BYTES_PER_TICK = 4096`, preparing a *late*
+  chapter took **10.8 s** in the simulator (chapter 35: `[19650]` → `[30439]`),
+  because the parser rescans from byte 0. The byte budget, not the page budget,
+  dominates a late chapter's preparation time — as D3 predicted. R1 should be read
+  with that in mind: too small a byte budget makes late chapters effectively
+  un-prefetchable at a normal reading pace.
+- **R4 cannot be run here at all.** The simulator's `[MEM]` line is a hardcoded
+  1 MB stub (`Free: 1048576, Total: 1048576, MaxAlloc: 1048576` on every tick), so
+  every heap figure it reports is fiction.
+- **SC-003 and SC-004 need the device.** Page-turn latency and minimum free heap
+  cannot be compared meaningfully on a host allocator.
+- **One stand-down path remains reasoned but unexercised**: a render-spec change
+  arriving while a build is in flight *without* a sub-activity (the control centre
+  turning the screen while the reader is stacked). Every other spec change routes
+  through a sub-activity, which stands prefetch down first.
+
