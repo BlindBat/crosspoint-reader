@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+
+# bin/run-tests-linux -- run bin/run-tests inside a Linux container.
+#
+# CI's unit-tests job is Linux + GCC + libstdc++. A macOS host detects strictly
+# less: no LeakSanitizer, no alloc-dealloc-mismatch, no null-nonnull UBSan, and
+# libc++ pulls in transitive includes libstdc++ does not. A green local run
+# therefore says little. This reproduces CI's environment.
+#
+# Every option is passed straight through to bin/run-tests.
+
+set -euo pipefail
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage: bin/run-tests-linux [bin/run-tests options]
+
+Runs bin/run-tests in a Linux container against the current working tree,
+with CI's sanitizer environment (ASAN_OPTIONS=detect_leaks=1,
+UBSAN_OPTIONS=print_stacktrace=1). Requires Docker.
+
+  bin/run-tests-linux --asan
+  bin/run-tests-linux --asan --filter font_cache_manager
+  bin/run-tests-linux --asan --clean      # discard the cached build first
+
+The build tree lives in a named Docker volume, so repeat runs are
+incremental; --asan and plain builds are kept apart inside it.
+
+Environment:
+  CROSSPOINT_LINUX_IMAGE    Base image (default: ubuntu:24.04, matching
+                            ubuntu-latest).
+  CROSSPOINT_LINUX_VOLUME   Docker volume holding the build tree
+                            (default: crosspoint-linux-test).
+
+Two tests fail in this container on an Apple-silicon host and pass in CI.
+They are artifacts of the container, not defects:
+  JpegToBmp.TruncationAtEveryByteOffsetIsSafe    UBSan hits a signed overflow
+      inside GCC's aarch64 arm_neon.h; CI is x86_64.
+  DictionaryTest.BuildIndexReportsReadErrorWhenSidecarUnwritable
+      the container runs as root, so the test's chmod 0444 does not deny the
+      write it expects to fail.
+EOF
+  exit 0
+fi
+
+if ! docker info >/dev/null 2>&1; then
+  echo "bin/run-tests-linux: Docker is not running." >&2
+  exit 1
+fi
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# bin/run-tests picks build/test vs build/test-asan itself, but
+# CROSSPOINT_TEST_BUILD_DIR overrides both, so keep the variants apart here.
+VARIANT=plain
+for arg in "$@"; do
+  [[ "${arg}" == "--asan" ]] && VARIANT=asan
+done
+
+exec docker run --rm -i \
+  -v "${REPO_ROOT}:/src:ro" \
+  -v "${CROSSPOINT_LINUX_VOLUME:-crosspoint-linux-test}:/out" \
+  -e "CROSSPOINT_TEST_BUILD_DIR=/out/${VARIANT}" \
+  -e ASAN_OPTIONS=detect_leaks=1 \
+  -e UBSAN_OPTIONS=print_stacktrace=1 \
+  "${CROSSPOINT_LINUX_IMAGE:-ubuntu:24.04}" bash -s -- "$@" <<'INNER'
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq cmake ninja-build git g++ python3 ca-certificates >/dev/null
+cd /src
+exec bin/run-tests "$@"
+INNER

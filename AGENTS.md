@@ -982,7 +982,10 @@ build_flags =
 - `ci.yml` runs on: pull requests, and pushes to `master`
 - `clang-format` job fails → Run `./bin/clang-format-fix -g`
 - `build` job fails → Fix compile errors; note a change can build on C3 and still fail on an S3 board (or vice versa)
-- `unit-tests` job fails → Reproduce locally with `./bin/run-tests` (add `--asan` for the sanitizer variant)
+- `unit-tests` job fails → Reproduce locally with `./bin/run-tests` (add `--asan` for the sanitizer variant).
+  On macOS that detects strictly less than CI does — no LeakSanitizer, no `alloc-dealloc-mismatch`, no
+  null-nonnull UBSan — so when a local run is green and CI is not, use `./bin/run-tests-linux`, which takes
+  the same options and runs them in a Linux container matching the CI job
 - `PR Formatting` fails → Your **PR title** is not in semantic-commit form (`feat:`, `fix:`, `chore:`, `docs:`, …); it says nothing about code formatting
 
 ---
