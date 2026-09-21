@@ -4,7 +4,9 @@
 # genuine, plus in-tree expat with device-parity flags.
 add_executable(Fb2SectionCacheTest
   Fb2SectionCacheTest.cpp
+  Fb2SectionGoldenTest.cpp
   Fb2SectionCacheLinkStubs.cpp
+  ${REPO_ROOT}/test/support/AllocCounter.cpp
   ${REPO_ROOT}/lib/Fb2/Fb2.cpp
   ${REPO_ROOT}/lib/Fb2/Fb2/Fb2MetadataParser.cpp
   ${REPO_ROOT}/lib/Fb2/Fb2/Fb2CoverExtractor.cpp
@@ -22,6 +24,7 @@ add_executable(Fb2SectionCacheTest
 )
 
 target_include_directories(Fb2SectionCacheTest PRIVATE
+  ${REPO_ROOT}/test/support
   ${REPO_ROOT}/test/fb2_common/stubs
   ${REPO_ROOT}/test/fb2_common
   ${REPO_ROOT}/lib/expat

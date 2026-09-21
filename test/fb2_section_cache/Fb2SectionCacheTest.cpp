@@ -4,11 +4,13 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "AllocCounter.h"
 #include "Fb2.h"
 #include "Fb2/Fb2Section.h"
 #include "Fb2/Fb2SectionParser.h"
@@ -502,6 +504,277 @@ TEST(Fb2SectionCacheFallback, SectionlessBookBuildsWholeBodyAsOneSection) {
   const auto words = collectWords(pages);
   EXPECT_TRUE(containsWord(words, "Paragraph"));
   EXPECT_TRUE(containsWord(words, "flowing."));
+}
+
+// ---------------------------------------------------------------------------
+// Incremental build (startBuild / buildSomeMore). The rule these all serve:
+// slicing must not change a single byte of what lands on disk.
+// ---------------------------------------------------------------------------
+
+// Build `index` of `book` in slices of the given budgets and return the file bytes.
+std::string buildSliced(const std::shared_ptr<Fb2>& book, GfxRenderer& renderer, const ReaderRenderSpec& spec,
+                        int index, int pageBudget, uint32_t byteBudget) {
+  Fb2Section section(book, index, renderer);
+  if (!section.startBuild(spec)) return {};
+  int guard = 0;
+  while (!section.isBuildComplete()) {
+    if (!section.buildSomeMore(pageBudget, byteBudget)) return {};
+    if (++guard > 100000) return {};  // a slice that never advances is a bug, not a hang
+  }
+  return readAll(book->getCachePath() + "/sections/" + std::to_string(index) + ".bin");
+}
+
+std::string buildOneShot(const std::shared_ptr<Fb2>& book, GfxRenderer& renderer, const ReaderRenderSpec& spec,
+                         int index) {
+  Fb2Section section(book, index, renderer);
+  if (!section.createSectionFile(spec)) return {};
+  return readAll(book->getCachePath() + "/sections/" + std::to_string(index) + ".bin");
+}
+
+// Each book gets its own temp dir so one build never sees another's cache.
+struct SliceBook {
+  fb2test::TempDir tmp;
+  std::shared_ptr<Fb2> book;
+
+  explicit SliceBook(const std::string& fixture) {
+    if (!tmp.valid()) return;
+    book = std::make_shared<Fb2>(fixturePath(fixture), tmp.path());
+    if (!book->load()) book.reset();
+  }
+};
+
+// T1: a one-page-at-a-time build and a one-shot build agree byte for byte.
+// Catches: resetting any parser field at slice entry (e.g. nextWordContinues).
+TEST(Fb2SectionSlice, PageSlicedBuildMatchesOneShotByteForByte) {
+  GfxRenderer renderer;
+  const auto spec = makeSpec();
+  for (const char* fixture : {"long.fb2", "styles.fb2", "nested-sections.fb2"}) {
+    SliceBook oneShot(fixture), sliced(fixture);
+    ASSERT_NE(oneShot.book, nullptr) << fixture;
+    ASSERT_NE(sliced.book, nullptr) << fixture;
+    for (int i = 0; i < oneShot.book->getSectionCount(); i++) {
+      const auto expected = buildOneShot(oneShot.book, renderer, spec, i);
+      ASSERT_FALSE(expected.empty()) << fixture << " chapter " << i;
+      EXPECT_EQ(buildSliced(sliced.book, renderer, spec, i, 1, 0), expected) << fixture << " chapter " << i;
+    }
+  }
+}
+
+// T2: the byte budget is checked BETWEEN XML_ParseBuffer calls, so any budget
+// produces the same file. Catches: checking budgets inside a handler, which
+// ends a slice mid-node and drops or duplicates text.
+TEST(Fb2SectionSlice, ByteBudgetDoesNotAffectOutput) {
+  GfxRenderer renderer;
+  const auto spec = makeSpec();
+  // slice-boundary.fb2 is one ~10KB text node of fixed-width words, so several
+  // 1024-byte parse buffers end mid-word. That is the case a slice boundary can
+  // corrupt: with a one-buffer budget, every buffer boundary is a slice entry.
+  SliceBook reference("slice-boundary.fb2");
+  ASSERT_NE(reference.book, nullptr);
+  const auto expected = buildOneShot(reference.book, renderer, spec, 0);
+  ASSERT_FALSE(expected.empty());
+
+  for (const uint32_t budget : {1024u, 3072u, 7168u, 0u}) {
+    SliceBook under("slice-boundary.fb2");
+    ASSERT_NE(under.book, nullptr);
+    EXPECT_EQ(buildSliced(under.book, renderer, spec, 0, 0, budget), expected) << "byteBudget " << budget;
+  }
+}
+
+// T3: the words either side of a mid-word slice boundary survive intact. The
+// byte-identity test above would catch corruption too, but this one says what
+// actually broke. Catches: clearing partWordBuffer/nextWordContinues per slice.
+TEST(Fb2SectionSlice, WordsSurviveAMidWordSliceBoundary) {
+  GfxRenderer renderer;
+  const auto spec = makeSpec();
+  SliceBook b("slice-boundary.fb2");
+  ASSERT_NE(b.book, nullptr);
+
+  Fb2Section section(b.book, 0, renderer);
+  ASSERT_TRUE(section.startBuild(spec));
+  while (!section.isBuildComplete()) ASSERT_TRUE(section.buildSomeMore(0, 1024));
+
+  std::vector<std::unique_ptr<Page>> pages;
+  for (uint16_t i = 0; i < section.pageCount; i++) {
+    auto page = section.loadPage(i);
+    ASSERT_NE(page, nullptr);
+    pages.push_back(std::move(page));
+  }
+  const auto words = collectWords(pages);
+  // Every one of the fixture's 700 words must appear whole. Sampling is not
+  // enough: only the handful sitting on a buffer boundary can break, so a
+  // sparse check passes against a parser that drops the part-word each slice.
+  int missing = 0;
+  for (int i = 0; i < 700; i++) {
+    char expectedWord[32];
+    std::snprintf(expectedWord, sizeof(expectedWord), "wordpart%06d", i);
+    if (!containsWord(words, expectedWord)) {
+      if (missing < 5) ADD_FAILURE() << expectedWord << " did not survive slicing";
+      missing++;
+    }
+  }
+  EXPECT_EQ(missing, 0) << missing << " of 700 words lost at slice boundaries";
+}
+
+// T4: abandoning a build removes its .part and leaves an existing cache intact.
+// Catches: writing in place instead of to .part, which clobbers the good file.
+TEST(Fb2SectionSlice, AbandonLeavesExistingCacheUntouched) {
+  GfxRenderer renderer;
+  const auto spec = makeSpec();
+  SliceBook b("long.fb2");
+  ASSERT_NE(b.book, nullptr);
+  const std::string path = b.book->getCachePath() + "/sections/0.bin";
+
+  const auto good = buildOneShot(b.book, renderer, spec, 0);
+  ASSERT_FALSE(good.empty());
+
+  Fb2Section section(b.book, 0, renderer);
+  ASSERT_TRUE(section.startBuild(spec));
+  ASSERT_TRUE(section.buildSomeMore(1, 0));
+  section.abandonBuild();
+
+  EXPECT_FALSE(section.isBuilding());
+  EXPECT_FALSE(fileExists(path + ".part"));
+  EXPECT_EQ(readAll(path), good);
+}
+
+// T5: the destructor abandons, so no .part survives a dropped build.
+TEST(Fb2SectionSlice, DestructorRemovesPartFile) {
+  GfxRenderer renderer;
+  SliceBook b("long.fb2");
+  ASSERT_NE(b.book, nullptr);
+  const std::string partPath = b.book->getCachePath() + "/sections/0.bin.part";
+  {
+    Fb2Section section(b.book, 0, renderer);
+    ASSERT_TRUE(section.startBuild(makeSpec()));
+    ASSERT_TRUE(section.buildSomeMore(1, 0));
+    ASSERT_TRUE(fileExists(partPath));
+  }
+  EXPECT_FALSE(fileExists(partPath));
+}
+
+// T6: buildSomeMore without a build is a no-op false, not a crash.
+TEST(Fb2SectionSlice, BuildSomeMoreWithoutBuildReturnsFalse) {
+  GfxRenderer renderer;
+  SliceBook b("basic.fb2");
+  ASSERT_NE(b.book, nullptr);
+  Fb2Section section(b.book, 0, renderer);
+  EXPECT_FALSE(section.isBuilding());
+  EXPECT_FALSE(section.buildSomeMore(2, 0));
+  EXPECT_FALSE(section.isBuildComplete());
+}
+
+// T7: a sliced build commits a file the reader can load, with the same pages.
+// Catches: renaming before the LUT is written (extent check rejects the file).
+TEST(Fb2SectionSlice, SlicedBuildProducesLoadableSection) {
+  GfxRenderer renderer;
+  const auto spec = makeSpec();
+  SliceBook b("long.fb2");
+  ASSERT_NE(b.book, nullptr);
+
+  Fb2Section built(b.book, 0, renderer);
+  ASSERT_TRUE(built.startBuild(spec));
+  while (!built.isBuildComplete()) ASSERT_TRUE(built.buildSomeMore(2, 0));
+  ASSERT_GT(built.pageCount, 0);
+
+  Fb2Section loaded(b.book, 0, renderer);
+  ASSERT_TRUE(loaded.loadSectionFile(spec));
+  ASSERT_EQ(loaded.pageCount, built.pageCount);
+
+  std::vector<std::unique_ptr<Page>> pages;
+  for (uint16_t i = 0; i < loaded.pageCount; i++) {
+    auto page = loaded.loadPage(i);
+    ASSERT_NE(page, nullptr) << "page " << i;
+    pages.push_back(std::move(page));
+  }
+  EXPECT_FALSE(collectWords(pages).empty());
+}
+
+// The swap must survive an existing cache file. FatFile::rename opens the
+// destination O_CREAT | O_EXCL and fails if it is there, so finalizeBuild must
+// remove first. Catches: dropping that remove -- every rebuild would fail.
+TEST(Fb2SectionSlice, RebuildOverExistingCacheSucceeds) {
+  GfxRenderer renderer;
+  const auto spec = makeSpec();
+  SliceBook b("long.fb2");
+  ASSERT_NE(b.book, nullptr);
+  const std::string path = b.book->getCachePath() + "/sections/0.bin";
+
+  const auto first = buildOneShot(b.book, renderer, spec, 0);
+  ASSERT_FALSE(first.empty());
+  ASSERT_TRUE(fileExists(path));
+
+  // Same spec, same content: the rebuild must still commit over the old file.
+  const auto second = buildOneShot(b.book, renderer, spec, 0);
+  ASSERT_FALSE(second.empty()) << "rebuild over an existing cache file failed";
+  EXPECT_EQ(second, first);
+  EXPECT_FALSE(fileExists(path + ".part"));
+}
+
+// A .part left by an interrupted build is overwritten, never appended to.
+TEST(Fb2SectionSlice, StalePartFileIsOverwrittenNotAppended) {
+  GfxRenderer renderer;
+  const auto spec = makeSpec();
+  SliceBook clean("long.fb2"), stale("long.fb2");
+  ASSERT_NE(clean.book, nullptr);
+  ASSERT_NE(stale.book, nullptr);
+
+  const auto expected = buildOneShot(clean.book, renderer, spec, 0);
+  ASSERT_FALSE(expected.empty());
+
+  const std::string sectionsDir = stale.book->getCachePath() + "/sections";
+  ASSERT_EQ(::system(("mkdir -p '" + sectionsDir + "'").c_str()), 0);
+  ASSERT_TRUE(writeAll(sectionsDir + "/0.bin.part", std::string(4096, '\xAB')));
+
+  EXPECT_EQ(buildOneShot(stale.book, renderer, spec, 0), expected);
+}
+
+// Slicing must not cost allocations. On a ~380KB device, per-slice heap churn is
+// the fragmentation hazard; allocation count is the accepted host proxy for it
+// (Constitution IV). The budget is the one-shot build's own count plus the
+// single BuildContext a sliced build adds.
+TEST(Fb2SectionSlice, SlicingCostsNoExtraAllocations) {
+  GfxRenderer renderer;
+  const auto spec = makeSpec();
+
+  size_t oneShotAllocs = 0;
+  bool oneShotOk = false;
+  {
+    SliceBook b("slice-boundary.fb2");
+    ASSERT_NE(b.book, nullptr);
+    Fb2Section section(b.book, 0, renderer);
+    {
+      // gtest assertions allocate, so none may appear inside the scope.
+      alloc_counter::CountingScope counting;
+      oneShotOk = section.createSectionFile(spec);
+      oneShotAllocs = counting.count();
+    }
+  }
+  ASSERT_TRUE(oneShotOk);
+  ASSERT_GT(oneShotAllocs, 0u);
+
+  size_t slicedAllocs = 0;
+  bool slicedOk = true;
+  {
+    SliceBook b("slice-boundary.fb2");
+    ASSERT_NE(b.book, nullptr);
+    Fb2Section section(b.book, 0, renderer);
+    {
+      alloc_counter::CountingScope counting;
+      slicedOk = section.startBuild(spec);
+      int guard = 0;
+      while (slicedOk && !section.isBuildComplete() && ++guard < 100000) {
+        slicedOk = section.buildSomeMore(2, 4096);
+      }
+      slicedAllocs = counting.count();
+    }
+  }
+  ASSERT_TRUE(slicedOk);
+
+  // createSectionFile IS startBuild + buildSomeMore, so the counts must match
+  // exactly: pausing between slices allocates nothing. A per-slice allocation
+  // (a re-created parser, a re-grown LUT, a temporary path string) lands here.
+  EXPECT_EQ(slicedAllocs, oneShotAllocs);
 }
 
 }  // namespace

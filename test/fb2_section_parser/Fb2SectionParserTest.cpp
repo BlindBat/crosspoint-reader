@@ -655,6 +655,28 @@ TEST(Fb2SectionParserFile, MalformedTruncatedXmlFailsWithoutCrash) {
   EXPECT_FALSE(result.ok);
 }
 
+// The same malformed input, fed one buffer at a time, must fail the same way:
+// Failed, never Finished. Returning Finished here would let an incremental
+// caller commit a truncated section file as if it were complete.
+TEST(Fb2SectionParserFile, MalformedTruncatedXmlFailsThroughSlicesToo) {
+  GfxRenderer renderer;
+  std::vector<std::unique_ptr<Page>> pages;
+  PageSink sink{&pages};
+  const std::string path = fixturePath("malformed-truncated.fb2");
+  Fb2SectionParser parser(path, 0, 0, renderer, makeSpec(), sink.fn());
+  ASSERT_TRUE(parser.beginParse());
+
+  Fb2SectionParser::ParseStatus status;
+  int guard = 0;
+  do {
+    status = parser.parseSome(0, 1024);
+  } while (status == Fb2SectionParser::ParseStatus::Paused && ++guard < 10000);
+
+  EXPECT_EQ(status, Fb2SectionParser::ParseStatus::Failed);
+  parser.finishParse();
+  parser.finishParse();  // idempotent
+}
+
 TEST(Fb2SectionParserFile, MissingFileFailsWithoutCrash) {
   GfxRenderer renderer;
   auto result = parseSection("/nonexistent/nope.fb2", 0, renderer, makeSpec());

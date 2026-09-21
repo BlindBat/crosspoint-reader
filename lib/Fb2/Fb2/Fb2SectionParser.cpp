@@ -368,6 +368,7 @@ void Fb2SectionParser::addLineToPage(std::shared_ptr<TextBlock> line) {
 
   if (currentPageNextY + lineHeight > spec.viewportHeight) {
     completePageFn(std::move(currentPage));
+    slicePagesEmitted++;
     currentPage = makeUniqueNoThrow<Page>();
     if (!currentPage) {
       LOG_ERR("FB2", "OOM: page");
@@ -428,7 +429,7 @@ void Fb2SectionParser::makePages() {
   }
 }
 
-bool Fb2SectionParser::parseAndBuildPages() {
+bool Fb2SectionParser::beginParse() {
   auto paragraphBlockStyle = BlockStyle();
   paragraphBlockStyle.textAlignDefined = true;
   const auto align = (spec.paragraphAlignment == static_cast<uint8_t>(CssTextAlign::None))
@@ -440,15 +441,15 @@ bool Fb2SectionParser::parseAndBuildPages() {
     return false;
   }
 
-  XML_Parser xmlParser = XML_ParserCreate(nullptr);
+  xmlParser = XML_ParserCreate(nullptr);
   if (!xmlParser) {
     LOG_ERR("FB2", "Could not create parser for section");
     return false;
   }
 
-  HalFile file;
   if (!Storage.openFileForRead("FB2", filepath, file)) {
     XML_ParserFree(xmlParser);
+    xmlParser = nullptr;
     return false;
   }
 
@@ -462,44 +463,61 @@ bool Fb2SectionParser::parseAndBuildPages() {
   XML_SetUserData(xmlParser, this);
   XML_SetElementHandler(xmlParser, startElement, endElement);
   XML_SetCharacterDataHandler(xmlParser, characterData);
+  return true;
+}
 
-  bool success = true;
-  int done;
-  do {
-    void* const buf = XML_GetBuffer(xmlParser, 1024);
+// One slice of the feed loop. Budgets are checked only BETWEEN XML_ParseBuffer
+// calls -- a handler must never see a half-fed buffer -- so a slice always ends
+// on a buffer boundary and may overshoot pageBudget by whatever one buffer
+// completes. Both budgets are needed: a late chapter emits no pages at all while
+// the parser scans forward to it, so pageBudget alone would not bound the slice.
+// No storage lock is held across the return: HalFile takes storageMutex per call.
+Fb2SectionParser::ParseStatus Fb2SectionParser::parseSome(const int pageBudget, const uint32_t byteBudget) {
+  if (!xmlParser) return ParseStatus::Failed;
+
+  slicePagesEmitted = 0;
+  sliceBytesFed = 0;
+
+  while (true) {
+    void* const buf = XML_GetBuffer(xmlParser, PARSE_BUFFER_SIZE);
     if (!buf) {
-      success = false;
-      break;
+      return ParseStatus::Failed;
     }
 
-    const int len = file.read(buf, 1024);
+    const int len = file.read(buf, PARSE_BUFFER_SIZE);
     if (len <= 0 && file.available() > 0) {
-      success = false;
-      break;
+      return ParseStatus::Failed;
     }
 
-    done = file.available() == 0;
+    inputDone = file.available() == 0;
+    sliceBytesFed += static_cast<uint32_t>(len > 0 ? len : 0);
 
-    if (XML_ParseBuffer(xmlParser, len, done) == XML_STATUS_ERROR) {
+    if (XML_ParseBuffer(xmlParser, len, inputDone) == XML_STATUS_ERROR) {
       LOG_ERR("FB2", "Section parse error: %s", XML_ErrorString(XML_GetErrorCode(xmlParser)));
-      success = false;
-      break;
+      return ParseStatus::Failed;
     }
 
-    // Stop early if we've finished parsing the target section or ran out of memory
-    if (pastTargetSection || outOfMemory) {
-      break;
+    if (outOfMemory) {
+      return ParseStatus::Failed;
     }
-  } while (!done);
+    // Finished the target section, or ran out of input.
+    if (pastTargetSection || inputDone) {
+      return ParseStatus::Finished;
+    }
+    if ((pageBudget > 0 && slicePagesEmitted >= pageBudget) || (byteBudget > 0 && sliceBytesFed >= byteBudget)) {
+      return ParseStatus::Paused;
+    }
+  }
+}
 
-  XML_ParserFree(xmlParser);
-
-  if (outOfMemory) {
-    return false;
+void Fb2SectionParser::finishParse() {
+  if (xmlParser) {
+    XML_ParserFree(xmlParser);
+    xmlParser = nullptr;
   }
 
   // Flush remaining content
-  if (success && currentTextBlock) {
+  if (currentTextBlock) {
     makePages();
     if (currentPage) {
       completePageFn(std::move(currentPage));
@@ -507,6 +525,30 @@ bool Fb2SectionParser::parseAndBuildPages() {
     }
     currentTextBlock.reset();
   }
+}
 
-  return success && !outOfMemory;
+bool Fb2SectionParser::parseAndBuildPages() {
+  if (!beginParse()) {
+    return false;
+  }
+
+  ParseStatus status;
+  do {
+    status = parseSome(0, 0);
+  } while (status == ParseStatus::Paused);
+
+  if (status == ParseStatus::Failed) {
+    // Free the parser and the input file without emitting the tail: a failed
+    // parse must not produce pages the one-shot path would never have written.
+    if (xmlParser) {
+      XML_ParserFree(xmlParser);
+      xmlParser = nullptr;
+    }
+    currentTextBlock.reset();
+    currentPage.reset();
+    return false;
+  }
+
+  finishParse();
+  return !outOfMemory;
 }

@@ -4,6 +4,7 @@
 #include <Epub/hyphenation/Hyphenator.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <Serialization.h>
 
 #include <memory>
@@ -25,6 +26,12 @@ constexpr uint8_t FB2_SECTION_FILE_VERSION = 5;
 // version + fontId + lineCompression + extraParagraphSpacing + paragraphAlignment +
 // viewportWidth + viewportHeight + hyphenationEnabled + focusReadingEnabled +
 // pageCount + lutOffset
+// Page-LUT pre-allocation. Sized from the reference book of issue #4, whose
+// chapters are ~15 pages; a growth event would cost three heap operations and
+// fragment DRAM mid-build. Chapters longer than this still work, they just
+// reallocate once.
+// ponytail: fixed capacity, revisit if a real corpus shows a fatter distribution.
+constexpr size_t LUT_INITIAL_CAPACITY = 24;
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(uint8_t) +
                                  sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) + sizeof(uint16_t) +
                                  sizeof(uint32_t);
@@ -160,62 +167,165 @@ void Fb2Section::appendBuiltPage(void* ctx, std::unique_ptr<Page> page) {
   lutCtx->lut->emplace_back(lutCtx->section->onPageComplete(std::move(page)));
 }
 
-bool Fb2Section::createSectionFile(const ReaderRenderSpec& spec, const BuildPopupFn& popupFn) {
-  const auto& sectionInfo = fb2->getSectionInfo(sectionIndex);
-  pageCount = 0;
+Fb2Section::Fb2Section(const std::shared_ptr<Fb2>& fb2, const int sectionIndex, GfxRenderer& renderer)
+    : fb2(fb2),
+      sectionIndex(sectionIndex),
+      renderer(renderer),
+      filePath(fb2->getCachePath() + "/sections/" + std::to_string(sectionIndex) + ".bin") {}
 
-  // Create cache directory
+Fb2Section::~Fb2Section() { abandonBuild(); }
+
+bool Fb2Section::startBuild(const ReaderRenderSpec& spec, const BuildPopupFn& popupFn) {
+  if (build_) {
+    LOG_ERR("FBS", "Build already running for section %d", sectionIndex);
+    return false;
+  }
+
+  pageCount = 0;
+  buildComplete_ = false;
+
   {
     const auto sectionsDir = fb2->getCachePath() + "/sections";
     Storage.mkdir(sectionsDir.c_str());
   }
 
-  if (!Storage.openFileForWrite("FBS", filePath, file)) {
+  // A .part left by an interrupted build is stale: overwrite it, never append.
+  const auto tmpPath = binTmpPath();
+  if (Storage.exists(tmpPath.c_str())) {
+    Storage.remove(tmpPath.c_str());
+  }
+  if (!Storage.openFileForWrite("FBS", tmpPath, file)) {
     return false;
   }
   writeSectionFileHeader(spec);
-  std::vector<uint32_t> lut = {};
 
+  auto ctx = makeUniqueNoThrow<BuildContext>();
+  if (!ctx) {
+    LOG_ERR("FBS", "OOM: BuildContext");
+    file.close();
+    Storage.remove(tmpPath.c_str());
+    return false;
+  }
+  // Most FB2 chapters are a handful of pages; reserve enough that the common
+  // case never reallocates mid-build, which would fragment DRAM on device.
+  ctx->lut.reserve(LUT_INITIAL_CAPACITY);
+  ctx->lutCtx = BuildLutContext{this, &ctx->lut};
+
+  const auto& sectionInfo = fb2->getSectionInfo(sectionIndex);
   // If there's only one section with fileOffset 0, the metadata parser found no real <section> tags.
   // Pass -1 to tell the parser to process all body content instead of filtering by section index.
   const int targetIndex = (fb2->getSectionCount() == 1 && sectionInfo.fileOffset == 0) ? -1 : sectionIndex;
-  // The page-complete callback needs both this section and the local LUT, so it
-  // takes a small context struct rather than a capturing lambda.
-  BuildLutContext lutCtx{this, &lut};
-  Fb2SectionParser visitor(fb2->getPath(), sectionInfo.length, targetIndex, renderer, spec,
-                           Fb2PageCompleteFn{&Fb2Section::appendBuiltPage, &lutCtx}, popupFn);
-  Hyphenator::setPreferredLanguage(fb2->getLanguage());
-  const bool success = visitor.parseAndBuildPages();
-
-  if (!success) {
-    LOG_ERR("FBS", "Failed to parse and build pages");
+  ctx->parser =
+      makeUniqueNoThrow<Fb2SectionParser>(fb2->getPath(), sectionInfo.length, targetIndex, renderer, spec,
+                                          Fb2PageCompleteFn{&Fb2Section::appendBuiltPage, &ctx->lutCtx}, popupFn);
+  if (!ctx->parser) {
+    LOG_ERR("FBS", "OOM: Fb2SectionParser");
     file.close();
-    Storage.remove(filePath.c_str());
+    Storage.remove(tmpPath.c_str());
     return false;
   }
+
+  Hyphenator::setPreferredLanguage(fb2->getLanguage());
+  if (!ctx->parser->beginParse()) {
+    LOG_ERR("FBS", "Failed to start section parse");
+    file.close();
+    Storage.remove(tmpPath.c_str());
+    return false;
+  }
+
+  build_ = std::move(ctx);
+  return true;
+}
+
+bool Fb2Section::buildSomeMore(const int maxPages, const uint32_t maxBytes) {
+  if (!build_) return false;
+
+  const auto status = build_->parser->parseSome(maxPages, maxBytes);
+  if (status == Fb2SectionParser::ParseStatus::Failed) {
+    LOG_ERR("FBS", "Failed to parse and build pages");
+    abandonBuild();
+    return false;
+  }
+  if (status == Fb2SectionParser::ParseStatus::Paused) {
+    return true;
+  }
+
+  build_->parser->finishParse();
+  return finalizeBuild();
+}
+
+bool Fb2Section::finalizeBuild() {
+  const auto tmpPath = binTmpPath();
+  const auto failCommit = [&]() {
+    file.close();
+    Storage.remove(tmpPath.c_str());
+    build_.reset();
+    pageCount = 0;
+    return false;
+  };
 
   const uint32_t lutOffset = file.position();
-  bool hasFailedLutRecords = false;
-  for (const uint32_t& pos : lut) {
+  for (const uint32_t& pos : build_->lut) {
     if (pos == 0) {
-      hasFailedLutRecords = true;
-      break;
+      LOG_ERR("FBS", "Failed LUT records");
+      return failCommit();
     }
     serialization::writePod(file, pos);
-  }
-
-  if (hasFailedLutRecords) {
-    LOG_ERR("FBS", "Failed LUT records");
-    file.close();
-    Storage.remove(filePath.c_str());
-    return false;
   }
 
   // Write final page count and LUT offset
   file.seek(HEADER_SIZE - sizeof(uint32_t) - sizeof(pageCount));
   serialization::writePod(file, pageCount);
   serialization::writePod(file, lutOffset);
+  // Explicit close() required: member variable persists beyond function scope,
+  // and the swap below must not race an open write handle.
   file.close();
+  build_.reset();
+
+  // Swap into place. The remove is not optional: FatFile::rename opens the
+  // destination O_CREAT | O_EXCL, so renaming onto an existing path fails.
+  // Same sequence (and same crash window) as Section::commitBuildFile.
+  if (Storage.exists(filePath.c_str())) {
+    Storage.remove(filePath.c_str());
+  }
+  if (!Storage.rename(tmpPath.c_str(), filePath.c_str())) {
+    LOG_ERR("FBS", "Failed to move built section into place");
+    Storage.remove(tmpPath.c_str());
+    pageCount = 0;
+    return false;
+  }
+
+  buildComplete_ = true;
+  return true;
+}
+
+// ponytail: an in-flight build is discarded, not resumed. expat cannot start
+// mid-document and FB2 has no per-chapter extracted file to seek within, so
+// there is no cheap byte watermark to resume from (EPUB has one only because
+// its parser starts at the chapter's own unzipped HTML). Upgrade path: give FB2
+// chapters an extracted-text intermediate file, which would make builds
+// resumable AND remove the per-chapter full-file rescan -- see issue #8.
+void Fb2Section::abandonBuild() {
+  if (!build_) return;
+  build_.reset();
+  if (file) {
+    // Explicit close() required before remove (member variable write handle).
+    file.close();
+  }
+  Storage.remove(binTmpPath().c_str());
+  pageCount = 0;
+  buildComplete_ = false;
+}
+
+bool Fb2Section::createSectionFile(const ReaderRenderSpec& spec, const BuildPopupFn& popupFn) {
+  if (!startBuild(spec, popupFn)) {
+    return false;
+  }
+  while (!buildComplete_) {
+    if (!buildSomeMore(0, 0)) {
+      return false;
+    }
+  }
   return true;
 }
 

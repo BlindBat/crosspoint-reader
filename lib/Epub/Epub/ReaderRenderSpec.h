@@ -21,4 +21,9 @@ struct ReaderRenderSpec {
   bool embeddedStyle = true;
   uint8_t imageRendering = 0;
   bool focusReadingEnabled = false;
+
+  // Member-wise, so a cached layout can be compared against the live settings
+  // without spelling out every field (and without memcmp, which would read
+  // padding).
+  bool operator==(const ReaderRenderSpec&) const = default;
 };

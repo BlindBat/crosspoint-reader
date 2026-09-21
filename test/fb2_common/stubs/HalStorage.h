@@ -69,7 +69,14 @@ class HalStorage {
   }
   bool remove(const char* path) { return ::remove(path) == 0; }
   bool remove(const std::string& path) { return remove(path.c_str()); }
-  bool rename(const char* from, const char* to) { return ::rename(from, to) == 0; }
+  // Mirrors FatFile::rename, which opens the destination O_CREAT | O_EXCL and
+  // therefore FAILS when it already exists. POSIX ::rename overwrites silently,
+  // so forwarding to it would let a missing remove-before-rename pass on host
+  // and fail on device.
+  bool rename(const char* from, const char* to) {
+    if (exists(to)) return false;
+    return ::rename(from, to) == 0;
+  }
   bool mkdir(const char* path, const bool pFlag = true) {
     const std::string full(path);
     if (pFlag) {
