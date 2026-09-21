@@ -1,17 +1,13 @@
 #include <gtest/gtest.h>
 
-#include <cstdlib>
 #include <map>
-#include <new>
 
+#include "AllocCounter.h"
 #include "FontCacheManager.h"
 #include "FontDecompressor.h"
 #include "SdCardFont.h"
 
 namespace {
-
-bool countHeapAllocations = false;
-size_t heapAllocationCount = 0;
 
 const SdCardFont::PrewarmCall* findCall(const SdCardFont& font, const uint8_t styleMask) {
   for (int i = 0; i < font.prewarmCallCount; i++) {
@@ -21,16 +17,6 @@ const SdCardFont::PrewarmCall* findCall(const SdCardFont& font, const uint8_t st
 }
 
 }  // namespace
-
-void* operator new(const size_t size) {
-  if (countHeapAllocations) heapAllocationCount++;
-  if (void* allocation = std::malloc(size)) return allocation;
-  throw std::bad_alloc();
-}
-
-void operator delete(void* allocation) noexcept { std::free(allocation); }
-
-void operator delete(void* allocation, size_t) noexcept { std::free(allocation); }
 
 TEST(FontCacheManagerTest, PrewarmScopeBatchesEachFontAndResolvedStyleSeparately) {
   SdCardFont readerFont;
@@ -120,12 +106,14 @@ TEST(FontCacheManagerTest, PrewarmScanDoesNotAllocateHeapMemory) {
   const std::map<int, SdCardFont*> sdFonts{{7, &font}};
   FontCacheManager manager(noBuiltinFonts, sdFonts);
 
-  heapAllocationCount = 0;
-  countHeapAllocations = true;
-  auto scope = manager.createPrewarmScope();
-  manager.recordText("Repeated text: \xC3\xA9 \xE4\xB8\xAD \xF0\x9F\x98\x80", 7, EpdFontFamily::REGULAR);
-  scope.endScanAndPrewarm();
-  countHeapAllocations = false;
+  size_t allocations = 0;
+  {
+    alloc_counter::CountingScope counter;
+    auto scope = manager.createPrewarmScope();
+    manager.recordText("Repeated text: \xC3\xA9 \xE4\xB8\xAD \xF0\x9F\x98\x80", 7, EpdFontFamily::REGULAR);
+    scope.endScanAndPrewarm();
+    allocations = counter.count();
+  }
 
-  EXPECT_EQ(0U, heapAllocationCount);
+  EXPECT_EQ(0U, allocations);
 }

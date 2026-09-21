@@ -1,11 +1,13 @@
 add_executable(FontCacheManagerTest
   FontCacheManagerTest.cpp
+  ${REPO_ROOT}/test/support/AllocCounter.cpp
   ${REPO_ROOT}/lib/GfxRenderer/FontCacheManager.cpp
   ${REPO_ROOT}/lib/Utf8/Utf8.cpp
 )
 
 target_include_directories(FontCacheManagerTest PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/stubs
+  ${REPO_ROOT}/test/support
   ${REPO_ROOT}/lib/GfxRenderer
   ${REPO_ROOT}/lib/Utf8
 )
