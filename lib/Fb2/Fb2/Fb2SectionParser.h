@@ -107,6 +107,13 @@ class Fb2SectionParser {
     blockStyleStack.reserve(4);
   }
 
+  // Frees the expat instance whatever path tore this object down. finishParse()
+  // normally does it, but an abandoned incremental build drops the parser
+  // without finishing, and expat's buffers would leak with it.
+  ~Fb2SectionParser() {
+    if (xmlParser) XML_ParserFree(xmlParser);
+  }
+
   // One-shot parse: begin, feed to completion, flush. Unchanged behaviour.
   bool parseAndBuildPages();
 
