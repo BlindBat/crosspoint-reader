@@ -153,7 +153,8 @@ std::string writeImage(const char* name, const Bytes& bytes) {
   std::FILE* f = std::fopen(path.c_str(), "wb");
   EXPECT_NE(f, nullptr);
   if (f) {
-    EXPECT_EQ(std::fwrite(bytes.data(), 1, bytes.size(), f), bytes.size());
+    // bytes.data() may be null when empty; fwrite's pointer is nonnull regardless of the count.
+    if (!bytes.empty()) EXPECT_EQ(std::fwrite(bytes.data(), 1, bytes.size(), f), bytes.size());
     std::fclose(f);
   }
   return path;

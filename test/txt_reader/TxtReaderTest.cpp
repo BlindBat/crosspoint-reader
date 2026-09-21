@@ -92,6 +92,7 @@ class MemoryBytes final : public ByteReader, public ByteWriter {
 
   size_t read(void* buffer, const size_t count) override {
     const size_t n = std::min(count, bytes.size() - pos);
+    if (n == 0) return 0;  // bytes.data() may be null when empty; memcpy's pointers are nonnull
     std::memcpy(buffer, bytes.data() + pos, n);
     pos += n;
     return n;

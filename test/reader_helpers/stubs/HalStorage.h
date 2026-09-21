@@ -148,6 +148,7 @@ class HalFile {
   size_t write(const uint8_t* buf, const size_t count) {
     if (!fp) return 0;
     const size_t allowed = std::min(count, HalStorage::getInstance().maxWriteBytes);
+    if (allowed == 0) return 0;  // buf may be null for an empty write; fwrite's pointer is nonnull
     return std::fwrite(buf, 1, allowed, fp);
   }
   size_t write(const void* buf, const size_t count) { return write(static_cast<const uint8_t*>(buf), count); }
