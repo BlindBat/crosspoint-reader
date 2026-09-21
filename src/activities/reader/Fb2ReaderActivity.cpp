@@ -509,8 +509,14 @@ void Fb2ReaderActivity::stopPrefetch() {
 }
 
 void Fb2ReaderActivity::loop() {
-  ReaderActivity::loop();
+  // The tick runs BEFORE input handling, not after. Navigation requested from
+  // loop() is deferred -- the activity is still current when loop() returns --
+  // so a tick placed after the base call would restart the very prefetch that
+  // openReaderMenu() had just stood down, and the build would then run on under
+  // the sub-activity. Ticking first also bounds what an input waits for to a
+  // single in-flight slice, which is what FR-008 allows.
   prefetchTick();
+  ReaderActivity::loop();
 }
 
 void Fb2ReaderActivity::onExit() {
