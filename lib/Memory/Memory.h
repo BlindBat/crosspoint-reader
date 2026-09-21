@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <new>
 #include <type_traits>
@@ -8,6 +9,11 @@
 
 // Nothrow versions of std::make_unique. Return nullptr on allocation failure
 // instead of calling abort() (the default when exceptions are disabled on ESP32).
+//
+// The array overloads check the element count before the new-expression: a count whose
+// byte size exceeds the implementation limit makes the new-expression itself throw
+// std::bad_array_new_length on libstdc++, before the nothrow allocation function is ever
+// reached — which under -fno-exceptions is the abort() these helpers exist to prevent.
 //
 // Single object:
 //   auto obj = makeUniqueNoThrow<PNG>();
@@ -30,6 +36,7 @@ template <typename T>
   requires std::is_unbounded_array_v<T>
 std::unique_ptr<T> makeUniqueNoThrow(size_t count) {
   using Elem = std::remove_extent_t<T>;
+  if (count > PTRDIFF_MAX / sizeof(Elem)) return nullptr;
   return std::unique_ptr<T>(new (std::nothrow) Elem[count]());
 }
 
@@ -50,6 +57,7 @@ template <typename T>
   requires std::is_unbounded_array_v<T>
 std::unique_ptr<T> makeUniqueNoThrowForOverwrite(size_t count) {
   using Elem = std::remove_extent_t<T>;
+  if (count > PTRDIFF_MAX / sizeof(Elem)) return nullptr;
   return std::unique_ptr<T>(new (std::nothrow) Elem[count]);
 }
 

@@ -64,6 +64,13 @@ TEST(MemoryHelpersTest, ZeroLengthArrayIsStillAllocated) {
   EXPECT_NE(buf, nullptr);
 }
 
+// Same contract as the ForOverwrite sibling below: a count whose byte size is not representable
+// yields nullptr rather than throwing std::bad_array_new_length out of the new-expression.
+TEST(MemoryHelpersTest, MakeUniqueNoThrowArrayReturnsNullWhenTheByteCountOverflows) {
+  auto buf = makeUniqueNoThrow<uint32_t[]>(SIZE_MAX / 2 + 1);
+  EXPECT_EQ(buf, nullptr);
+}
+
 // makeUniqueNoThrowForOverwrite: same nothrow contract, but no value-initialisation. The
 // contents are indeterminate by design, so the only thing that can be pinned about them is that
 // the whole requested extent is writable and reads back what the caller wrote.
