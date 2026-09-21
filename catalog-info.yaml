@@ -1,0 +1,9 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: crosspoint-reader
+  description: E-reader firmware for Xteink X4/X3 and ESP32-S3 e-paper devices, focused on EPUB rendering in 380KB of RAM
+spec:
+  type: library
+  lifecycle: experimental
+  owner: group:default/blindshot
