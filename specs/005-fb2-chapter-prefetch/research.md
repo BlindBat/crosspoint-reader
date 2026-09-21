@@ -317,3 +317,136 @@ prefetch window to ~20 s so the race could be hit deliberately): one
   turning the screen while the reader is stacked). Every other spec change routes
   through a sub-activity, which stands prefetch down first.
 
+---
+
+## Device session, 2026-09-21 — R1-R4 measured, and a design defect found
+
+Xteink X4 (ESP32-C3, 268,352-byte heap), firmware built from this branch with a
+temporary harness (`-DFB2_PREFETCH_BENCH` / `-DFB2_PREFETCH_MEASURE`, never
+defined by a committed environment, removed after the readings). Book: the
+largest FB2 on the card, 1,239,651 bytes / 23 chapters. **Not** issue #4's
+1.9 MB / 66-chapter anthology — slice *duration* depends on bytes-per-slice and
+per-buffer cost rather than file size, so R1/R2/R4 transfer, but any end-to-end
+figure for preparing a *late* chapter scales with file size and would be ~1.5x
+on the reference book.
+
+### The ceiling
+
+**A page render costs 996 ms mean / 1174 ms worst** on this panel. A slice holds
+`RenderLock`, so its worst case is what a page turn can be made to wait for.
+
+### R1 — byte budget (page budget unbounded, 53-page chapter)
+
+| bytes | slices | worst | mean | total |
+|-------|--------|-------|------|-------|
+| 1024 | 191 | 95 ms | 13 ms | 2596 ms |
+| 2048 | 96 | 114 ms | 26 ms | 2606 ms |
+| **4096** | **48** | **200 ms** | **53 ms** | **2591 ms** |
+| 8192 | 24 | 380 ms | 106 ms | 2596 ms |
+| 16384 | 12 | 734 ms | 212 ms | 2590 ms |
+| 32768 | 6 | 1458 ms | 427 ms | 2597 ms |
+
+**Decision: 4096.** Total build time is flat across every budget, so a larger one
+buys no throughput and only lengthens the worst block; 32768 exceeds a whole page
+render. Smaller is safer per slice but multiplies slice count, and each slice is
+one loop iteration.
+
+### R2 — page budget (byte budget unbounded)
+
+| pages | slices | worst | mean |
+|-------|--------|-------|------|
+| 1 | 44 | 322 ms | 58 ms |
+| 2 | 24 | 389 ms | 106 ms |
+| 4 | 13 | 463 ms | 196 ms |
+| 8 | 7 | 651 ms | 364 ms |
+
+**The byte budget is the tighter bound, not the page budget**: one page with bytes
+unbounded is 322 ms against 4096 bytes' 200 ms. D3 predicted this and it is now
+measured — copying EPUB's page-only pacing would have been the weaker bound.
+The page budget is demoted to a backstop (4); at 4096 bytes a slice lays out
+~1.1 pages, so it never binds in the measured data.
+
+### R3 — idle settle interval
+
+Twenty page turns, both paces:
+
+- **Skim** (button held): floor **998 ms**, i.e. the panel's own render time.
+- **Normal reading**: **17.6 s** minimum, up to 38.8 s.
+
+**Decision: 1500 ms.** Above the skim floor, so a skimming reader never starts a
+prefetch their next turn would interrupt; far below the reading floor, so a
+reading one starts it almost at once.
+
+### R4 — memory
+
+| | |
+|---|---|
+| Heap at boot | free 154,492 / maxalloc 114,676 |
+| After a page render | free 127,164 / maxalloc 90,100 (27,328 consumed) |
+| Build live-set peak | **26,652 bytes** |
+| Before / after an unbounded build | 127,132 / **127,132** — byte-identical |
+| `maxalloc` during a build | unchanged at 90,100 |
+
+**Gate: 56 KB free** = 26,652 (prefetch) + 27,328 (render), so prefetch cannot
+start unless a page render also fits. Free at idle is ~150 KB, so it binds only
+when it should. The largest-block gate stays at 16 KB: no large contiguous
+allocation is needed. The identical before/after figures are independent
+on-device confirmation of the expat-leak fix.
+
+*(The one-slice unbounded run reports `peakheap=96`; that is a sampling artifact
+— the harness samples after each slice, and there is only one. Ignore it.)*
+
+### The defect: prefetch runs at 10 MHz
+
+`HalPowerManager` drops the C3 to `LOW_POWER_FREQ = 10` MHz after
+`IDLE_POWER_SAVING_MS = 3000` of no input ([HalPowerManager.h:29-33](../../lib/hal/HalPowerManager.h)).
+Prefetch runs **only** when idle, so it ran almost entirely at 1/16 clock:
+
+| | full clock | idle (10 MHz) |
+|---|---|---|
+| Worst slice | 162 ms | **3249 ms** |
+| Throughput | 24.7 KB/s | **1.5 KB/s** |
+
+A chapter was still unfinished after 110 s, projecting to ~14 minutes, and a
+single slice blocked longer than three page renders. **The feature did not work
+on the device it was written for**, and the R1 sweep had not caught it because
+the bench ran at full clock.
+
+Root cause: a byte budget bounds *bytes*, and bytes-per-millisecond moves 16x
+depending on when the slice happens to run.
+
+**Fix**: hold `HalPowerManager::Lock` for the lifetime of a build. It already
+exists for exactly this ("a task that needs full performance",
+[HalPowerManager.h:48-50](../../lib/hal/HalPowerManager.h)), so it is an RAII
+member acquired at `startBuild` and released on completion or stand-down.
+
+Verified on device:
+
+```
+[93493] Restoring normal CPU frequency      <- the lock engaging
+[93496] Prefetching chapter 10
+[93509] worst slice: 12ms  (slice 1)
+[97872] worst slice: 233ms (slice 67)
+[100610] Prefetched chapter 10: 55 pages
+[100611] Going to low-power mode            <- released, clock drops back
+```
+
+**55 pages in 7.1 s, worst slice 233 ms** — against never-finishing and 3249 ms.
+
+**The cost, stated plainly**: the CPU now runs at 160 MHz for a few seconds per
+prepared chapter while the reader is idle, which is battery the user did not ask
+for. It is bounded (the lock is released the moment the build ends, and prefetch
+prepares at most one chapter ahead), but it is a real charge on a reading device
+and was not weighed in the spec. Chosen deliberately over the alternative of
+skipping prefetch while downclocked, which would have left the feature inert for
+any chapter shorter than ~32 pages.
+
+### SC-003 / SC-004
+
+- **SC-003 passes**: worst slice 233 ms against a 996 ms page render. A turn that
+  lands inside a slice waits at most one increment, ~23% of a render, which
+  FR-008 permits and e-ink refresh masks.
+- **SC-004 passes**: free heap across 26 turns including a sustained skim stayed
+  within 150,572-151,688 — a 1.1 KB band with no drift. Session low-water was
+  68,764 bytes against a 268,352-byte heap.
+
