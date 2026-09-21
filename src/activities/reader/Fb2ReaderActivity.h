@@ -2,6 +2,7 @@
 
 #include <Fb2.h>
 #include <Fb2/Fb2Section.h>
+#include <HalPowerManager.h>
 
 #include <memory>
 #include <string>
@@ -49,6 +50,14 @@ class Fb2ReaderActivity final : public ReaderActivity {
   int prefetchDoneIndex = fb2_reader::NO_PREFETCH_TARGET;
   // The spec the in-flight build was started with; a change invalidates it.
   ReaderRenderSpec prefetchSpec;
+  // Held for the lifetime of an in-flight build. The reader idles at 10 MHz on
+  // the C3 (HalPowerManager::LOW_POWER_FREQ, entered 3 s after the last input),
+  // which is exactly when prefetch runs: measured on device, a slice that costs
+  // 162 ms at 160 MHz costs 2.5-3.2 s downclocked, and throughput falls from
+  // 24.7 KB/s to 1.5 KB/s -- slow enough that a chapter never finishes, and long
+  // enough that a slice blocks a page turn for longer than the turn itself.
+  // Lock is non-movable, hence the unique_ptr.
+  std::unique_ptr<HalPowerManager::Lock> prefetchClockLock;
   // Origin of the idle settle timer, set when a page render finishes.
   unsigned long lastRenderCompleteMs = 0;
   // Viewport of the last render, so the tick can rebuild the spec without
@@ -62,19 +71,47 @@ class Fb2ReaderActivity final : public ReaderActivity {
   // the reader moves: a new chapter, a sub-activity, a settings change, exit.
   void stopPrefetch();
 
-  // Slice budgets and the idle settle interval.
+  // Slice budgets. Measured on an Xteink X4 (ESP32-C3) against a 1,239,651-byte
+  // 23-chapter FB2, logged in research.md R1/R2.
   //
-  // PROVISIONAL — these three are the numbers research.md R1/R2/R3 exist to
-  // choose, and they have NOT been measured on device yet. They are deliberately
-  // conservative: too small only makes prefetch slower, while too large would
-  // hold RenderLock long enough to stutter a page turn. Do not treat them as
-  // measured values, and do not raise them without the R1/R2 readings.
-  static constexpr int PREFETCH_PAGES_PER_TICK = 2;
+  // The ceiling a slice must stay under is one page render, measured at 996 ms
+  // mean / 1174 ms worst on this panel. A slice holds RenderLock, so its worst
+  // case is what a page turn can be made to wait for.
+  //
+  // The BYTE budget is what bounds slice duration, not the page budget: at
+  // b=4096 the worst slice was 200 ms, while a one-page budget with bytes
+  // unbounded was 322 ms. FB2 scans from byte 0 to reach a chapter, so EPUB's
+  // page-only pacing would be the weaker bound here.
+  //
+  // 4096 is the knee. Total build time is flat across every budget tried
+  // (2586-2606 ms from 1 KB to 32 KB), so a larger budget buys no throughput and
+  // only lengthens the worst block: 8192 -> 380 ms, 16384 -> 734 ms,
+  // 32768 -> 1458 ms, which exceeds a whole page render. Going smaller is safer
+  // per slice but multiplies slice count (a late chapter needs 291 slices at
+  // 4096 against 1162 at 1024), and each slice is one loop iteration, so
+  // preparation would take proportionally longer in wall-clock.
   static constexpr uint32_t PREFETCH_BYTES_PER_TICK = 4096;
-  static constexpr unsigned long PREFETCH_SETTLE_MS = 400;
-  // Heap floor, reused from the EPUB reader's background build gate rather than
-  // invented; research.md R4 confirms or raises it.
-  static constexpr size_t PREFETCH_MIN_FREE_HEAP = 32 * 1024;
+  // Backstop only. At 4096 bytes a slice lays out ~1.1 pages, so this never
+  // binds in the measured data; it guards a chapter with atypically dense
+  // pagination from turning one slice into many page layouts.
+  static constexpr int PREFETCH_PAGES_PER_TICK = 4;
+  // Idle settle before a prefetch may start. Measured on the X4 over 20 turns
+  // (research.md R3): a reader holding page-forward turns at a 998 ms floor --
+  // the panel's own render time, 996 ms mean -- while normal reading leaves
+  // 17.6 s or more between turns. 1500 ms sits above the skim floor and far
+  // below the reading floor, so a skimming reader never starts a prefetch that
+  // their next turn would immediately interrupt, and a reading one starts it
+  // almost at once.
+  static constexpr unsigned long PREFETCH_SETTLE_MS = 1500;
+  // Prefetch must not start unless there is room for its own live set AND a page
+  // render. Measured: the build peaks at 26,652 bytes live, and rendering took
+  // free heap from 154,492 at boot to 127,164 (27,328 bytes, which includes
+  // font-cache warm-up that persists, so it over-states the transient need and
+  // errs the safe way). 26,652 + 27,328 = 53,980, rounded up.
+  static constexpr size_t PREFETCH_MIN_FREE_HEAP = 56 * 1024;
+  // Largest-block gate kept at the reader's existing value: maxalloc never moved
+  // during a build (90,100 bytes throughout), so the build needs no large
+  // contiguous allocation.
   static constexpr size_t PREFETCH_MIN_MAX_ALLOC = 16 * 1024;
 
   void loadProgress();

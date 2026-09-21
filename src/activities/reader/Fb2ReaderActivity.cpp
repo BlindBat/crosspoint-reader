@@ -505,6 +505,7 @@ void Fb2ReaderActivity::stopPrefetch() {
   if (!prefetch) return;
   prefetch->abandonBuild();
   prefetch.reset();
+  prefetchClockLock.reset();  // back to the idle clock immediately
   prefetchIndex = fb2_reader::NO_PREFETCH_TARGET;
 }
 
@@ -599,6 +600,12 @@ void Fb2ReaderActivity::prefetchTick() {
     }
     prefetchIndex = target;
     prefetchSpec = spec;
+    // Hold the CPU at full speed for the build. Without this the reader's idle
+    // downclock makes prefetch both too slow to finish and slow enough per
+    // slice to stall a page turn (see the member's comment). A failed lock is
+    // not fatal: another holder just means this build runs at the idle clock.
+    prefetchClockLock = makeUniqueNoThrow<HalPowerManager::Lock>();
+    if (!prefetchClockLock) LOG_ERR("FBR", "OOM: prefetch clock lock");
     LOG_DBG("FBR", "Prefetching chapter %d", target);
   }
 
@@ -607,6 +614,7 @@ void Fb2ReaderActivity::prefetchTick() {
   if (!prefetch->buildSomeMore(PREFETCH_PAGES_PER_TICK, PREFETCH_BYTES_PER_TICK)) {
     LOG_ERR("FBR", "Prefetch of chapter %d failed", prefetchIndex);
     prefetch.reset();
+    prefetchClockLock.reset();
     prefetchDoneIndex = prefetchIndex;  // do not retry a chapter that cannot build
     prefetchIndex = fb2_reader::NO_PREFETCH_TARGET;
     return;
@@ -616,6 +624,7 @@ void Fb2ReaderActivity::prefetchTick() {
     LOG_DBG("FBR", "Prefetched chapter %d: %d pages", prefetchIndex, prefetch->pageCount);
     prefetchDoneIndex = prefetchIndex;
     prefetch.reset();
+    prefetchClockLock.reset();
     prefetchIndex = fb2_reader::NO_PREFETCH_TARGET;
   }
 }
