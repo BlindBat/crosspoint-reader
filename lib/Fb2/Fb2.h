@@ -92,3 +92,13 @@ class Fb2 {
   // Cover binary ID (for cover extractor)
   const std::string& getCoverBinaryId() const { return coverBinaryId; }
 };
+
+// Where Fb2MetadataParser sends chapters. `reserve` runs at a chapter's start tag
+// and claims the next chapter number; `write` runs once per reserved chapter with
+// its final fields, in end-tag order (children before parents), and may move from
+// them. A false return from either stops the parse.
+struct Fb2ChapterSink {
+  void* ctx;
+  bool (*reserve)(void* ctx);
+  bool (*write)(void* ctx, uint16_t index, Fb2::SectionInfo& chapter);
+};

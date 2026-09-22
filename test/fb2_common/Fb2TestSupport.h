@@ -5,11 +5,13 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #ifndef FB2_FIXTURE_DIR
 #error "FB2_FIXTURE_DIR must be defined by the build system"
@@ -146,5 +148,86 @@ inline std::string makeShortTitleTowerFb2(const int sectionCount) {
   out += "</body>\n</FictionBook>\n";
   return out;
 }
+
+// Byte-for-byte FB2 book.bin v5 (specs/006-fb2-sd-chapter-lut/contracts/book-bin-v5.md), so
+// tests can hand-build valid caches and then corrupt exactly one field. Every field is public
+// and written as given: nothing is recomputed, so a test can make any of them lie.
+struct V5Record {
+  uint32_t titleOffset = 0;
+  uint16_t titleLength = 0;
+  uint32_t fileOffset = 0;
+  uint32_t ownLength = 0;
+  uint32_t cumulativeLength = 0;
+  uint8_t level = 0;
+  uint8_t flags = 0;
+};
+
+struct V5BookBin {
+  uint8_t version = 5;
+  std::string title = "Book";
+  std::string author = "Author";
+  std::string language = "en";
+  std::string coverBinaryId;
+  uint16_t chapterCount = 0;
+  uint32_t titlesSize = 0;
+  std::vector<V5Record> records;
+  std::string titles;
+
+  // A consistent file from {title, fileOffset, ownLength, level, derived} chapters.
+  struct Chapter {
+    std::string title;
+    uint32_t fileOffset;
+    uint32_t ownLength;
+    uint8_t level;
+    bool derived;
+  };
+  static V5BookBin from(const std::vector<Chapter>& chapters) {
+    V5BookBin bin;
+    uint32_t cumulative = 0;
+    for (const auto& c : chapters) {
+      V5Record r;
+      r.titleOffset = static_cast<uint32_t>(bin.titles.size());
+      r.titleLength = static_cast<uint16_t>(c.title.size());
+      r.fileOffset = c.fileOffset;
+      r.ownLength = c.ownLength;
+      cumulative += c.ownLength;
+      r.cumulativeLength = cumulative;
+      r.level = c.level;
+      r.flags = c.derived ? 1 : 0;
+      bin.titles += c.title;
+      bin.records.push_back(r);
+    }
+    bin.chapterCount = static_cast<uint16_t>(chapters.size());
+    bin.titlesSize = static_cast<uint32_t>(bin.titles.size());
+    return bin;
+  }
+
+  std::string encode() const {
+    std::string out;
+    auto pod = [&out](const auto value) { out.append(reinterpret_cast<const char*>(&value), sizeof(value)); };
+    auto str = [&](const std::string& value) {
+      pod(static_cast<uint32_t>(value.size()));
+      out += value;
+    };
+    pod(version);
+    str(title);
+    str(author);
+    str(language);
+    str(coverBinaryId);
+    pod(chapterCount);
+    pod(titlesSize);
+    for (const auto& r : records) {
+      pod(r.titleOffset);
+      pod(r.titleLength);
+      pod(r.fileOffset);
+      pod(r.ownLength);
+      pod(r.cumulativeLength);
+      pod(r.level);
+      pod(r.flags);
+    }
+    out += titles;
+    return out;
+  }
+};
 
 }  // namespace fb2test

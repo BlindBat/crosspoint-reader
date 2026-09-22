@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "CollectingParser.h"
 #include "Fb2/Fb2MetadataParser.h"
 #include "Fb2TestSupport.h"
 
@@ -23,7 +24,7 @@ size_t nthOccurrence(const std::string& haystack, const std::string& needle, int
 }
 
 TEST(Fb2MetadataParser, ExtractsTitleAuthorLanguageAndCoverId) {
-  Fb2MetadataParser parser(fixturePath("basic.fb2"));
+  CollectingParser parser(fixturePath("basic.fb2"));
   ASSERT_TRUE(parser.parse());
   EXPECT_EQ(parser.getTitle(), "The Crosspoint Chronicle");
   EXPECT_EQ(parser.getAuthor(), "John Doe");
@@ -36,7 +37,7 @@ TEST(Fb2MetadataParser, SectionOffsetsPointAtTheSectionTags) {
   const std::string raw = readAll(fixturePath("basic.fb2"));
   ASSERT_FALSE(raw.empty());
 
-  Fb2MetadataParser parser(fixturePath("basic.fb2"));
+  CollectingParser parser(fixturePath("basic.fb2"));
   ASSERT_TRUE(parser.parse());
 
   const auto& sections = parser.getSections();
@@ -59,19 +60,19 @@ TEST(Fb2MetadataParser, SectionOffsetsPointAtTheSectionTags) {
 // Documents a current limitation: only the first <author> is kept (the
 // middle name joins in First Middle Last order; the second author is lost).
 TEST(Fb2MetadataParser, MultipleAuthorsKeepOnlyTheFirst) {
-  Fb2MetadataParser parser(fixturePath("multi-author.fb2"));
+  CollectingParser parser(fixturePath("multi-author.fb2"));
   ASSERT_TRUE(parser.parse());
   EXPECT_EQ(parser.getAuthor(), "John Quincy Smith");
 }
 
 TEST(Fb2MetadataParser, CoverHrefWithoutHashIsKeptVerbatim) {
-  Fb2MetadataParser parser(fixturePath("multi-author.fb2"));
+  CollectingParser parser(fixturePath("multi-author.fb2"));
   ASSERT_TRUE(parser.parse());
   EXPECT_EQ(parser.getCoverBinaryId(), "cover-nohash.png");
 }
 
 TEST(Fb2MetadataParser, MissingTitleInfoFieldsStayEmpty) {
-  Fb2MetadataParser parser(fixturePath("no-cover.fb2"));
+  CollectingParser parser(fixturePath("no-cover.fb2"));
   ASSERT_TRUE(parser.parse());
   EXPECT_EQ(parser.getTitle(), "Untitled Fields");
   EXPECT_EQ(parser.getAuthor(), "");
@@ -83,7 +84,7 @@ TEST(Fb2MetadataParser, MissingTitleInfoFieldsStayEmpty) {
 // it borrows its own first paragraph so the chapter list reads as words. A section
 // with no text at all still stores nothing (L7, covered in Fb2LabelTest).
 TEST(Fb2MetadataParser, UntitledSectionIsLabelledFromItsFirstParagraph) {
-  Fb2MetadataParser parser(fixturePath("no-cover.fb2"));
+  CollectingParser parser(fixturePath("no-cover.fb2"));
   ASSERT_TRUE(parser.parse());
   ASSERT_EQ(parser.getSections().size(), 1u);
   EXPECT_EQ(parser.getSections()[0].title, "A section without a title element.");
@@ -94,7 +95,7 @@ TEST(Fb2MetadataParser, UntitledSectionIsLabelledFromItsFirstParagraph) {
 // is a chapter of its own, not content of its parent.
 TEST(Fb2MetadataParser, NestedSectionsEachBecomeTheirOwnChapter) {
   const std::string raw = readAll(fixturePath("nested-sections.fb2"));
-  Fb2MetadataParser parser(fixturePath("nested-sections.fb2"));
+  CollectingParser parser(fixturePath("nested-sections.fb2"));
   ASSERT_TRUE(parser.parse());
 
   const auto& sections = parser.getSections();
@@ -117,7 +118,7 @@ TEST(Fb2MetadataParser, NestedSectionsEachBecomeTheirOwnChapter) {
 // chapter lengths partition the body instead of double-counting nested text.
 TEST(Fb2MetadataParser, NestedChapterLengthsExcludeChildSpans) {
   const std::string raw = readAll(fixturePath("nested-sections.fb2"));
-  Fb2MetadataParser parser(fixturePath("nested-sections.fb2"));
+  CollectingParser parser(fixturePath("nested-sections.fb2"));
   ASSERT_TRUE(parser.parse());
 
   const auto& sections = parser.getSections();
@@ -137,7 +138,7 @@ TEST(Fb2MetadataParser, NestedChapterLengthsExcludeChildSpans) {
 
 // Contract C2/C5 over three levels of nesting.
 TEST(Fb2MetadataParser, DeepNestingNumbersEveryLevelInDocumentOrder) {
-  Fb2MetadataParser parser(fixturePath("nested-deep.fb2"));
+  CollectingParser parser(fixturePath("nested-deep.fb2"));
   ASSERT_TRUE(parser.parse());
 
   const auto& sections = parser.getSections();
@@ -155,7 +156,7 @@ TEST(Fb2MetadataParser, DeepNestingNumbersEveryLevelInDocumentOrder) {
 // Contract C4: only a <title> that is a DIRECT child of the section counts. A
 // <poem><title> inside the section's own content must not become its title.
 TEST(Fb2MetadataParser, PoemTitleInsideASectionIsNotTheChapterTitle) {
-  Fb2MetadataParser parser(fixturePath("nested-deep.fb2"));
+  CollectingParser parser(fixturePath("nested-deep.fb2"));
   ASSERT_TRUE(parser.parse());
   const auto& sections = parser.getSections();
   ASSERT_FALSE(sections.empty());
@@ -168,7 +169,7 @@ TEST(Fb2MetadataParser, PoemTitleInsideASectionIsNotTheChapterTitle) {
 // A section whose only content is another section is still a chapter, with an
 // empty title (the UI substitutes the localized "Unnamed" label).
 TEST(Fb2MetadataParser, WrapperSectionIsAChapterWithAnEmptyTitle) {
-  Fb2MetadataParser parser(fixturePath("wrapper-only.fb2"));
+  CollectingParser parser(fixturePath("wrapper-only.fb2"));
   ASSERT_TRUE(parser.parse());
   const auto& sections = parser.getSections();
   ASSERT_EQ(sections.size(), 3u);
@@ -187,7 +188,7 @@ TEST(Fb2MetadataParser, ChapterCountIsCappedAtFb2MaxChapters) {
   const std::string path = tmp.path() + "/tower.fb2";
   ASSERT_TRUE(fb2test::writeAll(path, fb2test::makeSectionTowerFb2(Fb2::FB2_MAX_CHAPTERS + 80, 2)));
 
-  Fb2MetadataParser parser(path);
+  CollectingParser parser(path);
   ASSERT_TRUE(parser.parse());
   EXPECT_EQ(parser.getSections().size(), static_cast<size_t>(Fb2::FB2_MAX_CHAPTERS));
 }
@@ -199,7 +200,7 @@ TEST(Fb2MetadataParser, DeeplyNestedSectionsParseWithoutUnboundedGrowth) {
   const std::string path = tmp.path() + "/deep.fb2";
   ASSERT_TRUE(fb2test::writeAll(path, fb2test::makeSectionTowerFb2(64, 64)));
 
-  Fb2MetadataParser parser(path);
+  CollectingParser parser(path);
   ASSERT_TRUE(parser.parse());
   const auto& sections = parser.getSections();
   ASSERT_EQ(sections.size(), 64u);
@@ -225,7 +226,7 @@ TEST(Fb2MetadataParser, SecondUnnamedBodyStillContributesChapters) {
                                 "<body><section><title><p>Second Body</p></title><p>gamma</p></section></body>\n"
                                 "</FictionBook>\n"));
 
-  Fb2MetadataParser parser(path);
+  CollectingParser parser(path);
   ASSERT_TRUE(parser.parse());
   const auto& sections = parser.getSections();
   ASSERT_EQ(sections.size(), 3u);
@@ -238,7 +239,7 @@ TEST(Fb2MetadataParser, SecondUnnamedBodyStillContributesChapters) {
 }
 
 TEST(Fb2MetadataParser, NotesBodySectionsAreNotReadingSections) {
-  Fb2MetadataParser parser(fixturePath("notes-body.fb2"));
+  CollectingParser parser(fixturePath("notes-body.fb2"));
   ASSERT_TRUE(parser.parse());
   const auto& sections = parser.getSections();
   ASSERT_EQ(sections.size(), 1u);
@@ -257,7 +258,7 @@ TEST(Fb2MetadataParser, UnnamedSecondBodyIsStillReadingContent) {
       "<section><title><p>Two</p></title><p>b</p></section>"
       "</body></FictionBook>\n";
   ASSERT_TRUE(fb2test::writeAll(path, doc));
-  Fb2MetadataParser parser(path);
+  CollectingParser parser(path);
   ASSERT_TRUE(parser.parse());
   ASSERT_EQ(parser.getSections().size(), 2u);
   EXPECT_EQ(parser.getSections()[0].title, "One");
@@ -265,7 +266,7 @@ TEST(Fb2MetadataParser, UnnamedSecondBodyIsStillReadingContent) {
 }
 
 TEST(Fb2MetadataParser, TruncatedXmlFailsParse) {
-  Fb2MetadataParser parser(fixturePath("malformed-truncated.fb2"));
+  CollectingParser parser(fixturePath("malformed-truncated.fb2"));
   EXPECT_FALSE(parser.parse());
 }
 
@@ -273,7 +274,7 @@ TEST(Fb2MetadataParser, TruncatedXmlFailsParse) {
 // any well-formed XML "parses" and falls back to one whole-file section.
 TEST(Fb2MetadataParser, WrongRootElementParsesWithWholeFileFallback) {
   const std::string raw = readAll(fixturePath("wrong-root.fb2"));
-  Fb2MetadataParser parser(fixturePath("wrong-root.fb2"));
+  CollectingParser parser(fixturePath("wrong-root.fb2"));
   ASSERT_TRUE(parser.parse());
   EXPECT_EQ(parser.getTitle(), "");
   ASSERT_EQ(parser.getSections().size(), 1u);
@@ -283,7 +284,7 @@ TEST(Fb2MetadataParser, WrongRootElementParsesWithWholeFileFallback) {
 
 TEST(Fb2MetadataParser, SectionlessBodyFallsBackToOneWholeFileSection) {
   const std::string raw = readAll(fixturePath("no-sections.fb2"));
-  Fb2MetadataParser parser(fixturePath("no-sections.fb2"));
+  CollectingParser parser(fixturePath("no-sections.fb2"));
   ASSERT_TRUE(parser.parse());
   ASSERT_EQ(parser.getSections().size(), 1u);
   // The book title stands in for the section title.
@@ -306,7 +307,7 @@ TEST(Fb2MetadataParser, UnbalancedSectionTagsFailParseDeterministically) {
                                 "<lang>en</lang></title-info></description>\n"
                                 "<body><section><title><p>Open</p></title><p>alpha</p>"
                                 "<section><title><p>Never closed</p></title><p>beta</p>\n"));
-  Fb2MetadataParser openParser(unclosed);
+  CollectingParser openParser(unclosed);
   EXPECT_FALSE(openParser.parse());
 
   const std::string stray = tmp.path() + "/stray-close.fb2";
@@ -316,7 +317,7 @@ TEST(Fb2MetadataParser, UnbalancedSectionTagsFailParseDeterministically) {
                                 "<lang>en</lang></title-info></description>\n"
                                 "<body></section><section><title><p>After</p></title>"
                                 "<p>gamma</p></section></body>\n</FictionBook>\n"));
-  Fb2MetadataParser strayParser(stray);
+  CollectingParser strayParser(stray);
   EXPECT_FALSE(strayParser.parse());
 }
 
@@ -325,19 +326,19 @@ TEST(Fb2MetadataParser, EmptyFileFailsParse) {
   ASSERT_TRUE(tmp.valid());
   const std::string path = tmp.path() + "/empty.fb2";
   ASSERT_TRUE(fb2test::writeAll(path, ""));
-  Fb2MetadataParser parser(path);
+  CollectingParser parser(path);
   EXPECT_FALSE(parser.parse());
 }
 
 TEST(Fb2MetadataParser, MissingFileFailsParse) {
-  Fb2MetadataParser parser("/nonexistent/definitely-not-here.fb2");
+  CollectingParser parser("/nonexistent/definitely-not-here.fb2");
   EXPECT_FALSE(parser.parse());
 }
 
 // windows-1251 covers most Russian FB2s in the wild; the registered
 // unknown-encoding handler must map the cp1251 bytes to UTF-8 output.
 TEST(Fb2MetadataParser, DeclaredWindows1251EncodingDecodesToUtf8) {
-  Fb2MetadataParser parser(fixturePath("cp1251-declared.fb2"));
+  CollectingParser parser(fixturePath("cp1251-declared.fb2"));
   ASSERT_TRUE(parser.parse());
   EXPECT_EQ(parser.getTitle(), "Тестовая книга");
   EXPECT_EQ(parser.getAuthor(), "Лев Толстой");
@@ -349,7 +350,7 @@ TEST(Fb2MetadataParser, DeclaredWindows1251EncodingDecodesToUtf8) {
 }
 
 TEST(Fb2MetadataParser, DeclaredWindows1252EncodingDecodesToUtf8) {
-  Fb2MetadataParser parser(fixturePath("cp1252-declared.fb2"));
+  CollectingParser parser(fixturePath("cp1252-declared.fb2"));
   ASSERT_TRUE(parser.parse());
   // C1-range curly quotes (0x93/0x94) plus Latin-1 accents.
   EXPECT_EQ(parser.getTitle(), "Café “München”");
@@ -370,7 +371,7 @@ TEST(Fb2MetadataParser, EncodingNameMatchIsCaseInsensitiveAndAcceptsCp1251Alias)
       "</title-info></description>"
       "<body><section><p>x</p></section></body></FictionBook>\n";
   ASSERT_TRUE(fb2test::writeAll(path, doc));
-  Fb2MetadataParser parser(path);
+  CollectingParser parser(path);
   ASSERT_TRUE(parser.parse());
   EXPECT_EQ(parser.getTitle(), "Ёж");
 }
@@ -383,12 +384,12 @@ TEST(Fb2MetadataParser, TrulyUnknownEncodingStillFailsParse) {
       "<?xml version=\"1.0\" encoding=\"koi8-r\"?>\n"
       "<FictionBook><body><section><p>x</p></section></body></FictionBook>\n";
   ASSERT_TRUE(fb2test::writeAll(path, doc));
-  Fb2MetadataParser parser(path);
+  CollectingParser parser(path);
   EXPECT_FALSE(parser.parse());
 }
 
 TEST(Fb2MetadataParser, Utf8CyrillicTitlesSurviveIntact) {
-  Fb2MetadataParser parser(fixturePath("unicode-titles.fb2"));
+  CollectingParser parser(fixturePath("unicode-titles.fb2"));
   ASSERT_TRUE(parser.parse());
   EXPECT_EQ(parser.getTitle(), "Война и мир");
   EXPECT_EQ(parser.getAuthor(), "Лев Толстой");
@@ -397,6 +398,14 @@ TEST(Fb2MetadataParser, Utf8CyrillicTitlesSurviveIntact) {
   ASSERT_EQ(sections.size(), 2u);
   EXPECT_EQ(sections[0].title, "Глава первая");
   EXPECT_EQ(sections[1].title, "Глава вторая");
+}
+
+// A sink that cannot store a chapter (e.g. the SD card is full) must fail the parse,
+// not leave a book with a chapter list that has holes in it.
+TEST(Fb2MetadataParser, SinkWriteFailureFailsTheParse) {
+  CollectingParser parser(fixturePath("nested-sections.fb2"), /*failWrites=*/true);
+  EXPECT_FALSE(parser.parse());
+  EXPECT_EQ(parser.writes, 1) << "parsing must stop at the first failed write";
 }
 
 // Contract L1-L8: a section with no <title> of its own is labelled from its own
@@ -408,14 +417,14 @@ class Fb2LabelTest : public ::testing::Test {
   const std::vector<Fb2::SectionInfo>& parseSource(const std::string& source) {
     path_ = tmp.path() + "/labels.fb2";
     EXPECT_TRUE(writeAll(path_, source));
-    parser_ = std::make_unique<Fb2MetadataParser>(path_);
+    parser_ = std::make_unique<CollectingParser>(path_);
     EXPECT_TRUE(parser_->parse());
     return parser_->getSections();
   }
 
   fb2test::TempDir tmp;
   std::string path_;
-  std::unique_ptr<Fb2MetadataParser> parser_;
+  std::unique_ptr<CollectingParser> parser_;
 };
 
 TEST_F(Fb2LabelTest, RealTitleWinsAndIsNotMarkedDerived) {

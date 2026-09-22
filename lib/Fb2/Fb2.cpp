@@ -175,7 +175,17 @@ bool Fb2::saveMetadataCache() const {
 }
 
 bool Fb2::parseMetadata() {
-  Fb2MetadataParser parser(filepath);
+  sections.clear();
+  const Fb2ChapterSink sink{&sections,
+                            [](void* ctx) {
+                              static_cast<std::vector<SectionInfo>*>(ctx)->emplace_back();
+                              return true;
+                            },
+                            [](void* ctx, const uint16_t index, SectionInfo& chapter) {
+                              (*static_cast<std::vector<SectionInfo>*>(ctx))[index] = std::move(chapter);
+                              return true;
+                            }};
+  Fb2MetadataParser parser(filepath, sink);
   if (!parser.parse()) {
     LOG_ERR("FB2", "Failed to parse metadata");
     return false;
@@ -185,7 +195,7 @@ bool Fb2::parseMetadata() {
   author = parser.getAuthor();
   language = parser.getLanguage();
   coverBinaryId = parser.getCoverBinaryId();
-  sections = parser.takeSections();
+  sections.shrink_to_fit();
 
   LOG_DBG("FB2", "Parsed: title=%s, author=%s, sections=%d", title.c_str(), author.c_str(),
           static_cast<int>(sections.size()));

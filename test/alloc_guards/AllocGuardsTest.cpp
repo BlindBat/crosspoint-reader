@@ -561,3 +561,26 @@ TEST(WallTimeCeilingGuard, TrimLeadingPunctuationCoarseCeiling) {
   // Measured 2026-09-13, macOS arm64 host: <1 ms. Ceiling >1000x above baseline.
   EXPECT_LT(elapsed.count(), 1000) << "bulk punctuation trim took " << elapsed.count() << " ms";
 }
+
+// Self-check of the live/peak tracking the chapter-memory tests rely on. The volatile sink stops the
+// compiler from eliding the new/delete pairs, which it may do for replaceable allocation functions.
+TEST(AllocCounterSelfCheck, LiveReturnsToZeroAndPeakKeepsTheHighWaterMark) {
+  static char* volatile sink = nullptr;
+  static char* volatile early = nullptr;
+  early = new char[64];  // allocated before counting: freeing it must not move liveBytes()
+  size_t liveAfterFree = 1;
+  size_t peak = 0;
+  size_t liveAfterEarlyFree = 1;
+  {
+    alloc_counter::CountingScope scope;
+    sink = new char[100];
+    delete[] sink;
+    liveAfterFree = alloc_counter::liveBytes();
+    peak = alloc_counter::peakBytes();
+    delete[] early;
+    liveAfterEarlyFree = alloc_counter::liveBytes();
+  }
+  EXPECT_EQ(liveAfterFree, 0u);
+  EXPECT_GE(peak, 100u);
+  EXPECT_EQ(liveAfterEarlyFree, 0u);
+}

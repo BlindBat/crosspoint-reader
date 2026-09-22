@@ -70,8 +70,14 @@ bool hasNameAttribute(const char** atts) {
 constexpr size_t LABEL_SCAN_BYTES = Fb2::FB2_MAX_LABEL_CHARS * 4;
 }  // namespace
 
+void Fb2MetadataParser::stopForSink() {
+  sinkFailed = true;
+  XML_StopParser(static_cast<XML_Parser>(parser), XML_FALSE);
+}
+
 void Fb2MetadataParser::startElement(void* userData, const char* name, const char** atts) {
   auto* self = static_cast<Fb2MetadataParser*>(userData);
+  if (self->sinkFailed) return;
   const char* tag = stripNs(name);
   const int depth = self->elemDepth++;  // depth of this element
 
@@ -130,28 +136,32 @@ void Fb2MetadataParser::startElement(void* userData, const char* name, const cha
       // Every section is a chapter, at any depth, numbered in start-tag order.
       // Past FB2_MAX_CHAPTERS a section is no longer a boundary: it reads as
       // part of the chapter containing it, so no text is lost.
-      const bool isChapter = self->sections.size() < Fb2::FB2_MAX_CHAPTERS;
+      const bool isChapter = self->chapterCount < Fb2::FB2_MAX_CHAPTERS;
       const size_t startOffset = static_cast<size_t>(XML_GetCurrentByteIndex(static_cast<XML_Parser>(self->parser)));
-      size_t entryIndex = NOT_A_CHAPTER;
+      OpenSection open;
+      open.startOffset = startOffset;
+      open.elemDepth = depth;
+      open.isChapter = isChapter;
       if (isChapter) {
-        Fb2::SectionInfo info;
+        if (!self->sink.reserve(self->sink.ctx)) {
+          self->stopForSink();
+          return;
+        }
         // Untitled sections keep an empty title; the UI substitutes the
         // localized "Unnamed" label at display time.
-        info.fileOffset = startOffset;
+        open.info.fileOffset = startOffset;
         const size_t level = self->openSections.size();
-        info.level = static_cast<uint8_t>(level > 255 ? 255 : level);
-        entryIndex = self->sections.size();
-        self->sections.push_back(std::move(info));
+        open.info.level = static_cast<uint8_t>(level > 255 ? 255 : level);
+        open.index = self->chapterCount++;
       }
-      self->openSections.push_back({entryIndex, startOffset, 0, depth, false});
+      self->openSections.push_back(std::move(open));
       self->inSectionTitle = false;
     } else if (strcmp(tag, "title") == 0 && !self->openSections.empty() &&
-               depth == self->openSections.back().elemDepth + 1 &&
-               self->openSections.back().entryIndex != NOT_A_CHAPTER) {
+               depth == self->openSections.back().elemDepth + 1 && self->openSections.back().isChapter) {
       // Only a <title> that is a DIRECT child of the section is its title; a
       // <poem><title> or a child section's title is not. A real title always wins
       // over a label derived from the section's first paragraph.
-      auto& entry = self->sections[self->openSections.back().entryIndex];
+      auto& entry = self->openSections.back().info;
       if (entry.titleDerived) {
         entry.title.clear();
         entry.titleDerived = 0;
@@ -161,9 +171,8 @@ void Fb2MetadataParser::startElement(void* userData, const char* name, const cha
     } else if (strcmp(tag, "p") == 0 && self->inSectionTitle) {
       self->context = Context::SECTION_TITLE_P;
       self->charBuffer.clear();
-    } else if (strcmp(tag, "p") == 0 && !self->openSections.empty() &&
-               self->openSections.back().entryIndex != NOT_A_CHAPTER && !self->openSections.back().labelTaken &&
-               self->sections[self->openSections.back().entryIndex].title.empty()) {
+    } else if (strcmp(tag, "p") == 0 && !self->openSections.empty() && self->openSections.back().isChapter &&
+               !self->openSections.back().labelTaken && self->openSections.back().info.title.empty()) {
       // A title-less section borrows its own first paragraph as a chapter-list
       // label, at whatever depth it sits: real books routinely open a section with
       // an <epigraph> or <cite> rather than a bare <p>. It is still the section's
@@ -178,6 +187,7 @@ void Fb2MetadataParser::startElement(void* userData, const char* name, const cha
 
 void Fb2MetadataParser::endElement(void* userData, const char* name) {
   auto* self = static_cast<Fb2MetadataParser*>(userData);
+  if (self->sinkFailed) return;
   const char* tag = stripNs(name);
   if (self->elemDepth > 0) self->elemDepth--;
   const int depth = self->elemDepth;  // depth of this element
@@ -236,8 +246,8 @@ void Fb2MetadataParser::endElement(void* userData, const char* name) {
       self->context = Context::NONE;
     } else if (strcmp(tag, "p") == 0 && self->context == Context::SECTION_TITLE_P) {
       // Append paragraph text to the open section's own title.
-      if (!self->openSections.empty() && self->openSections.back().entryIndex != NOT_A_CHAPTER) {
-        std::string& title = self->sections[self->openSections.back().entryIndex].title;
+      if (!self->openSections.empty() && self->openSections.back().isChapter) {
+        std::string& title = self->openSections.back().info.title;
         if (!title.empty() && !self->charBuffer.empty()) {
           title += " ";
         }
@@ -246,11 +256,11 @@ void Fb2MetadataParser::endElement(void* userData, const char* name) {
       self->charBuffer.clear();
       self->context = Context::NONE;
     } else if (strcmp(tag, "p") == 0 && self->context == Context::SECTION_LABEL_P) {
-      if (!self->openSections.empty() && self->openSections.back().entryIndex != NOT_A_CHAPTER) {
+      if (!self->openSections.empty() && self->openSections.back().isChapter) {
         self->openSections.back().labelTaken = true;
         normalizeLabel(self->charBuffer);
         if (!self->charBuffer.empty()) {
-          auto& entry = self->sections[self->openSections.back().entryIndex];
+          auto& entry = self->openSections.back().info;
           entry.title = self->charBuffer;
           entry.titleDerived = 1;
         }
@@ -259,7 +269,7 @@ void Fb2MetadataParser::endElement(void* userData, const char* name) {
       self->context = Context::NONE;
     } else if (strcmp(tag, "section") == 0) {
       if (!self->openSections.empty()) {
-        const OpenSection closed = self->openSections.back();
+        OpenSection closed = std::move(self->openSections.back());
         self->openSections.pop_back();
 
         // expat reports the start of the end tag; add its own length.
@@ -267,12 +277,16 @@ void Fb2MetadataParser::endElement(void* userData, const char* name) {
             static_cast<size_t>(XML_GetCurrentByteIndex(static_cast<XML_Parser>(self->parser))) + strlen(name) + 3;
         const size_t span = endOffset > closed.startOffset ? endOffset - closed.startOffset : 0;
 
-        if (closed.entryIndex != NOT_A_CHAPTER) {
+        if (closed.isChapter) {
           // Own bytes only: the child chapters' spans belong to those chapters,
           // so the chapter lengths partition the body instead of overlapping.
-          self->sections[closed.entryIndex].length = span > closed.childBytes ? span - closed.childBytes : 0;
+          closed.info.length = span > closed.childBytes ? span - closed.childBytes : 0;
           if (!self->openSections.empty()) {
             self->openSections.back().childBytes += span;
+          }
+          if (!self->sink.write(self->sink.ctx, closed.index, closed.info)) {
+            self->stopForSink();
+            return;
           }
         }
         // A section past the cap is not a chapter, so its bytes stay with the
@@ -282,6 +296,13 @@ void Fb2MetadataParser::endElement(void* userData, const char* name) {
     } else if (strcmp(tag, "body") == 0) {
       self->inBody = false;
       // Unbalanced markup can leave sections open; a body never spans another.
+      // Their chapters are still emitted, with the zero length they never got.
+      for (auto& open : self->openSections) {
+        if (open.isChapter && !self->sink.write(self->sink.ctx, open.index, open.info)) {
+          self->stopForSink();
+          return;
+        }
+      }
       self->openSections.clear();
     }
   }
@@ -352,9 +373,13 @@ bool Fb2MetadataParser::parse() {
   XML_ParserFree(xmlParser);
   parser = nullptr;
   file.close();
+  if (sinkFailed) {
+    LOG_ERR("FB2", "Chapter sink failed");
+    return false;
+  }
 
   // If no sections found, treat entire body as one section
-  if (success && sections.empty()) {
+  if (success && chapterCount == 0) {
     LOG_DBG("FB2", "No sections found, treating entire file as one section");
     // Re-parse is too expensive; create a dummy section covering the whole file.
     // The book title stands in for the section title (empty titles display as "Unnamed").
@@ -365,13 +390,13 @@ bool Fb2MetadataParser::parse() {
       info.fileOffset = 0;
       info.length = sizeFile.size();
       info.level = 0;
-      sections.push_back(std::move(info));
+      if (!sink.reserve(sink.ctx) || !sink.write(sink.ctx, 0, info)) {
+        LOG_ERR("FB2", "Chapter sink failed");
+        return false;
+      }
+      chapterCount = 1;
     }
   }
-
-  // sections grew by doubling, so it can hold up to 2x the capacity it needs; the
-  // book keeps this vector for as long as it is open, so give the slack back.
-  sections.shrink_to_fit();
 
   return success;
 }

@@ -26,7 +26,14 @@ size_t allocationCount();
 // Total bytes requested by those calls (requested size, not allocator-rounded size).
 size_t allocatedBytes();
 
-// Zeroes both counters. Does not change whether counting is enabled.
+// Bytes of blocks allocated while counting was enabled since the last reset() and not yet freed.
+// Freeing any other block (allocated before the reset, or while disabled) does not change it.
+size_t liveBytes();
+
+// High-water mark of liveBytes() since the last reset().
+size_t peakBytes();
+
+// Zeroes all counters. Does not change whether counting is enabled.
 void reset();
 
 // Turns counting on or off. Counting starts disabled so process/gtest startup is not measured.

@@ -21,9 +21,9 @@ description: "Task list for FB2 chapter metadata on SD (issue #8)"
 ## Phase 1: Setup (test infrastructure)
 
 - [ ] T001 Device baselines, **before any code change** (human, current `master` firmware): run `quickstart.md` device step 0 and record the three baselines in `specs/006-fb2-sd-chapter-lut/research.md` under a new R10. Steps 1–3 of T044 compare against them.
-- [ ] T002 [P] Extend `test/support/AllocCounter.{h,cpp}` with `liveBytes()` and `peakBytes()`. Prefix **every** block with a `max_align_t`-sized header that records its size, whether or not counting is enabled, because a block allocated before counting starts is still freed through the same `operator delete`. Only the counters are gated: subtract on delete, and track the high-water mark while counting is enabled. Add a self-check in `test/alloc_guards/AllocGuardsTest.cpp`: after allocating 100 B and freeing it, live is 0 and peak ≥ 100.
-- [ ] T003 [P] Add an open counter to `test/fb2_common/stubs/HalStorage.h`: `openForReadCount()` and `resetOpenCounts()`. `openFileForRead` increments the counter. Also add `failWritesAfter(size_t bytes)`: once that many bytes have been written across all files, `write` returns 0, so a test can make a build fail part-way. Reset clears both.
-- [ ] T004 [P] Add `writeV5BookBin(path, header strings, records, titles)` to `test/fb2_common/Fb2TestSupport.h`. It writes the byte layout in `contracts/book-bin-v5.md` field by field, so tests can hand-build valid and malformed caches.
+- [X] T002 [P] Extend `test/support/AllocCounter.{h,cpp}` with `liveBytes()` and `peakBytes()`. Prefix **every** block with a `max_align_t`-sized header that records its size, whether or not counting is enabled, because a block allocated before counting starts is still freed through the same `operator delete`. Only the counters are gated: subtract on delete, and track the high-water mark while counting is enabled. Add a self-check in `test/alloc_guards/AllocGuardsTest.cpp`: after allocating 100 B and freeing it, live is 0 and peak ≥ 100.
+- [X] T003 [P] Add an open counter to `test/fb2_common/stubs/HalStorage.h`: `openForReadCount()` and `resetOpenCounts()`. `openFileForRead` increments the counter. Also add `failWritesAfter(size_t bytes)`: once that many bytes have been written across all files, `write` returns 0, so a test can make a build fail part-way. Reset clears both.
+- [X] T004 [P] Add `writeV5BookBin(path, header strings, records, titles)` to `test/fb2_common/Fb2TestSupport.h`. It writes the byte layout in `contracts/book-bin-v5.md` field by field, so tests can hand-build valid and malformed caches.
 
 ---
 
@@ -31,16 +31,16 @@ description: "Task list for FB2 chapter metadata on SD (issue #8)"
 
 **Purpose**: separate the parser from the in-RAM vector, while `book.bin` stays at v4 for now.
 
-- [ ] T005 Declare `struct Fb2ChapterSink { void* ctx; bool (*reserve)(void* ctx); bool (*write)(void* ctx, uint16_t index, const Fb2::SectionInfo& c); };` after `class Fb2` in `lib/Fb2/Fb2.h`.
-- [ ] T006 Rework `lib/Fb2/Fb2/Fb2MetadataParser.{h,cpp}`:
+- [X] T005 Declare `struct Fb2ChapterSink { void* ctx; bool (*reserve)(void* ctx); bool (*write)(void* ctx, uint16_t index, const Fb2::SectionInfo& c); };` after `class Fb2` in `lib/Fb2/Fb2.h`.
+- [X] T006 Rework `lib/Fb2/Fb2/Fb2MetadataParser.{h,cpp}`:
   - **State.** `OpenSection` gets `Fb2::SectionInfo info`, `uint16_t index` and `bool isChapter`, replacing `entryIndex`/`NOT_A_CHAPTER`. A `uint16_t chapterCount` counter replaces `sections.size()` at `:133`.
   - **Where titles and labels are written.** Point every write at `openSections.back().info` (`:154,166,240,253`).
   - **When the sink is called.** Call `sink.reserve` at the chapter start tag (`:137-144`). Call `sink.write(index, info)` with the final `length` in two places: at the end tag (`:273`), and for each still-open section when `</body>` clears the stack (`:285`, length stays 0 as today). Route the whole-file fallback (`:357-368`) through reserve+write.
   - **Failure.** A `false` from the sink calls `XML_StopParser(parser, XML_FALSE)`, and `parse()` returns false.
   - **API.** The constructor takes the sink. Delete `sections`, `getSections()`, `takeSections()` and `shrink_to_fit()`.
-- [ ] T007 In `lib/Fb2/Fb2.cpp` `parseMetadata()`, give the parser an interim sink that collects into `sections`: `reserve` pushes an empty entry and `write` assigns `sections[index]`. `book.bin` v4 output must stay byte-identical.
-- [ ] T008 [P] In `test/fb2_metadata_parser/Fb2MetadataParserTest.cpp`, add a collecting-sink helper (a test-only vector) and replace every `getSections()` use, including `parseSource` at `:408`. Add a test that a sink `write` returning false makes `parse()` return false. Mutation: ignore the return value.
-- [ ] T009 Run `bin/run-tests`. All suites must be green, unchanged. Commit `refactor(fb2): parser emits chapters through a sink`.
+- [X] T007 In `lib/Fb2/Fb2.cpp` `parseMetadata()`, give the parser an interim sink that collects into `sections`: `reserve` pushes an empty entry and `write` assigns `sections[index]`. `book.bin` v4 output must stay byte-identical.
+- [X] T008 [P] In `test/fb2_metadata_parser/Fb2MetadataParserTest.cpp`, add a collecting-sink helper (a test-only vector) and replace every `getSections()` use, including `parseSource` at `:408`. Add a test that a sink `write` returning false makes `parse()` return false. Mutation: ignore the return value.
+- [X] T009 Run `bin/run-tests`. All suites must be green, unchanged. Commit `refactor(fb2): parser emits chapters through a sink`.
 
 **Checkpoint**: behavior identical; the parser no longer owns chapter storage.
 
