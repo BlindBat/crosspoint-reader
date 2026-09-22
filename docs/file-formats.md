@@ -697,28 +697,40 @@ described above.
 
 ## FB2 caches *(fork-only)*
 
-### `book.bin` version 4
+### `book.bin` version 5
 
 ```c++
-u8     version;         // 4
-String title;
+u8     version;         // 5
+String title;           // u32 length + bytes, each header string <= 4096 bytes
 String author;
 String language;
 String coverBinaryId;
-u16    chapterCount;    // 1..256 (FB2_MAX_CHAPTERS)
-// per chapter:
-String chapterTitle;    // the section's OWN title, may be empty
-u32    fileOffset;      // offset of its "<section" start tag
-u32    ownLength;       // own bytes: full span minus child chapters' spans
-u8     level;           // nesting depth; 0 = direct child of <body>
-u8     flags;           // bit0: title was derived from the first paragraph; other bits reserved 0
+u16    chapterCount;    // 1..32767 (FB2_CHAPTER_INDEX_LIMIT)
+u32    titlesSize;      // bytes in the title area
+Record record[chapterCount];   // 20 bytes each, in chapter (start-tag) order
+u8     titles[titlesSize];     // raw title bytes, no prefixes, no terminators
+
+struct Record {         // 20 bytes, written field by field
+  u32 titleOffset;      // into titles[]
+  u16 titleLength;      // <= 4096; 0 = no title (the UI shows its "Unnamed" placeholder)
+  u32 fileOffset;       // offset of the section's "<section" start tag in the source
+  u32 ownLength;        // own bytes: full span minus child chapters' spans
+  u32 cumulativeLength; // sum of ownLength over records 0..i
+  u8  level;            // nesting depth; 0 = direct child of <body>
+  u8  flags;            // bit0: title was derived from the first paragraph; other bits reserved 0
+};
 ```
+
+The book keeps no chapter list in RAM. Record *i* sits at a computed offset, so one
+chapter is read with a seek and a 20-byte read, plus a seek and a read for its title. A
+chapter's progress weight is `[cumulativeLength - ownLength, cumulativeLength)`, and the book
+size is the last record's `cumulativeLength`, so progress needs one record, never a scan.
 
 A section with no `<title>` of its own is labelled from its own first `<p>`, cut to
 `FB2_MAX_LABEL_CHARS` (64) codepoints on a character boundary, and `flags` bit 0 records that the
 title was derived rather than supplied by the book. A title the book does supply is stored as it
-is written, bounded on read by the 4096-byte string cap. A section with neither a title nor text
-of its own stores an empty title, and the UI substitutes its localized placeholder.
+is written, cut to the 4096-byte string cap on a character boundary. A section with neither a
+title nor text of its own stores an empty title.
 
 Every `<section>` of a reading body is a chapter, numbered in start-tag order at
 any depth, so the chapter list is the TOC: there is no separate TOC list, and
@@ -728,23 +740,37 @@ chapter's `ownLength`. Chapter lengths exclude the spans of child
 chapters, so they partition the reading bodies and reading progress stays
 monotonic.
 
-Reads are bounded: any string longer than 4096 bytes is rejected, a chapter count
-of zero or above `FB2_MAX_CHAPTERS` (256) is treated as corruption (the parser
-always emits at least a whole-file fallback chapter and never more than the cap),
-the count is checked against the bytes remaining in the file before `reserve()`,
-a `level` that jumps more than one step past its predecessor — or a non-zero
-level on the first chapter — fails the load, and a `flags` byte with any bit outside
-bit 0 set, or a derived marker on an empty title, is corruption. Any failure falls back to reparsing
-the FB2 file.
+The file is built without holding chapters in RAM: the parser appends a zeroed record slot to
+`chapters.tmp` at each start tag and patches it at the end tag (end tags arrive children
+first), appending the title to `titles.tmp`. One sequential pass then writes `book.bin`,
+filling in `cumulativeLength`, and both temp files are removed. A failed build removes
+`book.bin` and both temp files.
 
-Version 4 added the `flags` byte; a version-3 cache is rejected and the book's
-metadata reparsed, which does not touch `sections/<index>.bin` and so re-paginates
-nothing. Version 2 stopped counting auxiliary `<body name="...">` sections as chapters,
-which shifts section numbering for books with footnote bodies. Version 3 makes
-every nested `<section>` a chapter of its own and adds the `level` byte, which
-renumbers chapters for any book that nests sections; the chapter count is capped
-because this metadata is RAM-resident, and past the cap a `<section>` reads as
-part of the chapter containing it rather than becoming one.
+Every read is validated before use, and any failure falls back to reparsing the FB2 file:
+
+- `version == 5`, and each header string is at most 4096 bytes;
+- `1 <= chapterCount <= FB2_CHAPTER_INDEX_LIMIT` (32767), and the file is exactly
+  `header + chapterCount * 20 + titlesSize` bytes, checked before any record is read;
+- per record, in one sequential pass: `titleLength <= 4096` and
+  `titleOffset + titleLength <= titlesSize`; no `flags` bit outside bit 0, and no derived
+  marker on an empty title; a `level` at most one step past its predecessor, and 0 on the
+  first chapter; `cumulativeLength` exactly the previous total plus `ownLength`.
+
+A lookup that fails later (a card fault, a file changed after load) returns an empty chapter,
+which the UI shows as its "Unnamed" placeholder.
+
+Version 5 replaced the length-prefixed chapter list with fixed records and a title area, and
+added `cumulativeLength`; a version-4 cache is rejected and the book's metadata reparsed, which
+does not touch `sections/<index>.bin`. Version 4 added the `flags` byte. Version 2 stopped
+counting auxiliary `<body name="...">` sections as chapters, which shifts section numbering for
+books with footnote bodies. Version 3 makes every nested `<section>` a chapter of its own and
+adds the `level` byte, which renumbers chapters for any book that nests sections.
+
+The only limit on the chapter count is `FB2_CHAPTER_INDEX_LIMIT` (32767), set by the UI chapter
+list's `int16_t` row index rather than by memory. Past it, a nested `<section>` reads as part
+of the chapter containing it; a top-level one has no containing chapter and is unreachable.
+Firmware before version 5 capped the count at 256 (1024 before that) because the chapter list
+lived in RAM.
 
 ### `sections/<n>.bin` version 5
 

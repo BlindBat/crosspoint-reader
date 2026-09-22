@@ -110,6 +110,34 @@ TEST(Fb2PercentToSection, ZeroLengthSectionIsNeverSelected) {
   EXPECT_FLOAT_EQ(u.sectionProgress, 2.0f / 500.0f);
 }
 
+// Every callback is an SD record read on device, so the jump must binary-search the
+// running totals instead of scanning them.
+TEST(Fb2PercentToSection, LargeBookIsSearchedNotScanned) {
+  struct Counted {
+    std::vector<size_t> cumulative;
+    mutable int calls = 0;
+    static size_t at(const void* ctx, int index) {
+      const auto* self = static_cast<const Counted*>(ctx);
+      self->calls++;
+      return self->cumulative[index];
+    }
+  };
+  Counted c;
+  constexpr int kSections = 4000;
+  for (int i = 0; i < kSections; i++) c.cumulative.push_back(static_cast<size_t>(i + 1) * 10);
+  const fb2_reader::SectionSizes sizes{&c, &Counted::at, kSections, c.cumulative.back()};
+  for (const int percent : {0, 1, 37, 50, 99, 100}) {
+    c.calls = 0;
+    const auto t = fb2_reader::percentToSection(percent, sizes);
+    ASSERT_TRUE(t.valid);
+    // The expected chapter, computed independently: the first whose total reaches the target.
+    const size_t target = percent >= 100 ? sizes.bookSize - 1 : sizes.bookSize / 100 * percent;
+    EXPECT_EQ(t.sectionIndex, static_cast<int>(target / 10 - (target % 10 == 0 && target > 0 ? 1 : 0)))
+        << percent << "%";
+    EXPECT_LE(c.calls, 14) << percent << "% took " << c.calls << " lookups";  // ceil(log2 4000) + 2
+  }
+}
+
 TEST(Fb2PercentToSection, ZeroLengthLastSectionReportsZeroProgress) {
   // Target lands on the trailing empty section: sectionSize 0 -> progress 0.
   Sizes s{{100, 100}, 100};

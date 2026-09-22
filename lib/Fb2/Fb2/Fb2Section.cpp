@@ -211,7 +211,7 @@ bool Fb2Section::startBuild(const ReaderRenderSpec& spec, const BuildPopupFn& po
   ctx->lut.reserve(LUT_INITIAL_CAPACITY);
   ctx->lutCtx = BuildLutContext{this, &ctx->lut};
 
-  const auto& sectionInfo = fb2->getSectionInfo(sectionIndex);
+  const auto sectionInfo = fb2->getSectionInfo(sectionIndex);
   // If there's only one section with fileOffset 0, the metadata parser found no real <section> tags.
   // Pass -1 to tell the parser to process all body content instead of filtering by section index.
   const int targetIndex = (fb2->getSectionCount() == 1 && sectionInfo.fileOffset == 0) ? -1 : sectionIndex;

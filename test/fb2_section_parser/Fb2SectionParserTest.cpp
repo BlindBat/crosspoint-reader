@@ -17,7 +17,7 @@
 #undef private
 #undef class
 
-#include "Fb2/Fb2MetadataParser.h"
+#include "CollectingParser.h"
 #include "Fb2TestSupport.h"
 
 namespace {
@@ -558,7 +558,7 @@ TEST(Fb2SectionParserFile, ChapterTextsPartitionTheBodyForEveryFixture) {
       "wrapper-only.fb2", "styles.fb2",          "no-sections.fb2", "long.fb2",
       "notes-body.fb2",   "unicode-titles.fb2",  "body-prefix.fb2"};
   for (const char* fixture : kFixtures) {
-    Fb2MetadataParser metadata(fixturePath(fixture));
+    CollectingParser metadata(fixturePath(fixture));
     ASSERT_TRUE(metadata.parse()) << fixture;
     const auto& sections = metadata.getSections();
     ASSERT_FALSE(sections.empty()) << fixture;

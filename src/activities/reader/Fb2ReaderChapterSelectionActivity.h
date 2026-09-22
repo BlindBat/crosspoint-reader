@@ -13,11 +13,11 @@ class Fb2ReaderChapterSelectionActivity final : public UiListActivity {
   int currentSectionIndex = 0;
 
   // Windowed row buffers: only the rows around the viewport are materialized, so
-  // the list costs the same for a 4-chapter book and one at FB2_MAX_CHAPTERS.
+  // the list costs the same for a 4-chapter book and one with thousands.
   // Materializing every row instead held a second std::string copy of every
   // chapter title plus a ListItem each. The window follows nav.top via
   // itemsWindowFirst (see fui::ListProps), the way the EPUB chapter list does.
-  static constexpr int TOC_WINDOW = 24;
+  static constexpr int TOC_WINDOW = Fb2::TOC_BATCH;  // one batched book.bin read per window
   std::string windowLabels[TOC_WINDOW];
   freeink::ui::ListItem windowItems[TOC_WINDOW];
   int windowStart = -1;

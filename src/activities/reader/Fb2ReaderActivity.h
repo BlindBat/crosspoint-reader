@@ -16,6 +16,11 @@ class Fb2ReaderActivity final : public ReaderActivity {
   std::shared_ptr<Fb2> fb2;
   std::unique_ptr<Fb2Section> section;
   int currentSectionIndex = 0;
+  // The current chapter's record, read once per chapter change so page turns and
+  // status-bar renders do no chapter-index I/O. chapterInfoIndex is the chapter it
+  // was read for; renderBook() re-reads on any mismatch.
+  Fb2::SectionInfo chapterInfo;
+  int chapterInfoIndex = -1;
   // Page to open once the section is (re)loaded; UINT16_MAX means the last page.
   int nextPageNumber = 0;
   // Position restore across a re-pagination (orientation/text-settings change):

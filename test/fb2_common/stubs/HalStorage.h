@@ -14,6 +14,16 @@
 #include <cstdio>
 #include <string>
 
+// Test hooks, shared by every HalFile/HalStorage in the process. openForReadCount counts
+// openFileForRead calls, exactly what a device open costs. writeBudget, when set, is the
+// number of bytes that may still be written across all files before write() starts
+// returning 0, so a test can make a build fail part-way.
+namespace halstub {
+inline size_t openForReadCount = 0;
+inline bool writeBudgetSet = false;
+inline size_t writeBudget = 0;
+}  // namespace halstub
+
 class HalFile {
  public:
   HalFile() = default;
@@ -28,7 +38,17 @@ class HalFile {
   }
   int available() const { return file_ ? static_cast<int>(size() - position()) : 0; }
   size_t read(void* buffer, size_t count) { return file_ ? std::fread(buffer, 1, count, file_) : 0; }
-  size_t write(const void* buffer, size_t count) { return file_ ? std::fwrite(buffer, 1, count, file_) : 0; }
+  size_t write(const void* buffer, size_t count) {
+    if (!file_) return 0;
+    if (halstub::writeBudgetSet) {
+      if (count > halstub::writeBudget) {
+        halstub::writeBudget = 0;
+        return 0;
+      }
+      halstub::writeBudget -= count;
+    }
+    return std::fwrite(buffer, 1, count, file_);
+  }
   size_t write(uint8_t byte) { return write(&byte, 1); }
   bool flush() { return file_ && std::fflush(file_) == 0; }
   bool seek(size_t pos) { return file_ && std::fseek(file_, static_cast<long>(pos), SEEK_SET) == 0; }
@@ -61,7 +81,20 @@ class HalStorage {
     static HalStorage instance;
     return instance;
   }
-  bool openFileForRead(const char*, const std::string& path, HalFile& file) { return file.open(path.c_str(), "rb"); }
+  bool openFileForRead(const char*, const std::string& path, HalFile& file) {
+    ++halstub::openForReadCount;
+    return file.open(path.c_str(), "rb");
+  }
+  size_t openForReadCount() const { return halstub::openForReadCount; }
+  void failWritesAfter(const size_t bytes) {
+    halstub::writeBudgetSet = true;
+    halstub::writeBudget = bytes;
+  }
+  void resetOpenCounts() {
+    halstub::openForReadCount = 0;
+    halstub::writeBudgetSet = false;
+    halstub::writeBudget = 0;
+  }
   bool openFileForWrite(const char*, const std::string& path, HalFile& file) { return file.open(path.c_str(), "wb"); }
   bool exists(const char* path) const {
     struct stat st{};

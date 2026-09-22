@@ -23,16 +23,21 @@ PercentTarget percentToSection(int percent, const SectionSizes& sizes) {
 
   if (sizes.count == 0) return target;
 
-  int targetIdx = sizes.count - 1;
-  size_t prevCumulative = 0;
-  for (int i = 0; i < sizes.count; i++) {
-    const size_t cumulative = sizes.cumulative(sizes.ctx, i);
-    if (targetSize <= cumulative) {
-      targetIdx = i;
-      prevCumulative = (i > 0) ? sizes.cumulative(sizes.ctx, i - 1) : 0;
-      break;
+  // First section whose running total reaches the target. The totals never
+  // decrease, so this is a lower-bound binary search: each lookup is an SD record
+  // read on device, and a book can have thousands of chapters.
+  int lo = 0;
+  int hi = sizes.count - 1;
+  while (lo < hi) {
+    const int mid = lo + (hi - lo) / 2;
+    if (targetSize <= sizes.cumulative(sizes.ctx, mid)) {
+      hi = mid;
+    } else {
+      lo = mid + 1;
     }
   }
+  const int targetIdx = lo;
+  const size_t prevCumulative = targetIdx > 0 ? sizes.cumulative(sizes.ctx, targetIdx - 1) : 0;
 
   const size_t cumulative = sizes.cumulative(sizes.ctx, targetIdx);
   const size_t sectionSize = (cumulative > prevCumulative) ? (cumulative - prevCumulative) : 0;
