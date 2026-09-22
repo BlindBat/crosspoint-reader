@@ -328,8 +328,13 @@ TEST_F(Fb2BookTest, ChapterMemoryIsIndependentOfChapterCount) {
     size_t peak;
     int chapters;
   };
+  // Both books use the same path (cache cleared in between), so every path-derived
+  // string (the book path, the cache dir with its hash) is byte-for-byte the same.
+  // libstdc++ allocates strings at their exact length, so even a 3-character name
+  // difference showed up in the peak on Linux CI.
+  const std::string path = tmp.path() + "/flat.fb2";
   auto measure = [&](const int chapters) {
-    const std::string path = tmp.path() + "/flat-" + std::to_string(chapters) + ".fb2";
+    Fb2(path, tmp.path()).clearCache();
     EXPECT_TRUE(writeAll(path, fb2test::makeShortTitleTowerFb2(chapters)));
     auto book = std::make_unique<Fb2>(path, tmp.path());
     size_t peak = 0;
