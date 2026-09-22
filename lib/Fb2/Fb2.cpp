@@ -5,6 +5,7 @@
 #include <Logging.h>
 #include <Memory.h>
 
+#include <algorithm>
 #include <cstring>
 
 #include "Fb2/Fb2CoverExtractor.h"
@@ -514,6 +515,44 @@ Fb2::SectionInfo Fb2::getSectionInfo(const int index, HalFile& bookBin) const {
   info.level = r.level;
   info.titleDerived = (r.flags & FB2_CHAPTER_FLAG_TITLE_DERIVED) != 0 ? 1 : 0;
   return info;
+}
+
+int Fb2::getTocEntries(const int first, const int count, SectionInfo* out, HalFile& bookBin) const {
+  // SdFat caches one sector, and the record and title areas are far apart, so
+  // alternating record/title reads reloaded it twice per entry: 66 ms per 24-entry
+  // window on device (specs/006 research R10). All records first, then all titles.
+  if (first < 0 || first >= chapterCount || count <= 0) return 0;
+  const int n = std::min({count, TOC_BATCH, chapterCount - first});
+  uint32_t titleOffsets[TOC_BATCH];
+  uint16_t titleLengths[TOC_BATCH];
+  if (!bookBin.seek(recordsOffset + static_cast<size_t>(first) * RECORD_SIZE)) return 0;
+  int read = 0;
+  for (; read < n; read++) {
+    Record r;
+    if (!readRecord(bookBin, r)) break;
+    const bool titleInBounds =
+        r.titleLength <= FB2_CACHE_MAX_STRING && static_cast<uint64_t>(r.titleOffset) + r.titleLength <= titlesSize;
+    titleOffsets[read] = r.titleOffset;
+    titleLengths[read] = titleInBounds ? r.titleLength : 0;
+    SectionInfo& info = out[read];
+    info.title.clear();
+    info.fileOffset = r.fileOffset;
+    info.length = r.ownLength;
+    info.cumulativeLength = r.cumulativeLength;
+    info.level = r.level;
+    info.titleDerived = (r.flags & FB2_CHAPTER_FLAG_TITLE_DERIVED) != 0 ? 1 : 0;
+  }
+  for (int i = 0; i < read; i++) {
+    if (titleLengths[i] == 0) continue;
+    std::string& title = out[i].title;
+    title.resize(titleLengths[i]);
+    if (!bookBin.seek(titlesOffset + titleOffsets[i]) ||
+        bookBin.read(reinterpret_cast<uint8_t*>(&title[0]), titleLengths[i]) != static_cast<int>(titleLengths[i])) {
+      LOG_ERR("FB2", "Chapter %d title unreadable", first + i);
+      title.clear();
+    }
+  }
+  return read;
 }
 
 size_t Fb2::getBookSize() const { return bookSize; }

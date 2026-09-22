@@ -202,3 +202,24 @@ This was checked in the log only; the status bar was not photographed.
   with sector-cache contention against the source reads. The 26-chapter book is ~430 ms (1%)
   slower, outside a run-to-run spread of ≤6 ms. This is the planned follow-up: buffer
   `titles.tmp` (append-only).
+
+**Follow-up fixes, re-measured the same day on the same device and card**
+
+| Measurement | `master` | v5 as first measured | v5 after the fixes |
+|---|---|---|---|
+| First open, 677-chapter book (3 runs) | 31.8 s (256 chapters) | 40.5–42.4 s | **34.7–35.4 s** |
+| First open, 26-chapter book (3 runs) | 44.98 s | 45.41 s | **45.17–45.18 s** |
+| Chapter-list window (24 entries), 677-chapter book | ~0 ms (RAM) | 66 ms mean, 72 max | **11 ms mean, 14 max** |
+| EPUB window, same card | 33 ms | 33 ms | 33 ms |
+| Heap held, 677-chapter book | 21,552 B (256 ch) | 432 B | 444 B |
+
+- **One SD call per record, buffered build.** Each record used to be read and written as 7
+  per-field calls, and each one took the storage mutex. Titles and the assembled `book.bin` now
+  go through a 1 KB `BufferedFileWriter`. The large book's first open is now 2.9 s (9%) over
+  `master`, down from 8.7 s, and it indexes 2.6× as many chapters. The 26-chapter book is within
+  0.2 s. The remaining cost is the record slots, which are patched in place and so stay
+  unbuffered (`ponytail:` note in `Fb2.cpp`).
+- **Batched window read.** The call count did not matter for the window (still 65 ms). The
+  cost was SdFat's single-sector cache reloading twice per entry, because the record area and
+  the title area are far apart. `Fb2::getTocEntries` reads a window's records first, then its
+  titles: 65 → 11 ms, now a third of the EPUB list. **SC-005 is now met.**

@@ -4,6 +4,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 
 #include <cstdio>
 #include <memory>
@@ -53,11 +54,20 @@ void Fb2ReaderChapterSelectionActivity::refreshTocWindow(const int start) {
   // prewarmFallbackText if CJK FB2 lists repaint slowly on device.
   const unsigned long startMs = millis();
   windowCount = total - clamped < TOC_WINDOW ? total - clamped : TOC_WINDOW;
-  // One book.bin open for the whole window: each entry is one record read.
-  HalFile bookBin;
-  const bool indexOpen = fb2->openIndex(bookBin);
+  // One book.bin open and one batched read for the whole window. The entries live
+  // only for this refresh (24 SectionInfos are too big for the stack); on OOM or a
+  // read failure the rows degrade to "Unnamed" instead of failing the list.
+  auto entries = makeUniqueNoThrow<Fb2::SectionInfo[]>(TOC_WINDOW);
+  int read = 0;
+  if (entries) {
+    HalFile bookBin;
+    if (fb2->openIndex(bookBin)) read = fb2->getTocEntries(clamped, windowCount, entries.get(), bookBin);
+  } else {
+    LOG_ERR("TOC", "OOM: chapter window");
+  }
   for (int i = 0; i < windowCount; i++) {
-    const auto tocEntry = indexOpen ? fb2->getTocEntry(clamped + i, bookBin) : Fb2::SectionInfo{};
+    const Fb2::SectionInfo empty;
+    const auto& tocEntry = i < read ? entries[i] : empty;
     // Indent by nesting depth so a story reads as a story inside its part, the
     // same convention the EPUB chapter list uses. Capped at three steps so a
     // deeply nested title is not pushed off the row.

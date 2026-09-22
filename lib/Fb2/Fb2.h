@@ -80,6 +80,11 @@ class Fb2 {
   SectionInfo getSectionInfo(int index) const;
   SectionInfo getSectionInfo(int index, HalFile& bookBin) const;
   bool openIndex(HalFile& bookBin) const;
+  // Up to TOC_BATCH consecutive chapters from `first`, read records first and titles
+  // second so a chapter-list window does not alternate between the two areas of
+  // book.bin. Returns how many were read; an unreadable title comes back empty.
+  static constexpr int TOC_BATCH = 24;
+  int getTocEntries(int first, int count, SectionInfo* out, HalFile& bookBin) const;
   size_t getBookSize() const;
   size_t getCumulativeSectionSize(int index) const;
   size_t getCumulativeSectionSize(int index, HalFile& bookBin) const;

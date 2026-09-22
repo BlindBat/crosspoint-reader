@@ -646,6 +646,35 @@ TEST_F(Fb2BookTest, ProgressFromAHeldChapterDoesNoIo) {
   EXPECT_GT(size, 0u);
 }
 
+// The chapter list reads a window of chapters in one batch; it must return exactly
+// what one-at-a-time lookups return, clamp at the end of the book, and cap at
+// TOC_BATCH.
+TEST_F(Fb2BookTest, BatchedTocReadMatchesSingleLookups) {
+  const std::string path = tmp.path() + "/tower.fb2";
+  ASSERT_TRUE(writeAll(path, fb2test::makeUntitledSectionsFb2(60, 3)));  // derived, empty and nested titles
+  Fb2 book(path, tmp.path());
+  ASSERT_TRUE(book.load());
+  ASSERT_EQ(book.getSectionCount(), 60);
+  HalFile bookBin;
+  ASSERT_TRUE(book.openIndex(bookBin));
+  std::vector<Fb2::SectionInfo> window(Fb2::TOC_BATCH);
+  for (const int first : {0, 1, 24, 50}) {
+    const int read = book.getTocEntries(first, Fb2::TOC_BATCH, window.data(), bookBin);
+    EXPECT_EQ(read, std::min(Fb2::TOC_BATCH, 60 - first)) << "first " << first;
+    for (int i = 0; i < read; i++) {
+      const auto single = book.getSectionInfo(first + i);
+      EXPECT_EQ(window[i].title, single.title) << "chapter " << first + i;
+      EXPECT_EQ(window[i].level, single.level) << "chapter " << first + i;
+      EXPECT_EQ(window[i].titleDerived, single.titleDerived) << "chapter " << first + i;
+      EXPECT_EQ(window[i].length, single.length) << "chapter " << first + i;
+      EXPECT_EQ(window[i].cumulativeLength, single.cumulativeLength) << "chapter " << first + i;
+    }
+  }
+  EXPECT_EQ(book.getTocEntries(60, Fb2::TOC_BATCH, window.data(), bookBin), 0);
+  EXPECT_EQ(book.getTocEntries(-1, Fb2::TOC_BATCH, window.data(), bookBin), 0);
+  EXPECT_EQ(book.getTocEntries(0, 1000, window.data(), bookBin), Fb2::TOC_BATCH);
+}
+
 // ---------------------------------------------------------------------------
 // Progress / TOC math on a book loaded from a hand-built book.bin.
 // ---------------------------------------------------------------------------
