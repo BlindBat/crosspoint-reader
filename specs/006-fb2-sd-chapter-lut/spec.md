@@ -23,7 +23,7 @@ is needed, the way EPUB already does. The chapter cap goes away, and the memory 
 FB2 book holds for its chapter list stops depending on how many chapters it has.
 
 It is an internal change. A reader should see exactly one difference: books that used to
-be capped now list every chapter.
+be capped now list every chapter, and lay their chapters out again once.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -59,12 +59,11 @@ coarse-navigation problem into an out-of-memory crash, which is worse. Stability
 navigation.
 
 **Independent Test**: On the host, count what a book holds in memory after opening for a
-4-chapter book and for a 4,000-chapter book; the two must be within a fixed allowance of
-each other. On device, open the largest corpus book and read `[MEM] Free` over serial.
+4-chapter book and for a 4,000-chapter book; the two must be identical when their nesting depth is equal. On device, open the largest corpus book and read `[MEM] Free` over serial.
 
 **Acceptance Scenarios**:
 
-1. **Given** two books that differ only in chapter count, **When** each is opened, **Then** the memory held for chapter metadata after opening is the same for both, within a fixed allowance.
+1. **Given** two books that differ only in chapter count, **When** each is opened, **Then** the memory held for chapter metadata after opening is identical for both when their nesting depth is equal.
 2. **Given** a book being opened for the first time (no cache), **When** its chapters are indexed, **Then** peak memory during indexing also does not grow with chapter count.
 3. **Given** the chapter list is open on a very large book, **When** the reader scrolls from top to bottom, **Then** memory in use stays flat.
 
@@ -93,7 +92,7 @@ already had.
 - **Corrupt or truncated cache**: a damaged chapter index (bad count, entry past the end of the file, out-of-sequence depth, invalid flags) is rejected and the book is re-indexed from the source file, as today. A bad entry never drives an unbounded allocation.
 - **Card removed or read fails mid-read**: a chapter entry that cannot be read shows the localized "Unnamed" placeholder in the list or status bar and does not crash; opening that chapter fails the way an unreadable section does today.
 - **Book with no `<section>` at all**: still reads as one whole-file chapter.
-- **Pathological section count**: the only remaining limit is the width of the stored chapter number (65,535). Past it, the existing rule applies — further sections read as part of the chapter containing them, so no text is lost.
+- **Pathological section count**: the only remaining limit is 32,767 chapters, set by the UI chapter list's `int16_t` row value and selection index (`freeink-sdk/libs/ui/FreeInkUI/include/components/lists/list.h:15,63`). Past it, a nested section reads as part of the chapter containing it. A *top-level* section past the limit has no containing chapter, so its text is unreachable; this is a documented ceiling, 18× the largest real book (1,772), not a supported case.
 - **Very long titles**: a supplied title is kept as written, bounded by the existing 4,096-byte string cap; derived labels keep their 64-character cap.
 - **Old saved positions** that use top-level-only numbering (pre-nested-chapter firmware) still resolve to the right chapter.
 - **Low SD space on first open**: if the index cannot be written, the book fails to open with the existing error path rather than opening half-indexed.
@@ -102,14 +101,14 @@ already had.
 
 ### Functional Requirements
 
-- **FR-001**: Every `<section>` in a reading body MUST be its own chapter, numbered in document order at any depth, up to the width of the stored chapter number (65,535). The 256-chapter ceiling (`FB2_MAX_CHAPTERS`) MUST be removed, not raised.
+- **FR-001**: Every `<section>` in a reading body MUST be its own chapter, numbered in document order at any depth, up to 32,767 chapters, the limit set by the UI chapter list's `int16_t` row value and selection index (`freeink-sdk/libs/ui/FreeInkUI/include/components/lists/list.h:15,63`). The 256-chapter ceiling (`FB2_MAX_CHAPTERS`) MUST be removed, not raised.
 - **FR-002**: Chapter metadata (title, derived-title marker, source position, own length, depth) MUST be stored on the SD card and read per chapter on demand; an open book MUST NOT hold a per-chapter record in memory.
 - **FR-003**: Memory held by an open book for its chapter metadata MUST be independent of chapter count, both after opening and at peak while the book is first indexed.
 - **FR-004**: Looking up one chapter's metadata, and the book progress for a position, MUST each cost a bounded number of SD reads, independent of chapter count and of which chapter is asked for.
 - **FR-005**: Both FB2 parsers (indexing and chapter layout) MUST continue to number chapters identically, so the chapter a reader selects is the text that opens.
 - **FR-006**: The chapter list MUST keep its fixed window of rows and read only the entries in view; scrolling it MUST NOT accumulate memory.
 - **FR-007**: The chapter title shown in the status bar MUST be read once per chapter change, not on every page render.
-- **FR-008**: Reading progress MUST stay monotonic across the whole book, and chapter lengths MUST continue to partition the reading bodies (no byte counted twice or not at all).
+- **FR-008**: Reading progress MUST stay monotonic across the whole book, and chapter lengths MUST continue to partition the reading bodies (no byte counted twice or not at all). Tests MUST check the partition against the source's own section byte spans, not against the book size, which is itself the sum of the lengths.
 - **FR-009**: The cache format change MUST bump the FB2 metadata cache version so any existing cache is rebuilt once; `docs/file-formats.md` MUST be updated in the same change.
 - **FR-010**: For books with 256 or fewer chapters, saved reading positions and already laid-out chapters MUST remain valid after the update. For books over the old cap, positions MUST resolve without error and no chapter MAY be shown from a layout built under the old, capped boundaries.
 - **FR-011**: Every value read from the index MUST be validated before use (count against file size, entry bounds, depth sequence, flag bits, string length), and any failure MUST fall back to re-indexing the source file.
@@ -127,18 +126,18 @@ already had.
 ### Measurable Outcomes
 
 - **SC-001**: Every corpus book that the old cap degraded (22 of 2,899) lists exactly as many chapters as the indexing parser finds sections, re-measured by running the parser uncapped over `~/Calibre Library`.
-- **SC-002**: On the host, memory held for chapter metadata after opening a 4-chapter book and a 4,000-chapter generated book differs by no more than a fixed allowance that does not scale with chapter count (host allocation counts are the accepted proxy, Constitution IV). Peak memory during first indexing meets the same bound.
+- **SC-002**: On the host, memory held for chapter metadata after opening a 4-chapter book and a 4,000-chapter generated book is identical when the two books have equal nesting depth (host allocation counts are the accepted proxy, Constitution IV). Peak memory during first indexing meets the same bound.
 - **SC-003**: On the C3, opening the largest corpus book leaves at least as much free heap as opening the worst book at the old cap does on current firmware (baseline: 43,732 bytes of chapter metadata; measured via `[MEM] Free` over serial before and after).
 - **SC-004**: Page turns within a chapter perform zero chapter-index reads (host-countable).
 - **SC-005**: Scrolling the chapter list of a 1,000+ chapter book from top to bottom on device takes no longer per screen than the EPUB chapter list does for a book of similar chapter count (both timed on the same device over serial), and uses flat memory throughout.
 - **SC-006**: For books with 256 or fewer chapters, a firmware update rebuilds only the chapter index: no chapter is laid out again and every saved position reopens at the same chapter and page.
-- **SC-007**: All existing FB2 host suites pass, with the cap-specific tests replaced by tests of the new ceiling (65,535) and of books past the old cap.
+- **SC-007**: All existing FB2 host suites pass, with the cap-specific tests replaced by tests of the new ceiling (32,767) and of books past the old cap.
 
 ## Assumptions
 
 - **Minimum change, per the issue.** The FB2 chapter index follows the EPUB approach (entries on SD, a fixed-slot lookup table, one seek per lookup) but does not share code with `BookMetadataCache`. A common abstraction over both formats is out of scope: two differently shaped formats would share little, and nothing asks for it.
 - **Out of scope**: any change to EPUB, TXT or XTC; chapter search or filtering; changing how chapters are defined (nested-section rules from spec 003 stand); new reader UI.
 - **Chapter-list prewarm**: the FB2 list currently skips EPUB's fallback-glyph prewarm because its entries were in RAM (`Fb2ReaderChapterSelectionActivity.cpp`, `ponytail:` comment). Adopting it is allowed but not required; decide in the plan from device timing.
-- **The 65,535 ceiling** is the width of the chapter number already stored in `progress.bin` and the index count (`docs/file-formats.md:651`), not a memory budget, so it needs no new measurement. The uncapped corpus maximum is still re-measured (SC-001) to confirm no real book approaches it.
+- **The 32,767 ceiling** comes from the UI chapter list's `int16_t` row value and selection index (`freeink-sdk/libs/ui/FreeInkUI/include/components/lists/list.h:15,63`), which cannot address a higher row; the `u16` fields in `progress.bin` and `book.bin` (`docs/file-formats.md:651`) would allow 65,535. It is not a memory budget, so it needs no new measurement. The uncapped corpus maximum is still re-measured (SC-001) to confirm no real book approaches it.
 - **Supersedes** issues #6 and #7 (both closed; #7's windowing already landed). Closing #8 also removes the `ponytail:` comment on `FB2_MAX_CHAPTERS` and the corresponding Complexity Tracking row in `specs/003-fb2-nested-chapters/plan.md` becomes historical.
 - SD storage cost of the index grows by a few bytes per chapter over the current `book.bin` (a lookup slot and a running total); this is negligible against the source file.
