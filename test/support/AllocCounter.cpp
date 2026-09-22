@@ -29,6 +29,7 @@ constexpr size_t HEADER = sizeof(Header) > alignof(std::max_align_t) ? sizeof(He
 // The one funnel every replaced operator new goes through. Must never allocate on its own so the
 // shim stays safe under AddressSanitizer and cannot recurse.
 void* countedAllocate(const size_t size) {
+  if (size > static_cast<size_t>(-1) - HEADER) return nullptr;  // the header must not wrap the size
   auto* block = static_cast<unsigned char*>(std::malloc(size + HEADER));
   if (!block) return nullptr;
   const Header header{size, g_enabled ? g_epoch : 0};

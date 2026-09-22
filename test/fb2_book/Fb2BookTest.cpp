@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -10,6 +11,8 @@
 #include "Fb2.h"
 #undef private
 #undef class
+
+#include <HalStorage.h>
 
 #include "AllocCounter.h"
 #include "Fb2TestSupport.h"
@@ -159,7 +162,7 @@ TEST_F(Fb2BookTest, CacheVersionMismatchIsRejectedThenRebuilt) {
   // The cache file was rewritten with the current version byte.
   const std::string fresh = readAll(cacheFile);
   ASSERT_FALSE(fresh.empty());
-  EXPECT_EQ(fresh[0], 4);
+  EXPECT_EQ(fresh[0], 5);
 }
 
 // A book.bin whose tail was replaced by zeros must be rejected (a valid
@@ -214,7 +217,7 @@ TEST_F(Fb2BookTest, GarbageStringLengthInCacheIsRejectedNotAllocated) {
   // Version byte followed by a ~4GB title length: must be rejected by the
   // bounded string reader, never resize()d into oblivion.
   std::string bogus;
-  bogus.push_back(3);
+  bogus.push_back(5);
   const uint32_t hugeLen = 0xFFFFFFF0u;
   bogus.append(reinterpret_cast<const char*>(&hugeLen), sizeof(hugeLen));
   bogus += "xx";
@@ -228,23 +231,22 @@ TEST_F(Fb2BookTest, GarbageStringLengthInCacheIsRejectedNotAllocated) {
   EXPECT_EQ(rebuilt.getTitle(), "The Crosspoint Chronicle");
 }
 
-// A corrupted section count (0xFFFF) in a tiny cache file must be rejected
-// against the remaining file size BEFORE sections.reserve() runs: on the
-// ~380KB-RAM device that reserve is a ~2.6MB up-front request, which aborts.
-// The allocation cap pins that no such reserve happens on the host either.
+// A chapter count the file cannot hold must be rejected by the size equation
+// BEFORE any record is read, and must drive no allocation.
 TEST_F(Fb2BookTest, HugeSectionCountInTinyCacheIsRejectedWithoutReserving) {
   Fb2 book(fixturePath("basic.fb2"), tmp.path());
   book.setupCacheDir();
   const std::string cacheFile = book.getCachePath() + "/book.bin";
 
   std::string bogus;
-  bogus.push_back(3);  // valid version byte
+  bogus.push_back(5);  // valid version byte
   appendString(bogus, "Tiny");
   appendString(bogus, "Author");
   appendString(bogus, "en");
   appendString(bogus, "");
-  appendPod<uint16_t>(bogus, 0xFFFF);  // claims 65535 sections...
-  bogus += "xx";                       // ...backed by 2 bytes of data
+  appendPod<uint16_t>(bogus, Fb2::FB2_MAX_CHAPTERS);  // claims the most chapters allowed...
+  appendPod<uint32_t>(bogus, 0u);                     // ...no titles...
+  bogus += "xx";                                      // ...backed by 2 bytes of records
   ASSERT_TRUE(writeAll(cacheFile, bogus));
 
   Fb2 cacheOnly(fixturePath("basic.fb2"), tmp.path());
@@ -263,20 +265,20 @@ TEST_F(Fb2BookTest, HugeSectionCountInTinyCacheIsRejectedWithoutReserving) {
   EXPECT_EQ(book.getSectionCount(), 2);
 }
 
-// A chapter count above the cap must be rejected before sections.reserve():
-// the cap is what bounds the RAM the chapter list can ever take.
+// A chapter count above the cap cannot come from any build, so it is corruption.
 TEST_F(Fb2BookTest, ChapterCountAboveTheCapIsRejectedWithoutReserving) {
   Fb2 book(fixturePath("basic.fb2"), tmp.path());
   book.setupCacheDir();
   const std::string cacheFile = book.getCachePath() + "/book.bin";
 
   std::string bogus;
-  bogus.push_back(3);  // valid version byte
+  bogus.push_back(5);  // valid version byte
   appendString(bogus, "Tiny");
   appendString(bogus, "Author");
   appendString(bogus, "en");
   appendString(bogus, "");
   appendPod<uint16_t>(bogus, Fb2::FB2_MAX_CHAPTERS + 1);  // one past the cap
+  appendPod<uint32_t>(bogus, 0u);
   ASSERT_TRUE(writeAll(cacheFile, bogus));
 
   Fb2 cacheOnly(fixturePath("basic.fb2"), tmp.path());
@@ -289,28 +291,6 @@ TEST_F(Fb2BookTest, ChapterCountAboveTheCapIsRejectedWithoutReserving) {
   }
   EXPECT_FALSE(loaded);
   EXPECT_LT(bytesAllocated, 64u * 1024u) << "over-cap chapter count allocated " << bytesAllocated << " bytes";
-}
-
-// The level byte is the new tail field of each chapter record; a level that
-// jumps more than one step cannot come from any real book, so it is corruption.
-TEST_F(Fb2BookTest, ChapterLevelOutOfSequenceIsRejected) {
-  Fb2 first(fixturePath("basic.fb2"), tmp.path());
-  ASSERT_TRUE(first.load());
-  const std::string cacheFile = first.getCachePath() + "/book.bin";
-
-  // The last byte of the file is the final chapter's level.
-  std::string cache = readAll(cacheFile);
-  ASSERT_FALSE(cache.empty());
-  cache[cache.size() - 1] = 0x40;  // level 64 after a level-0 chapter
-  ASSERT_TRUE(writeAll(cacheFile, cache));
-
-  Fb2 cacheOnly(fixturePath("basic.fb2"), tmp.path());
-  EXPECT_FALSE(cacheOnly.load(false));
-
-  // ...and the book still loads by reparsing.
-  Fb2 rebuilt(fixturePath("basic.fb2"), tmp.path());
-  ASSERT_TRUE(rebuilt.load(true));
-  EXPECT_EQ(rebuilt.getSectionCount(), 2);
 }
 
 // Contract C6 end to end: the chapter list is capped, and no text is lost -
@@ -338,55 +318,38 @@ TEST_F(Fb2BookTest, ChapterCountIsCappedWhenParsingAHugeBook) {
   EXPECT_EQ(cached.getSectionCount(), static_cast<int>(Fb2::FB2_MAX_CHAPTERS));
 }
 
-// FR-015. Chapter metadata is RAM-resident, so two things must hold: one heap
-// allocation per stored chapter title (the parallel TOC list that used to hold a
-// second copy of every title is gone), and a footprint that stops growing once
-// the chapter cap is reached.
-//
-// Measured on macOS arm64 (clang, Release) 2026-09-20: 40 chapters with
-// SBO-exceeding titles -> 57 allocations / 8,944 bytes; 1,104 sections capped at
-// 1,024 chapters -> 148,328 bytes. The budgets below sit above those with room
-// for allocator differences, and well under what a second copy of every title
-// would cost.
-TEST_F(Fb2BookTest, ChapterMetadataAllocatesOneTitlePerChapterAndStaysCapped) {
-  constexpr int kChapters = 40;
-  const std::string smallPath = tmp.path() + "/small-tower.fb2";
-  ASSERT_TRUE(writeAll(smallPath, fb2test::makeSectionTowerFb2(kChapters, 2)));
-
-  Fb2 small(smallPath, tmp.path());
-  size_t smallCount = 0;
-  size_t smallBytes = 0;
-  {
-    alloc_counter::CountingScope scope;
-    small.load();
-    smallCount = scope.count();
-    smallBytes = scope.bytes();
-  }
-  ASSERT_EQ(small.getSectionCount(), kChapters);
-  // Storing each title twice would put the count at or above 2 per chapter.
-  EXPECT_LT(smallCount, static_cast<size_t>(2 * kChapters))
-      << "chapter metadata allocated " << smallCount << " blocks for " << kChapters << " chapters";
-  EXPECT_LT(smallBytes, 24u * 1024u) << "chapter metadata allocated " << smallBytes << " bytes";
-
-  const std::string bigPath = tmp.path() + "/big-tower.fb2";
-  ASSERT_TRUE(writeAll(bigPath, fb2test::makeSectionTowerFb2(Fb2::FB2_MAX_CHAPTERS + 80, 2)));
-  Fb2 big(bigPath, tmp.path());
-  size_t bigBytes = 0;
-  {
-    alloc_counter::CountingScope scope;
-    big.load();
-    bigBytes = scope.bytes();
-  }
-  ASSERT_EQ(big.getSectionCount(), static_cast<int>(Fb2::FB2_MAX_CHAPTERS));
-  // 80 extra sections past the ceiling must not add per-section metadata.
-  //
-  // The budget is what makes the ceiling a guarantee rather than a hope, so it is
-  // set just above the 256-chapter figure and NOT above the 1024-chapter one: at
-  // the old ceiling this book allocated 148,328 bytes on the host, which fails
-  // here. On the device the same book costs 99,716 bytes — 44.9% of the 222,180
-  // bytes of heap left after static allocation and the framebuffer — against
-  // 43,732 bytes (19.7%) at 256. See specs/004-fb2-reader-hardening/research.md.
-  EXPECT_LT(bigBytes, 48u * 1024u) << "capped chapter metadata allocated " << bigBytes << " bytes";
+// FR-003 / SC-002. Chapter metadata lives in book.bin, so what an open book holds
+// in RAM, and the peak while it is first indexed, must not depend on how many
+// chapters it has. The two books have the same (flat) nesting and titles short
+// enough for the small-string buffer, so the allowance is exactly zero.
+TEST_F(Fb2BookTest, ChapterMemoryIsIndependentOfChapterCount) {
+  struct Measured {
+    size_t held;
+    size_t peak;
+    int chapters;
+  };
+  auto measure = [&](const int chapters) {
+    const std::string path = tmp.path() + "/flat-" + std::to_string(chapters) + ".fb2";
+    EXPECT_TRUE(writeAll(path, fb2test::makeShortTitleTowerFb2(chapters)));
+    auto book = std::make_unique<Fb2>(path, tmp.path());
+    size_t peak = 0;
+    size_t held = 0;
+    {
+      alloc_counter::CountingScope scope;
+      book->load();
+      peak = alloc_counter::peakBytes();
+      held = alloc_counter::liveBytes();
+    }
+    return Measured{held, peak, book->getSectionCount()};
+  };
+  const Measured small = measure(4);
+  const Measured big = measure(250);
+  ASSERT_EQ(small.chapters, 4);
+  ASSERT_EQ(big.chapters, 250);
+  EXPECT_EQ(big.held, small.held) << "an open book holds " << (big.held - small.held)
+                                  << " more bytes for 246 more chapters";
+  EXPECT_EQ(big.peak, small.peak) << "first indexing peaks " << (big.peak - small.peak)
+                                  << " bytes higher for 246 more chapters";
 }
 
 // A book.bin written by firmware with the old, higher ceiling claims more chapters
@@ -400,25 +363,14 @@ TEST_F(Fb2BookTest, CacheFromTheOldHigherCeilingIsRejectedAndRebuilt) {
   Fb2 book(path, tmp.path());
   ASSERT_TRUE(book.load(true));
   const std::string cacheFile = book.getCachePath() + "/book.bin";
-  // Take the version byte from the cache the loader just wrote, so this test keeps
-  // testing "valid version, too many chapters" across future format bumps.
-  const std::string fresh = readAll(cacheFile);
-  ASSERT_FALSE(fresh.empty());
 
-  // A structurally valid cache, current version, claiming 1024 chapters.
-  std::string stale;
-  stale.push_back(fresh[0]);
-  appendString(stale, "Old Ceiling");
-  appendString(stale, "Author");
-  appendString(stale, "en");
-  appendString(stale, "");
-  appendPod<uint16_t>(stale, 1024);
+  // A structurally valid v5 cache claiming 1024 chapters, above this build's cap.
+  std::vector<fb2test::V5BookBin::Chapter> many;
   for (int i = 0; i < 1024; i++) {
-    appendString(stale, "Chapter title that exceeds the small buffer " + std::to_string(i));
-    appendPod<uint32_t>(stale, static_cast<uint32_t>(i * 16));
-    appendPod<uint32_t>(stale, 16u);
-    appendPod<uint8_t>(stale, 0u);
+    many.push_back({"Chapter title that exceeds the small buffer " + std::to_string(i), static_cast<uint32_t>(i * 16),
+                    16u, 0, false});
   }
+  const std::string stale = fb2test::V5BookBin::from(many).encode();
   ASSERT_TRUE(writeAll(cacheFile, stale));
 
   Fb2 cacheOnly(path, tmp.path());
@@ -438,7 +390,7 @@ TEST_F(Fb2BookTest, CacheFromTheOldHigherCeilingIsRejectedAndRebuilt) {
   EXPECT_EQ(rebuilt.getSectionCount(), 200);
 }
 
-// book.bin v4 carries the derived-label marker, so a label survives the round trip
+// book.bin carries the derived-label marker, so a label survives the round trip
 // and a book shows the same chapter list on its first and second open.
 TEST_F(Fb2BookTest, DerivedLabelAndItsFlagSurviveTheCacheRoundTrip) {
   const std::string path = tmp.path() + "/labels.fb2";
@@ -488,45 +440,6 @@ TEST_F(Fb2BookTest, VersionThreeCacheIsRejectedAndRebuilt) {
   EXPECT_EQ(rebuilt.getSectionCount(), 2);
 }
 
-// The flags byte is untrusted input: only bit 0 is defined, and a derived marker
-// on an empty title cannot come from any parse.
-TEST_F(Fb2BookTest, CorruptFlagsByteIsRejected) {
-  Fb2 first(fixturePath("basic.fb2"), tmp.path());
-  ASSERT_TRUE(first.load());
-  const std::string cacheFile = first.getCachePath() + "/book.bin";
-  const std::string good = readAll(cacheFile);
-  ASSERT_FALSE(good.empty());
-
-  // The last byte of the file is the final chapter's flags byte.
-  std::string reserved = good;
-  reserved[reserved.size() - 1] = 0x40;  // a bit outside the defined 0x01
-  ASSERT_TRUE(writeAll(cacheFile, reserved));
-  Fb2 reservedBitSet(fixturePath("basic.fb2"), tmp.path());
-  EXPECT_FALSE(reservedBitSet.load(false)) << "an undefined flags bit must be rejected";
-
-  // A chapter claiming a derived label while storing no title at all.
-  std::string lying;
-  lying.push_back(good[0]);
-  appendString(lying, "Title");
-  appendString(lying, "Author");
-  appendString(lying, "en");
-  appendString(lying, "");
-  appendPod<uint16_t>(lying, 1);
-  appendString(lying, "");  // empty title...
-  appendPod<uint32_t>(lying, 0u);
-  appendPod<uint32_t>(lying, 10u);
-  appendPod<uint8_t>(lying, 0u);
-  appendPod<uint8_t>(lying, 1u);  // ...but flagged as derived
-  ASSERT_TRUE(writeAll(cacheFile, lying));
-  Fb2 derivedButEmpty(fixturePath("basic.fb2"), tmp.path());
-  EXPECT_FALSE(derivedButEmpty.load(false)) << "a derived flag with no label must be rejected";
-
-  // ...and the book still opens by reparsing.
-  Fb2 rebuilt(fixturePath("basic.fb2"), tmp.path());
-  ASSERT_TRUE(rebuilt.load(true));
-  EXPECT_EQ(rebuilt.getSectionCount(), 2);
-}
-
 // Contract C7 end to end: chapter lengths partition the body, so progress rises
 // monotonically from 0% to 100% and never overshoots.
 TEST_F(Fb2BookTest, ChapterLengthsPartitionTheBodySoProgressIsMonotonic) {
@@ -536,23 +449,27 @@ TEST_F(Fb2BookTest, ChapterLengthsPartitionTheBodySoProgressIsMonotonic) {
     const int count = book.getSectionCount();
     ASSERT_GT(count, 0) << fixture;
 
+    // Against the source's own section spans: getBookSize() is itself the sum of
+    // the lengths, so comparing with it could never fail.
     size_t sum = 0;
     for (int i = 0; i < count; i++) {
       sum += book.getSectionInfo(i).length;
     }
+    EXPECT_EQ(sum, fb2test::topLevelSectionBytes(readAll(fixturePath(fixture)))) << fixture;
     EXPECT_EQ(sum, book.getBookSize()) << fixture;
 
     float previous = -1.0f;
     for (int i = 0; i < count; i++) {
-      const float atStart = book.calculateProgress(i, 0.0f);
-      const float atEnd = book.calculateProgress(i, 1.0f);
+      const auto chapter = book.getSectionInfo(i);
+      const float atStart = book.calculateProgress(chapter, 0.0f);
+      const float atEnd = book.calculateProgress(chapter, 1.0f);
       EXPECT_GE(atStart, previous) << fixture << " chapter " << i;
       EXPECT_GE(atEnd, atStart) << fixture << " chapter " << i;
       EXPECT_LE(atEnd, 1.0f) << fixture << " chapter " << i;
       previous = atEnd;
     }
-    EXPECT_FLOAT_EQ(book.calculateProgress(0, 0.0f), 0.0f) << fixture;
-    EXPECT_FLOAT_EQ(book.calculateProgress(count - 1, 1.0f), 1.0f) << fixture;
+    EXPECT_FLOAT_EQ(book.calculateProgress(book.getSectionInfo(0), 0.0f), 0.0f) << fixture;
+    EXPECT_FLOAT_EQ(book.calculateProgress(book.getSectionInfo(count - 1), 1.0f), 1.0f) << fixture;
   }
 }
 
@@ -590,79 +507,235 @@ TEST_F(Fb2BookTest, GenerateThumbWithoutCoverWritesEmptyMarkerAndFails) {
   EXPECT_TRUE(book.generateThumbBmp(120));
 }
 
+// book.bin v5 round trip: a reopened book reads every chapter field back exactly,
+// the lengths partition the source, and a build leaves no temp files behind.
+TEST_F(Fb2BookTest, V5CacheRoundTripsEveryChapterField) {
+  for (const char* fixture : {"nested-deep.fb2", "nested-sections.fb2", "trailing-parent-text.fb2"}) {
+    Fb2 built(fixturePath(fixture), tmp.path());
+    ASSERT_TRUE(built.load(true)) << fixture;
+    EXPECT_FALSE(fileExists(built.getCachePath() + "/chapters.tmp")) << fixture;
+    EXPECT_FALSE(fileExists(built.getCachePath() + "/titles.tmp")) << fixture;
+
+    Fb2 cached(fixturePath(fixture), tmp.path());
+    ASSERT_TRUE(cached.load(false)) << fixture;
+    ASSERT_EQ(cached.getSectionCount(), built.getSectionCount()) << fixture;
+    size_t sum = 0;
+    for (int i = 0; i < cached.getSectionCount(); i++) {
+      const auto a = built.getSectionInfo(i);
+      const auto b = cached.getSectionInfo(i);
+      EXPECT_EQ(b.title, a.title) << fixture << " chapter " << i;
+      EXPECT_EQ(b.fileOffset, a.fileOffset) << fixture << " chapter " << i;
+      EXPECT_EQ(b.length, a.length) << fixture << " chapter " << i;
+      EXPECT_EQ(b.level, a.level) << fixture << " chapter " << i;
+      EXPECT_EQ(b.titleDerived, a.titleDerived) << fixture << " chapter " << i;
+      sum += b.length;
+      EXPECT_EQ(b.cumulativeLength, sum) << fixture << " chapter " << i;
+    }
+    // The independent check: the lengths add up to the source's own section spans.
+    EXPECT_EQ(sum, fb2test::topLevelSectionBytes(readAll(fixturePath(fixture)))) << fixture;
+    EXPECT_EQ(cached.getBookSize(), sum) << fixture;
+  }
+}
+
+// FR-011 / Constitution VI: every field of a v5 book.bin is untrusted. Each case
+// corrupts exactly one field of an otherwise valid file; each must be rejected so
+// load() re-parses the source and writes a valid cache in its place.
+TEST_F(Fb2BookTest, MalformedV5CachesAreRejectedAndRebuilt) {
+  using Bin = fb2test::V5BookBin;
+  const Bin good = Bin::from({{"One", 0, 100, 0, false}, {"Two", 100, 50, 1, true}, {"Three", 150, 25, 0, false}});
+
+  struct Case {
+    const char* name;
+    std::string bytes;
+  };
+  std::vector<Case> cases;
+  auto with = [&](const char* name, auto mutate) {
+    Bin bin = good;
+    mutate(bin);
+    cases.push_back({name, bin.encode()});
+  };
+  {
+    std::string cut = good.encode();
+    cut.pop_back();
+    cases.push_back({"title area truncated by one byte", cut});
+  }
+  with("titlesSize one too large", [](Bin& b) { b.titlesSize += 1; });
+  with("titlesSize one too small", [](Bin& b) { b.titlesSize -= 1; });
+  with("title past the title area", [](Bin& b) { b.records[2].titleOffset = b.titlesSize; });
+  with("title length above the string cap", [](Bin& b) {
+    b.records[0].titleLength = 4097;
+    b.titles.insert(0, 4097 - 3, 'x');
+    b.titlesSize = static_cast<uint32_t>(b.titles.size());
+    b.records[0].titleOffset = 0;
+  });
+  with("wrong running total", [](Bin& b) { b.records[1].cumulativeLength += 1; });
+  with("running total overflows u32", [](Bin& b) {
+    b.records[1].ownLength = 0xFFFFFFF0u;
+    b.records[1].cumulativeLength = b.records[0].cumulativeLength + 0xFFFFFFF0u;  // wraps
+  });
+  with("level jumps two steps", [](Bin& b) { b.records[1].level = 2; });
+  with("first chapter is nested", [](Bin& b) { b.records[0].level = 1; });
+  with("undefined flag bit", [](Bin& b) { b.records[0].flags = 0x02; });
+  with("derived flag on an empty title", [](Bin& b) {
+    b.titles = "OneThree";
+    b.titlesSize = 8;
+    b.records[1].titleLength = 0;
+    b.records[1].titleOffset = 3;
+    b.records[2].titleOffset = 3;
+  });
+  with("zero chapters", [](Bin& b) {
+    b.chapterCount = 0;
+    b.records.clear();
+    b.titles.clear();
+    b.titlesSize = 0;
+  });
+  with("count one above the cap", [](Bin& b) { b.chapterCount = Fb2::FB2_MAX_CHAPTERS + 1; });
+  with("count at the cap in a tiny file", [](Bin& b) { b.chapterCount = Fb2::FB2_MAX_CHAPTERS; });
+  with("header string above the cap", [](Bin& b) { b.author.assign(4097, 'a'); });
+
+  // The baseline really is valid, so each rejection below is the mutation's doing.
+  Fb2 probe(fixturePath("basic.fb2"), tmp.path());
+  probe.setupCacheDir();
+  const std::string cacheFile = probe.getCachePath() + "/book.bin";
+  ASSERT_TRUE(writeAll(cacheFile, good.encode()));
+  ASSERT_TRUE(Fb2(fixturePath("basic.fb2"), tmp.path()).load(false)) << "baseline must load";
+
+  for (const auto& c : cases) {
+    ASSERT_TRUE(writeAll(cacheFile, c.bytes)) << c.name;
+    Fb2 cacheOnly(fixturePath("basic.fb2"), tmp.path());
+    EXPECT_FALSE(cacheOnly.load(false)) << c.name;
+
+    Fb2 rebuilt(fixturePath("basic.fb2"), tmp.path());
+    ASSERT_TRUE(rebuilt.load(true)) << c.name;
+    EXPECT_EQ(rebuilt.getSectionCount(), 2) << c.name;
+    EXPECT_EQ(rebuilt.getTitle(), "The Crosspoint Chronicle") << c.name;
+  }
+}
+
+// Edge case "low SD space": a build that cannot write must fail the open and
+// leave nothing behind that a later open could mistake for a cache.
+TEST_F(Fb2BookTest, FailedBuildLeavesNoCacheOrTempFiles) {
+  // Budgets that run out during the parse (temp files) and during assembly.
+  for (const size_t budget : {size_t{10}, size_t{300}}) {
+    Fb2 book(fixturePath("nested-deep.fb2"), tmp.path());
+    book.setupCacheDir();
+    Storage.failWritesAfter(budget);
+    const bool loaded = book.load(true);
+    Storage.resetOpenCounts();
+    EXPECT_FALSE(loaded) << "budget " << budget;
+    EXPECT_FALSE(fileExists(book.getCachePath() + "/book.bin")) << "budget " << budget;
+    EXPECT_FALSE(fileExists(book.getCachePath() + "/chapters.tmp")) << "budget " << budget;
+    EXPECT_FALSE(fileExists(book.getCachePath() + "/titles.tmp")) << "budget " << budget;
+  }
+  // With the card writable again, the same book opens normally.
+  Fb2 book(fixturePath("nested-deep.fb2"), tmp.path());
+  EXPECT_TRUE(book.load(true));
+}
+
 // ---------------------------------------------------------------------------
-// Progress / TOC math on a book with hand-set sections (private access).
+// Progress / TOC math on a book loaded from a hand-built book.bin.
 // ---------------------------------------------------------------------------
 
 class Fb2MathTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    book.sections = {{"One", 0, 100, 0}, {"Two", 100, 300, 1}, {"Three", 400, 600, 0}};
-    book.loaded = true;
+    ASSERT_TRUE(tmp.valid());
+    loadChapters({{"One", 0, 100, 0, false}, {"Two", 100, 300, 1, false}, {"Three", 400, 600, 0, false}});
   }
 
-  Fb2 book{"unused.fb2", "/tmp"};
+  // Replaces the book with one whose cache holds exactly these chapters.
+  void loadChapters(const std::vector<fb2test::V5BookBin::Chapter>& chapters) {
+    book = std::make_unique<Fb2>(tmp.path() + "/unused.fb2", tmp.path());
+    book->setupCacheDir();
+    ASSERT_TRUE(writeAll(book->getCachePath() + "/book.bin", fb2test::V5BookBin::from(chapters).encode()));
+    ASSERT_TRUE(book->load(false));
+  }
+
+  fb2test::TempDir tmp;
+  std::unique_ptr<Fb2> book;
 };
 
 TEST_F(Fb2MathTest, CumulativeSizesSumSectionLengths) {
-  EXPECT_EQ(book.getCumulativeSectionSize(0), 100u);
-  EXPECT_EQ(book.getCumulativeSectionSize(1), 400u);
-  EXPECT_EQ(book.getCumulativeSectionSize(2), 1000u);
-  EXPECT_EQ(book.getBookSize(), 1000u);
-  EXPECT_EQ(book.getCumulativeSectionSize(-1), 0u);
-  EXPECT_EQ(book.getCumulativeSectionSize(3), 0u);
+  EXPECT_EQ(book->getCumulativeSectionSize(0), 100u);
+  EXPECT_EQ(book->getCumulativeSectionSize(1), 400u);
+  EXPECT_EQ(book->getCumulativeSectionSize(2), 1000u);
+  EXPECT_EQ(book->getBookSize(), 1000u);
+  EXPECT_EQ(book->getCumulativeSectionSize(-1), 0u);
+  EXPECT_EQ(book->getCumulativeSectionSize(3), 0u);
 }
 
 TEST_F(Fb2MathTest, ProgressWeightsSectionsByLength) {
-  EXPECT_FLOAT_EQ(book.calculateProgress(0, 0.0f), 0.0f);
+  EXPECT_FLOAT_EQ(book->calculateProgress(book->getSectionInfo(0), 0.0f), 0.0f);
   // Halfway through section 1 (300 bytes): (100 + 150) / 1000.
-  EXPECT_FLOAT_EQ(book.calculateProgress(1, 0.5f), 0.25f);
-  EXPECT_FLOAT_EQ(book.calculateProgress(2, 1.0f), 1.0f);
+  EXPECT_FLOAT_EQ(book->calculateProgress(book->getSectionInfo(1), 0.5f), 0.25f);
+  EXPECT_FLOAT_EQ(book->calculateProgress(book->getSectionInfo(2), 1.0f), 1.0f);
 }
 
-TEST_F(Fb2MathTest, ProgressOnEmptyBookIsZero) {
-  book.sections.clear();
-  EXPECT_FLOAT_EQ(book.calculateProgress(0, 0.5f), 0.0f);
-  EXPECT_EQ(book.getBookSize(), 0u);
+TEST_F(Fb2MathTest, ProgressOnUnloadedBookIsZero) {
+  Fb2 unloaded(tmp.path() + "/never-loaded.fb2", tmp.path());
+  EXPECT_FLOAT_EQ(unloaded.calculateProgress(book->getSectionInfo(1), 0.5f), 0.0f);
+  EXPECT_EQ(unloaded.getBookSize(), 0u);
+  EXPECT_EQ(unloaded.getSectionCount(), 0);
 }
 
 TEST_F(Fb2MathTest, TocIndexForSectionIsTheIdentity) {
-  EXPECT_EQ(book.getTocIndexForSectionIndex(0), 0);
-  EXPECT_EQ(book.getTocIndexForSectionIndex(1), 1);
-  EXPECT_EQ(book.getTocIndexForSectionIndex(2), 2);
-  EXPECT_EQ(book.getTocIndexForSectionIndex(-1), -1);
-  EXPECT_EQ(book.getTocIndexForSectionIndex(3), -1);
+  EXPECT_EQ(book->getTocIndexForSectionIndex(0), 0);
+  EXPECT_EQ(book->getTocIndexForSectionIndex(1), 1);
+  EXPECT_EQ(book->getTocIndexForSectionIndex(2), 2);
+  EXPECT_EQ(book->getTocIndexForSectionIndex(-1), -1);
+  EXPECT_EQ(book->getTocIndexForSectionIndex(3), -1);
 }
 
 TEST_F(Fb2MathTest, SectionIndexForTocIndexClampsOutOfRangeToZero) {
-  EXPECT_EQ(book.getSectionIndexForTocIndex(0), 0);
-  EXPECT_EQ(book.getSectionIndexForTocIndex(2), 2);
-  EXPECT_EQ(book.getSectionIndexForTocIndex(-1), 0);
-  EXPECT_EQ(book.getSectionIndexForTocIndex(99), 0);
+  EXPECT_EQ(book->getSectionIndexForTocIndex(0), 0);
+  EXPECT_EQ(book->getSectionIndexForTocIndex(2), 2);
+  EXPECT_EQ(book->getSectionIndexForTocIndex(-1), 0);
+  EXPECT_EQ(book->getSectionIndexForTocIndex(99), 0);
 }
 
 // Resolves a position saved under the old top-level-only numbering: ordinal N
 // means "the (N+1)-th level-0 chapter".
 TEST_F(Fb2MathTest, FirstChapterOfTopLevelSkipsNestedChapters) {
-  EXPECT_EQ(book.firstChapterOfTopLevel(0), 0);
-  EXPECT_EQ(book.firstChapterOfTopLevel(1), 2);  // "Two" is nested, so it is skipped
-  EXPECT_EQ(book.firstChapterOfTopLevel(7), 2);  // past the end clamps to the last chapter
+  EXPECT_EQ(book->firstChapterOfTopLevel(0), 0);
+  EXPECT_EQ(book->firstChapterOfTopLevel(1), 2);  // "Two" is nested, so it is skipped
+  EXPECT_EQ(book->firstChapterOfTopLevel(7), 2);  // past the end clamps to the last chapter
 }
 
 TEST_F(Fb2MathTest, FirstChapterOfTopLevelIsTheIdentityForAFlatBook) {
-  book.sections = {{"One", 0, 100, 0}, {"Two", 100, 100, 0}, {"Three", 200, 100, 0}};
+  loadChapters({{"One", 0, 100, 0, false}, {"Two", 100, 100, 0, false}, {"Three", 200, 100, 0, false}});
   for (int i = 0; i < 3; i++) {
-    EXPECT_EQ(book.firstChapterOfTopLevel(i), i) << "ordinal " << i;
+    EXPECT_EQ(book->firstChapterOfTopLevel(i), i) << "ordinal " << i;
   }
-  book.sections.clear();
-  EXPECT_EQ(book.firstChapterOfTopLevel(2), 0);
+  Fb2 unloaded(tmp.path() + "/never-loaded.fb2", tmp.path());
+  EXPECT_EQ(unloaded.firstChapterOfTopLevel(2), 0);
 }
 
 TEST_F(Fb2MathTest, OutOfRangeSectionInfoIsEmpty) {
-  EXPECT_EQ(book.getSectionInfo(-1).title, "");
-  EXPECT_EQ(book.getSectionInfo(-1).length, 0u);
-  EXPECT_EQ(book.getSectionInfo(3).title, "");
-  EXPECT_EQ(book.getSectionInfo(1).title, "Two");
+  EXPECT_EQ(book->getSectionInfo(-1).title, "");
+  EXPECT_EQ(book->getSectionInfo(-1).length, 0u);
+  EXPECT_EQ(book->getSectionInfo(3).title, "");
+  EXPECT_EQ(book->getSectionInfo(1).title, "Two");
+}
+
+// FR-012: a lookup that cannot be served is an empty chapter (shown as
+// "Unnamed"), never a crash or a stale value.
+TEST_F(Fb2MathTest, LookupWithoutItsBookBinIsEmpty) {
+  ASSERT_EQ(book->getSectionInfo(1).title, "Two");
+  std::remove((book->getCachePath() + "/book.bin").c_str());
+  const auto missing = book->getSectionInfo(1);
+  EXPECT_EQ(missing.title, "");
+  EXPECT_EQ(missing.length, 0u);
+  EXPECT_EQ(book->getCumulativeSectionSize(1), 0u);
+}
+
+// A book.bin that shrank after load (card fault, external edit) degrades each
+// lookup to an empty chapter instead of reading past the end.
+TEST_F(Fb2MathTest, LookupIntoATruncatedBookBinIsEmpty) {
+  const std::string bin = book->getCachePath() + "/book.bin";
+  const std::string whole = readAll(bin);
+  ASSERT_TRUE(writeAll(bin, whole.substr(0, whole.size() - 4)));  // cut into "Three"
+  EXPECT_EQ(book->getSectionInfo(2).title, "");
+  EXPECT_EQ(book->getSectionInfo(0).title, "One");  // intact chapters still read
 }
 
 }  // namespace

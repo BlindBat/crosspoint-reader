@@ -52,7 +52,7 @@ void Fb2ReaderChapterSelectionActivity::refreshTocWindow(const int start) {
   // prewarmFallbackText if CJK FB2 lists repaint slowly on device.
   windowCount = total - clamped < TOC_WINDOW ? total - clamped : TOC_WINDOW;
   for (int i = 0; i < windowCount; i++) {
-    const auto& tocEntry = fb2->getTocEntry(clamped + i);
+    const auto tocEntry = fb2->getTocEntry(clamped + i);
     // Indent by nesting depth so a story reads as a story inside its part, the
     // same convention the EPUB chapter list uses. Capped at three steps so a
     // deeply nested title is not pushed off the row.

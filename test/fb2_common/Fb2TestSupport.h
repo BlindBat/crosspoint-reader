@@ -149,6 +149,34 @@ inline std::string makeShortTitleTowerFb2(const int sectionCount) {
   return out;
 }
 
+// Independent oracle for "chapter lengths partition the body": the summed byte
+// spans ("<section" through "</section>") of the top-level sections of every
+// reading body, measured from the source text itself. Reading bodies are the first
+// <body> and any later one without a name attribute, the rule both parsers apply.
+inline size_t topLevelSectionBytes(const std::string& xml) {
+  size_t total = 0;
+  size_t start = 0;
+  int depth = 0;
+  int bodies = 0;
+  bool reading = false;
+  for (size_t pos = xml.find('<'); pos != std::string::npos; pos = xml.find('<', pos + 1)) {
+    if (xml.compare(pos, 5, "<body") == 0) {
+      const size_t close = xml.find('>', pos);
+      const std::string tag = xml.substr(pos, close - pos);
+      bodies++;
+      reading = bodies == 1 || tag.find(" name=") == std::string::npos;
+    } else if (xml.compare(pos, 7, "</body>") == 0) {
+      reading = false;
+    } else if (reading && xml.compare(pos, 8, "<section") == 0 &&
+               (xml[pos + 8] == '>' || xml[pos + 8] == ' ' || xml[pos + 8] == '/')) {
+      if (depth++ == 0) start = pos;
+    } else if (reading && xml.compare(pos, 10, "</section>") == 0 && depth > 0) {
+      if (--depth == 0) total += pos + 10 - start;
+    }
+  }
+  return total;
+}
+
 // Byte-for-byte FB2 book.bin v5 (specs/006-fb2-sd-chapter-lut/contracts/book-bin-v5.md), so
 // tests can hand-build valid caches and then corrupt exactly one field. Every field is public
 // and written as given: nothing is recomputed, so a test can make any of them lie.

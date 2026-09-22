@@ -54,16 +54,16 @@ description: "Task list for FB2 chapter metadata on SD (issue #8)"
 
 ### Tests for User Story 2 (write first, must fail on the Phase 2 code)
 
-- [ ] T010 [P] [US2] In `test/fb2_book/Fb2BookTest.cpp`, replace `ChapterMetadataAllocatesOneTitlePerChapterAndStaysCapped` (`:351-390`) with `ChapterMemoryIsIndependentOfChapterCount`:
+- [X] T010 [P] [US2] In `test/fb2_book/Fb2BookTest.cpp`, replace `ChapterMetadataAllocatesOneTitlePerChapterAndStaysCapped` (`:351-390`) with `ChapterMemoryIsIndependentOfChapterCount`:
   - Build with `makeShortTitleTowerFb2`, so every title stays within SSO, for 4 and 250 chapters at the same depth.
   - Assert equal `liveBytes()` held after `load()`, and equal `peakBytes()` during a first `load()` with no cache.
   - On failure, print the delta. Do not widen the allowance without a note citing the reason.
-- [ ] T011 [P] [US2] v5 round-trip test in `test/fb2_book/Fb2BookTest.cpp`:
+- [X] T011 [P] [US2] v5 round-trip test in `test/fb2_book/Fb2BookTest.cpp`:
   - Parse, then reload from cache. Every `SectionInfo` field matches, including `cumulativeLength`.
   - `Σ length` equals the byte span of the fixture's top-level `<section>` elements, measured from the fixture string with `find("<section")` and the matching `</section>`. Do **not** compare against `getBookSize()` or the last `cumulativeLength`: both are that same sum, so the check could never fail. Mutation: drop the `childBytes` subtraction (`Fb2MetadataParser.cpp:273`).
   - The last `cumulativeLength == getBookSize()` stays as a separate format-consistency check.
   - `chapters.tmp` and `titles.tmp` are gone after a build.
-- [ ] T012 [P] [US2] Malformed v5 corpus test in `test/fb2_book/Fb2BookTest.cpp`, using `writeV5BookBin`. Each case must be rejected, after which `load()` re-parses and writes a valid v5 file:
+- [X] T012 [P] [US2] Malformed v5 corpus test in `test/fb2_book/Fb2BookTest.cpp`, using `writeV5BookBin`. Each case must be rejected, after which `load()` re-parses and writes a valid v5 file:
   - title area truncated by 1 byte;
   - `titlesSize` off by ±1;
   - `titleOffset + titleLength > titlesSize`;
@@ -80,19 +80,19 @@ description: "Task list for FB2 chapter metadata on SD (issue #8)"
   - a header string length of 4097.
 
   Port the existing v4 corrupt-cache tests (`:263-313`) to v5 bytes.
-- [ ] T013 [P] [US2] Failed-build test in `test/fb2_book/Fb2BookTest.cpp`, using the stub's `failWritesAfter`. Fail writes once during the parse and once during assembly. Each time, `load()` must return false and leave no `book.bin`, `chapters.tmp` or `titles.tmp` in the cache dir (spec edge case "Low SD space"). Mutation: skip the cleanup in T018.
-- [ ] T014 [P] [US2] In `test/fb2_book/Fb2BookTest.cpp`, rewrite the `Fb2MathTest` fixture (`:597-605`). It should `writeV5BookBin` three records (One/0/100/lvl0, Two/100/300/lvl1, Three/400/600/lvl0) and `load(false)`, instead of assigning `book.sections`. Convert `calculateProgress(i, f)` calls to `calculateProgress(book.getSectionInfo(i), f)`. Expected values do not change. Add a test that an out-of-range index and a lookup against a missing `book.bin` return an empty `SectionInfo` (FR-012).
-- [ ] T015 [P] [US2] Add a read-failure test in `test/fb2_book/Fb2BookTest.cpp`. After `load()`, truncate `book.bin` on disk. `getSectionInfo(i)` must then return an empty title and must not crash.
+- [X] T013 [P] [US2] Failed-build test in `test/fb2_book/Fb2BookTest.cpp`, using the stub's `failWritesAfter`. Fail writes once during the parse and once during assembly. Each time, `load()` must return false and leave no `book.bin`, `chapters.tmp` or `titles.tmp` in the cache dir (spec edge case "Low SD space"). Mutation: skip the cleanup in T018.
+- [X] T014 [P] [US2] In `test/fb2_book/Fb2BookTest.cpp`, rewrite the `Fb2MathTest` fixture (`:597-605`). It should `writeV5BookBin` three records (One/0/100/lvl0, Two/100/300/lvl1, Three/400/600/lvl0) and `load(false)`, instead of assigning `book.sections`. Convert `calculateProgress(i, f)` calls to `calculateProgress(book.getSectionInfo(i), f)`. Expected values do not change. Add a test that an out-of-range index and a lookup against a missing `book.bin` return an empty `SectionInfo` (FR-012).
+- [X] T015 [P] [US2] Add a read-failure test in `test/fb2_book/Fb2BookTest.cpp`. After `load()`, truncate `book.bin` on disk. `getSectionInfo(i)` must then return an empty title and must not crash.
 
 ### Implementation for User Story 2
 
-- [ ] T016 [US2] Edit `lib/Fb2/Fb2.h` to match `contracts/fb2-api.md`:
+- [X] T016 [US2] Edit `lib/Fb2/Fb2.h` to match `contracts/fb2-api.md`:
   - Remove `std::vector<SectionInfo> sections`, and add `uint16_t chapterCount`, `uint32_t recordsOffset`, `uint32_t titlesOffset` and `uint32_t bookSize`.
   - Add `size_t cumulativeLength = 0;` to `SectionInfo`.
   - Make `getSectionInfo`, `getTocEntry` and `getCumulativeSectionSize` return by value, each with a `HalFile& bookBin` overload. Add `bool openIndex(HalFile&) const`.
   - Change the signature to `calculateProgress(const SectionInfo& chapter, float chapterRead) const`.
   - `FB2_MAX_CHAPTERS` stays for now; US1 removes it.
-- [ ] T017 [US2] In `lib/Fb2/Fb2.cpp`, write the build sink that replaces T007's interim one. It writes to `cachePath + "/chapters.tmp"` and `"/titles.tmp"`:
+- [X] T017 [US2] In `lib/Fb2/Fb2.cpp`, write the build sink that replaces T007's interim one. It writes to `cachePath + "/chapters.tmp"` and `"/titles.tmp"`:
   - **`reserve`** appends a zeroed 20-byte record at `count·20`.
   - **`write`**:
     1. Seek to `index·20`.
@@ -100,14 +100,14 @@ description: "Task list for FB2 chapter metadata on SD (issue #8)"
     3. Write the record field by field (`u32 titleOffset, u16 titleLength, u32 fileOffset, u32 ownLength, u32 cumulativeLength=0, u8 level, u8 flags`).
     4. Seek back to the end.
   - Add the `// ponytail:` comment "unbuffered: slots are patched in place; buffer titles.tmp (append-only) if first open measures slower on device" (research R2).
-- [ ] T018 [US2] In `lib/Fb2/Fb2.cpp`, rewrite `saveMetadataCache()` as the assembly pass:
+- [X] T018 [US2] In `lib/Fb2/Fb2.cpp`, rewrite `saveMetadataCache()` as the assembly pass:
   1. Write `u8 5`, the 4 header strings, `u16 chapterCount` and `u32 titlesSize`.
   2. Read `chapters.tmp` record by record. Compute `cumulativeLength` as a running sum and fail on u32 overflow, then write each record.
   3. Copy `titles.tmp` through a `uint8_t buf[128]` stack buffer.
   4. Remove both temp files.
 
   On any failure, remove `book.bin` and both temp files and return false, so `load()` fails through its existing path. Set `FB2_CACHE_VERSION = 5` with a `// v5:` history line, and delete `FB2_CACHE_MIN_SECTION_ENTRY` and `countFitsRemainingFile`, which the size equation replaces.
-- [ ] T019 [US2] In `lib/Fb2/Fb2.cpp`, rewrite `loadMetadataCache()` for v5 using the data-model rules verbatim:
+- [X] T019 [US2] In `lib/Fb2/Fb2.cpp`, rewrite `loadMetadataCache()` for v5 using the data-model rules verbatim:
   1. `version == 5`; each header string ≤ 4,096 bytes.
   2. `1 ≤ chapterCount ≤ FB2_CHAPTER_INDEX_LIMIT` (use `FB2_MAX_CHAPTERS` until T030 renames it), and `recordsOffset + chapterCount·20 + titlesSize == fileSize` exactly, checked **before** any per-record read.
   3. For each record, in one sequential pass of `readPodChecked` calls:
@@ -117,7 +117,7 @@ description: "Task list for FB2 chapter metadata on SD (issue #8)"
      - `cumulativeLength == previous + ownLength`, without overflow.
 
   Store `bookSize` as the last `cumulativeLength`. Title bytes are not read here.
-- [ ] T020 [US2] In `lib/Fb2/Fb2.cpp`, implement the accessors:
+- [X] T020 [US2] In `lib/Fb2/Fb2.cpp`, implement the accessors:
   - **`openIndex`** opens `book.bin` for reading.
   - **`getSectionInfo(i, bookBin)`**: seek to `recordsOffset + 20·i`, read the fields, then seek to `titlesOffset + titleOffset` and read `titleLength` bytes. Return an empty `SectionInfo`, with a `LOG_ERR`, on an out-of-range index or any short read.
   - **`getSectionInfo(i)`** opens the index and forwards.
@@ -127,16 +127,16 @@ description: "Task list for FB2 chapter metadata on SD (issue #8)"
   - **`getTocEntry`** forwards.
   - **`firstChapterOfTopLevel`**: one `openIndex`, then a scan that reads only the `level` bytes.
   - **Range checks** use `chapterCount` instead of `sections.size()`.
-- [ ] T021 [US2] Update `lib/Fb2/Fb2/Fb2Section.cpp:214` to `const auto sectionInfo = fb2->getSectionInfo(sectionIndex);` (by value).
-- [ ] T022 [US2] In `src/activities/reader/Fb2ReaderActivity.{h,cpp}`:
+- [X] T021 [US2] Update `lib/Fb2/Fb2/Fb2Section.cpp:214` to `const auto sectionInfo = fb2->getSectionInfo(sectionIndex);` (by value).
+- [X] T022 [US2] In `src/activities/reader/Fb2ReaderActivity.{h,cpp}`:
   - **Members.** Add `Fb2::SectionInfo chapterInfo;` and `int chapterInfoIndex = -1;`.
   - **Refresh.** At the top of `renderBook()`, after the index clamps (`:392-397`), check `if (chapterInfoIndex != currentSectionIndex)`; if so, set `chapterInfo = fb2->getSectionInfo(currentSectionIndex); chapterInfoIndex = currentSectionIndex;`.
   - **Readers.** `renderStatusBar()` (`:660-674`) uses `chapterInfo.title`, the reader-owned copy. `renderStatusBar()` and `bookProgressPercent()` (`:123`) call `calculateProgress(chapterInfo, …)`.
   - **Reset.** Reset `chapterInfoIndex = -1` wherever the book is cleared or reloaded (`:247`).
   - Update the "Borrowed text only" comment (`:662`), because the title is now an owned copy.
-- [ ] T023 [US2] Update `src/activities/reader/Fb2ReaderChapterSelectionActivity.cpp:55` to `const auto tocEntry = fb2->getTocEntry(clamped + i);` (by value). US1 batches this.
-- [ ] T024 [US2] Replace the `book.bin` version 4 section of `docs/file-formats.md` (`:700-745`) with v5 from `contracts/book-bin-v5.md`. It should include the layout, the guarantees, the validation list and the version history line.
-- [ ] T025 [US2] Update the remaining callers in `test/fb2_book`, `test/fb2_section_cache` and `test/fb2_section_parser` so they compile against by-value accessors. `const auto&` binding a temporary is fine. Show the mutations for T010 (keep an unused `std::vector<SectionInfo>` that is filled at load), T012 (drop the exact-size equation) and T015 (skip the short-read check). Then run `bin/run-tests` and `bin/run-tests --asan`, and commit `refactor(fb2): keep chapter metadata in book.bin v5`.
+- [X] T023 [US2] Update `src/activities/reader/Fb2ReaderChapterSelectionActivity.cpp:55` to `const auto tocEntry = fb2->getTocEntry(clamped + i);` (by value). US1 batches this.
+- [X] T024 [US2] Replace the `book.bin` version 4 section of `docs/file-formats.md` (`:700-745`) with v5 from `contracts/book-bin-v5.md`. It should include the layout, the guarantees, the validation list and the version history line.
+- [X] T025 [US2] Update the remaining callers in `test/fb2_book`, `test/fb2_section_cache` and `test/fb2_section_parser` so they compile against by-value accessors. `const auto&` binding a temporary is fine. Show the mutations for T010 (keep an unused `std::vector<SectionInfo>` that is filled at load), T012 (drop the exact-size equation) and T015 (skip the short-read check). Then run `bin/run-tests` and `bin/run-tests --asan`, and commit `refactor(fb2): keep chapter metadata in book.bin v5`.
 
 **Checkpoint**: open-book memory is flat in chapter count. The cap still stands.
 

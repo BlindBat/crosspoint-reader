@@ -116,11 +116,12 @@ void Fb2ReaderActivity::saveProgress(const int sectionIndex, const int currentPa
 }
 
 float Fb2ReaderActivity::bookProgressPercent() const {
-  if (!fb2 || fb2->getBookSize() == 0 || !section || section->pageCount == 0) {
+  if (!fb2 || fb2->getBookSize() == 0 || !section || section->pageCount == 0 ||
+      chapterInfoIndex != currentSectionIndex) {
     return 0.0f;
   }
   const float chapterProgress = static_cast<float>(section->currentPage) / static_cast<float>(section->pageCount);
-  return fb2->calculateProgress(currentSectionIndex, chapterProgress) * 100.0f;
+  return fb2->calculateProgress(chapterInfo, chapterProgress) * 100.0f;
 }
 
 bool Fb2ReaderActivity::handleFormatInput() {
@@ -244,6 +245,7 @@ void Fb2ReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
           const int backupPage = section->currentPage;
           const int backupPageCount = section->pageCount;
           section.reset();
+          chapterInfoIndex = -1;
           fb2->clearCache();
           fb2->setupCacheDir();
           // clearCache() removed progress.bin, so this save must not be skipped.
@@ -394,6 +396,10 @@ void Fb2ReaderActivity::renderBook() {
   if (currentSectionIndex == fb2->getSectionCount()) {
     // End of book is rendered by the ReaderActivity base.
     return;
+  }
+  if (chapterInfoIndex != currentSectionIndex) {
+    chapterInfo = fb2->getSectionInfo(currentSectionIndex);
+    chapterInfoIndex = currentSectionIndex;
   }
 
   int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
@@ -657,20 +663,17 @@ void Fb2ReaderActivity::renderStatusBar() const {
   const int currentPage = section ? section->currentPage + 1 : 1;
   const int totalPages = section ? section->pageCount : 1;
   const float chapterProg = totalPages > 0 ? static_cast<float>(currentPage) / static_cast<float>(totalPages) : 0;
-  const float bookProgress = fb2 ? fb2->calculateProgress(currentSectionIndex, chapterProg) * 100 : 0;
+  const float bookProgress = fb2 ? fb2->calculateProgress(chapterInfo, chapterProg) * 100 : 0;
 
-  // Borrowed text only: getTocEntry and getTitle both hand back references the
-  // book owns, so the status bar copies nothing per render.
+  // Borrowed text only: chapterInfo is the reader's own copy of the current
+  // chapter and getTitle is owned by the book, so the status bar copies nothing
+  // and reads nothing from SD per render.
   const char* title = "";
   const auto sb = SETTINGS.statusBarSpec();
   if (sb.titleMode == CrossPointSettings::STATUS_BAR_TITLE::CHAPTER_TITLE) {
     title = tr(STR_UNNAMED);
-    if (fb2) {
-      const int tocIndex = fb2->getTocIndexForSectionIndex(currentSectionIndex);
-      if (tocIndex != -1) {
-        const Fb2::SectionInfo& tocEntry = fb2->getTocEntry(tocIndex);
-        if (!tocEntry.title.empty()) title = tocEntry.title.c_str();
-      }
+    if (fb2 && chapterInfoIndex == currentSectionIndex && !chapterInfo.title.empty()) {
+      title = chapterInfo.title.c_str();
     }
   } else if (sb.titleMode == CrossPointSettings::STATUS_BAR_TITLE::BOOK_TITLE) {
     if (fb2) title = fb2->getTitle().c_str();

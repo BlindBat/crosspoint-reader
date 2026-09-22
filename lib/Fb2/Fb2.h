@@ -2,7 +2,8 @@
 
 #include <cstdint>
 #include <string>
-#include <vector>
+
+class HalFile;
 
 class Fb2 {
  public:
@@ -27,14 +28,16 @@ class Fb2 {
   // sees. A derived label is prose and would otherwise be a whole paragraph.
   static constexpr uint16_t FB2_MAX_LABEL_CHARS = 64;
 
-  // One <section> of a reading body. The vector index is the chapter id used by
-  // sections/<index>.bin, progress.bin and the chapter list.
+  // One <section> of a reading body, read from book.bin on demand and returned by
+  // value: the book keeps no per-chapter record in RAM. Its chapter number is the
+  // id used by sections/<index>.bin, progress.bin and the chapter list.
   struct SectionInfo {
-    std::string title;         // its OWN title, a derived label, or empty when it has neither
-    size_t fileOffset = 0;     // offset of its "<section" start tag
-    size_t length = 0;         // own bytes: full span minus child chapters' spans
-    uint8_t level = 0;         // nesting depth in the body; 0 = direct child of <body>
-    uint8_t titleDerived = 0;  // 1 when `title` came from the first paragraph, not a <title>
+    std::string title;            // its OWN title, a derived label, or empty when it has neither
+    size_t fileOffset = 0;        // offset of its "<section" start tag
+    size_t length = 0;            // own bytes: full span minus child chapters' spans
+    size_t cumulativeLength = 0;  // sum of `length` over chapters 0..this one
+    uint8_t level = 0;            // nesting depth in the body; 0 = direct child of <body>
+    uint8_t titleDerived = 0;     // 1 when `title` came from the first paragraph, not a <title>
   };
 
  private:
@@ -44,12 +47,15 @@ class Fb2 {
   std::string author;
   std::string language;
   std::string coverBinaryId;
-  std::vector<SectionInfo> sections;
+  uint16_t chapterCount = 0;
+  uint32_t recordsOffset = 0;  // book.bin offset of chapter record 0
+  uint32_t titlesOffset = 0;   // book.bin offset of the title area
+  uint32_t titlesSize = 0;
+  uint32_t bookSize = 0;  // cumulativeLength of the last chapter
   bool loaded = false;
 
-  bool parseMetadata();
+  bool buildMetadataCache();
   bool loadMetadataCache();
-  bool saveMetadataCache() const;
 
  public:
   explicit Fb2(std::string filepath, const std::string& cacheDir);
@@ -71,17 +77,25 @@ class Fb2 {
   std::string getThumbBmpPath(int height) const;
   bool generateThumbBmp(int height) const;
 
-  // Sections (spine-like navigation)
+  // Sections (spine-like navigation). Each lookup is one record read from book.bin;
+  // an out-of-range index or a failed read returns an empty SectionInfo, which the
+  // UI shows as "Unnamed". The overloads taking `bookBin` reuse a handle the
+  // caller opened with openIndex(), so a batch of lookups opens the file once.
   int getSectionCount() const;
-  const SectionInfo& getSectionInfo(int index) const;
+  SectionInfo getSectionInfo(int index) const;
+  SectionInfo getSectionInfo(int index, HalFile& bookBin) const;
+  bool openIndex(HalFile& bookBin) const;
   size_t getBookSize() const;
   size_t getCumulativeSectionSize(int index) const;
-  float calculateProgress(int currentSectionIndex, float currentSectionRead) const;
+  size_t getCumulativeSectionSize(int index, HalFile& bookBin) const;
+  // No I/O: the chapter carries its own length and running total.
+  float calculateProgress(const SectionInfo& chapter, float chapterRead) const;
 
-  // TOC: one entry per chapter, so these are projections of `sections` and the
-  // two index mappings are the identity.
+  // TOC: one entry per chapter, so these are projections of the chapter list and
+  // the two index mappings are the identity.
   int getTocCount() const;
-  const SectionInfo& getTocEntry(int index) const;
+  SectionInfo getTocEntry(int index) const;
+  SectionInfo getTocEntry(int index, HalFile& bookBin) const;
   int getTocIndexForSectionIndex(int sectionIndex) const;
   int getSectionIndexForTocIndex(int tocIndex) const;
 
