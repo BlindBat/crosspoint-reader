@@ -210,10 +210,10 @@ description: "Task list for FB2 chapter metadata on SD (issue #8)"
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T040 Run `./bin/clang-format-fix -g`, then `./bin/clang-format-fix -c`.
-- [ ] T041 Build `pio run -e default` and `pio run -e x4pro`, since C3 and S3 are separate binaries. Then run `pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high`. On macOS a green `pio check` is not a signal; read CI.
-- [ ] T042 [P] Rerun the corpus tool from research R1 against the unpatched `lib/Fb2`. All 2,899 books should load and the 1,772-chapter book should list 1,772 chapters. Append the result to `specs/006-fb2-sd-chapter-lut/research.md` R1 (SC-001).
-- [ ] T043 [P] Grep for leftovers: `rg "FB2_MAX_CHAPTERS|takeSections|getSections\(" lib src test docs` should return nothing outside `specs/`.
+- [X] T040 Run `./bin/clang-format-fix -g`, then `./bin/clang-format-fix -c`.
+- [X] T041 Build `pio run -e default` and `pio run -e x4pro`, since C3 and S3 are separate binaries. Then run `pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high`. On macOS a green `pio check` is not a signal; read CI.
+- [X] T042 [P] Rerun the corpus tool from research R1 against the unpatched `lib/Fb2`. All 2,899 books should load and the 1,772-chapter book should list 1,772 chapters. Append the result to `specs/006-fb2-sd-chapter-lut/research.md` R1 (SC-001).
+- [X] T043 [P] Grep for leftovers: `rg "FB2_MAX_CHAPTERS|takeSections|getSections\(" lib src test docs` should return nothing outside `specs/`.
 - [ ] T044 Device validation (human, gate 6): run `quickstart.md` device steps 1–5 on the X4, and record the `[MEM] Free` figures, window-refresh timings and first-open timings in `specs/006-fb2-sd-chapter-lut/research.md`. If first open is slower by more than the run-to-run spread, follow up on the R2 upgrade path by buffering `titles.tmp`.
 
 ---

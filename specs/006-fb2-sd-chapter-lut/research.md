@@ -29,6 +29,12 @@ unreachable (`Fb2MetadataParser.cpp:270-280`). That is the documented ceiling.
 ~138 KB free at Home once the title heap is counted. So removing the cap without moving the
 data is not an option (spec US2).
 
+**Re-measured after implementation (2026-09-22, SC-001):** the same tool, built against the
+real `lib/Fb2` on `feature/fb2-sd-chapter-lut` with no patch, loads all 2,899 books with no
+failures. The largest still lists 1,772 chapters and 22 books have more than 256. For every
+book, the chapter count, the deepest level and the total title bytes are identical to the
+uncapped in-RAM measurement above (0 differences).
+
 ## R2. Where are records written during the first parse?
 
 The parser learns a chapter's fields at three moments. The start tag gives the source offset
