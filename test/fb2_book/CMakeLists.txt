@@ -18,6 +18,7 @@ target_include_directories(Fb2BookTest PRIVATE
   ${REPO_ROOT}/test/support
   ${REPO_ROOT}/lib/expat
   ${REPO_ROOT}/lib/Fb2
+  ${REPO_ROOT}/lib/Memory
   ${REPO_ROOT}/lib/Serialization
 )
 

@@ -1,7 +1,11 @@
 #include "Fb2.h"
 
+#include <BufferedFile.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Memory.h>
+
+#include <cstring>
 
 #include "Fb2/Fb2CoverExtractor.h"
 #include "Fb2/Fb2MetadataParser.h"
@@ -58,11 +62,6 @@ bool readPodChecked(HalFile& file, T& value) {
   return file.read(reinterpret_cast<uint8_t*>(&value), sizeof(T)) == static_cast<int>(sizeof(T));
 }
 
-template <typename T>
-bool writePodChecked(HalFile& file, const T& value) {
-  return file.write(reinterpret_cast<const uint8_t*>(&value), sizeof(T)) == sizeof(T);
-}
-
 bool readStringChecked(HalFile& file, std::string& value) {
   uint32_t length;
   if (!readPodChecked(file, length)) {
@@ -78,12 +77,6 @@ bool readStringChecked(HalFile& file, std::string& value) {
   return file.read(reinterpret_cast<uint8_t*>(&value[0]), length) == static_cast<int>(length);
 }
 
-bool writeStringChecked(HalFile& file, const std::string& value) {
-  const auto length = static_cast<uint32_t>(value.size());
-  return writePodChecked(file, length) &&
-         (length == 0 || file.write(reinterpret_cast<const uint8_t*>(value.data()), length) == length);
-}
-
 // Cuts a string to FB2_CACHE_MAX_STRING bytes, backing up to a UTF-8 lead byte.
 void clampToCacheString(std::string& value) {
   if (value.size() <= FB2_CACHE_MAX_STRING) return;
@@ -92,27 +85,55 @@ void clampToCacheString(std::string& value) {
   value.resize(cut);
 }
 
+// A record moves as one 20-byte read or write: each HalFile call takes the storage
+// mutex, and 7 per-field calls per record made chapter-list windows and first opens
+// measurably slow on device (specs/006 research R10). memcpy, never a cast: the
+// buffer has no alignment (RISC-V faults on unaligned wide loads).
+void packRecord(const Record& r, uint8_t* b) {
+  memcpy(b + 0, &r.titleOffset, 4);
+  memcpy(b + 4, &r.titleLength, 2);
+  memcpy(b + 6, &r.fileOffset, 4);
+  memcpy(b + 10, &r.ownLength, 4);
+  memcpy(b + 14, &r.cumulativeLength, 4);
+  b[RECORD_LEVEL_OFFSET] = r.level;
+  b[RECORD_LEVEL_OFFSET + 1] = r.flags;
+}
+
 bool readRecord(HalFile& file, Record& r) {
-  return readPodChecked(file, r.titleOffset) && readPodChecked(file, r.titleLength) &&
-         readPodChecked(file, r.fileOffset) && readPodChecked(file, r.ownLength) &&
-         readPodChecked(file, r.cumulativeLength) && readPodChecked(file, r.level) && readPodChecked(file, r.flags);
+  uint8_t b[RECORD_SIZE];
+  if (file.read(b, RECORD_SIZE) != static_cast<int>(RECORD_SIZE)) return false;
+  memcpy(&r.titleOffset, b + 0, 4);
+  memcpy(&r.titleLength, b + 4, 2);
+  memcpy(&r.fileOffset, b + 6, 4);
+  memcpy(&r.ownLength, b + 10, 4);
+  memcpy(&r.cumulativeLength, b + 14, 4);
+  r.level = b[RECORD_LEVEL_OFFSET];
+  r.flags = b[RECORD_LEVEL_OFFSET + 1];
+  return true;
 }
 
 bool writeRecord(HalFile& file, const Record& r) {
-  return writePodChecked(file, r.titleOffset) && writePodChecked(file, r.titleLength) &&
-         writePodChecked(file, r.fileOffset) && writePodChecked(file, r.ownLength) &&
-         writePodChecked(file, r.cumulativeLength) && writePodChecked(file, r.level) && writePodChecked(file, r.flags);
+  uint8_t b[RECORD_SIZE];
+  packRecord(r, b);
+  return file.write(b, RECORD_SIZE) == RECORD_SIZE;
 }
+
+// Build-time buffer for the append-only streams (titles.tmp during the parse,
+// book.bin during assembly), so their small writes do not interleave with the
+// source or temp-file reads through SdFat's single shared sector cache. Fixed size,
+// independent of chapter count; allocation failure degrades to unbuffered writes.
+constexpr size_t BUILD_IO_BUFFER_SIZE = 1024;
 
 // The parser's chapter sink during a build: fixed records in chapters.tmp, one
 // slot appended per start tag and patched at the end tag (end tags arrive
 // children-first, so slots cannot simply be appended in order), and title bytes
 // appended to titles.tmp. Nothing is held per chapter in RAM.
-// ponytail: unbuffered, 3 small SD writes per chapter interleaved with source
-// reads; buffer titles.tmp (append-only) if first open measures slower on device.
+// ponytail: record slots are still unbuffered (they are patched in place); keep a
+// RAM window of open-section slots if first open measures slow on device again.
 struct BuildSink {
   HalFile chapters;
   HalFile titles;
+  serialization::BufferedFileWriter* titlesOut = nullptr;
   uint32_t count = 0;
   uint32_t titlesSize = 0;
 
@@ -135,10 +156,7 @@ struct BuildSink {
     r.ownLength = static_cast<uint32_t>(chapter.length);
     r.level = chapter.level;
     r.flags = chapter.titleDerived ? FB2_CHAPTER_FLAG_TITLE_DERIVED : 0;
-    if (r.titleLength > 0 &&
-        self->titles.write(reinterpret_cast<const uint8_t*>(chapter.title.data()), r.titleLength) != r.titleLength) {
-      return false;
-    }
+    if (r.titleLength > 0) self->titlesOut->write(chapter.title.data(), r.titleLength);
     self->titlesSize += r.titleLength;
     return self->chapters.seek(static_cast<size_t>(index) * RECORD_SIZE) && writeRecord(self->chapters, r);
   }
@@ -259,28 +277,33 @@ bool Fb2::buildMetadataCache() {
     return false;
   };
 
+  // Each phase runs in its own scope so every file is closed before cleanup()
+  // removes it: SdFat must not remove a file that is still open.
   uint32_t count = 0;
   uint32_t builtTitlesSize = 0;
+  bool ok;
   {
     BuildSink sink;
-    if (!Storage.openFileForWrite("FB2", chaptersPath, sink.chapters) ||
-        !Storage.openFileForWrite("FB2", titlesPath, sink.titles)) {
-      return cleanup();
+    ok = Storage.openFileForWrite("FB2", chaptersPath, sink.chapters) &&
+         Storage.openFileForWrite("FB2", titlesPath, sink.titles);
+    if (ok) {
+      serialization::BufferedFileWriter titlesOut(sink.titles, BUILD_IO_BUFFER_SIZE);
+      sink.titlesOut = &titlesOut;
+      Fb2MetadataParser parser(filepath, Fb2ChapterSink{&sink, &BuildSink::reserve, &BuildSink::write});
+      // A failed buffered title write shows up on the flush.
+      ok = parser.parse() && titlesOut.flush();
+      if (ok) {
+        title = parser.getTitle();
+        author = parser.getAuthor();
+        language = parser.getLanguage();
+        coverBinaryId = parser.getCoverBinaryId();
+      }
     }
-    Fb2MetadataParser parser(filepath, Fb2ChapterSink{&sink, &BuildSink::reserve, &BuildSink::write});
-    if (!parser.parse()) {
-      LOG_ERR("FB2", "Failed to parse metadata");
-      return cleanup();
-    }
-    title = parser.getTitle();
-    author = parser.getAuthor();
-    language = parser.getLanguage();
-    coverBinaryId = parser.getCoverBinaryId();
     count = sink.count;
     builtTitlesSize = sink.titlesSize;
-  }  // closes both temp files before they are reopened for reading
-  if (count == 0 || count > FB2_CHAPTER_INDEX_LIMIT) {
-    LOG_ERR("FB2", "Parsed %u chapters", count);
+  }
+  if (!ok || count == 0 || count > FB2_CHAPTER_INDEX_LIMIT) {
+    LOG_ERR("FB2", "Failed to parse metadata (%u chapters)", count);
     return cleanup();
   }
   clampToCacheString(title);
@@ -290,36 +313,44 @@ bool Fb2::buildMetadataCache() {
 
   {
     HalFile out, chapters, titles;
-    if (!Storage.openFileForWrite("FB2", cacheFile, out) || !Storage.openFileForRead("FB2", chaptersPath, chapters) ||
-        !Storage.openFileForRead("FB2", titlesPath, titles)) {
-      return cleanup();
-    }
-    if (!writePodChecked(out, FB2_CACHE_VERSION) || !writeStringChecked(out, title) ||
-        !writeStringChecked(out, author) || !writeStringChecked(out, language) ||
-        !writeStringChecked(out, coverBinaryId) || !writePodChecked(out, static_cast<uint16_t>(count)) ||
-        !writePodChecked(out, builtTitlesSize)) {
-      return cleanup();
-    }
-    uint32_t cumulative = 0;
-    for (uint32_t i = 0; i < count; i++) {
-      Record r;
-      if (!readRecord(chapters, r) || cumulative + r.ownLength < cumulative) {
-        return cleanup();
+    ok = Storage.openFileForWrite("FB2", cacheFile, out) && Storage.openFileForRead("FB2", chaptersPath, chapters) &&
+         Storage.openFileForRead("FB2", titlesPath, titles);
+    if (ok) {
+      serialization::BufferedFileWriter w(out, BUILD_IO_BUFFER_SIZE);
+      auto pod = [&w](const auto& value) { w.write(&value, sizeof(value)); };
+      auto str = [&](const std::string& value) {
+        pod(static_cast<uint32_t>(value.size()));
+        w.write(value.data(), value.size());
+      };
+      pod(FB2_CACHE_VERSION);
+      str(title);
+      str(author);
+      str(language);
+      str(coverBinaryId);
+      pod(static_cast<uint16_t>(count));
+      pod(builtTitlesSize);
+      uint32_t cumulative = 0;
+      for (uint32_t i = 0; ok && i < count; i++) {
+        Record r;
+        ok = readRecord(chapters, r) && cumulative + r.ownLength >= cumulative;
+        cumulative += r.ownLength;
+        r.cumulativeLength = cumulative;
+        uint8_t packed[RECORD_SIZE];
+        packRecord(r, packed);
+        w.write(packed, RECORD_SIZE);
       }
-      cumulative += r.ownLength;
-      r.cumulativeLength = cumulative;
-      if (!writeRecord(out, r)) {
-        return cleanup();
+      uint8_t buffer[128];
+      for (uint32_t copied = 0; ok && copied < builtTitlesSize;) {
+        const uint32_t want = builtTitlesSize - copied < sizeof(buffer) ? builtTitlesSize - copied : sizeof(buffer);
+        ok = titles.read(buffer, want) == static_cast<int>(want);
+        w.write(buffer, want);
+        copied += want;
       }
+      ok = w.flush() && ok;
     }
-    uint8_t buffer[128];
-    for (uint32_t copied = 0; copied < builtTitlesSize;) {
-      const uint32_t want = builtTitlesSize - copied < sizeof(buffer) ? builtTitlesSize - copied : sizeof(buffer);
-      if (titles.read(buffer, want) != static_cast<int>(want) || out.write(buffer, want) != want) {
-        return cleanup();
-      }
-      copied += want;
-    }
+  }
+  if (!ok) {
+    return cleanup();
   }
   Storage.remove(chaptersPath.c_str());
   Storage.remove(titlesPath.c_str());
