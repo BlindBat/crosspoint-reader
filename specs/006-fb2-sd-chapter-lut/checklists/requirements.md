@@ -37,8 +37,7 @@
   "how": no layout, API shape or algorithm is prescribed beyond "one fixed-slot lookup per
   chapter", which the issue itself sets. Same convention as specs 003–005.
 - Numbers and their sources: 256 / 22 books / 43,732 B — 2,899-book corpus (2026-09-20);
-  ~138 KB free at Home — C3 device reading (2026-09-20); 65,535 — width of the stored chapter
-  number (`docs/file-formats.md:651`); 64 and 4,096 — existing caps, unchanged. 1,000 and
-  4,000 chapters are test inputs, not limits. SC-002's "fixed allowance" is left for the plan
-  to measure rather than guessed here.
+  ~138 KB free at Home — C3 device reading (2026-09-20); 32,767 — the UI list's `int16_t` row index
+  (`freeink-sdk/.../lists/list.h:15,63`); 64 and 4,096 — existing caps, unchanged. 1,000 and
+  4,000 chapters are test inputs, not limits. SC-002's allowance is zero for books of equal nesting depth.
 - SC-005 is relative (FB2 vs EPUB, same device) instead of an invented millisecond budget.
