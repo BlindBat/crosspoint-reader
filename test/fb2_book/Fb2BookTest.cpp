@@ -244,9 +244,9 @@ TEST_F(Fb2BookTest, HugeSectionCountInTinyCacheIsRejectedWithoutReserving) {
   appendString(bogus, "Author");
   appendString(bogus, "en");
   appendString(bogus, "");
-  appendPod<uint16_t>(bogus, Fb2::FB2_MAX_CHAPTERS);  // claims the most chapters allowed...
-  appendPod<uint32_t>(bogus, 0u);                     // ...no titles...
-  bogus += "xx";                                      // ...backed by 2 bytes of records
+  appendPod<uint16_t>(bogus, Fb2::FB2_CHAPTER_INDEX_LIMIT);  // claims the most chapters allowed...
+  appendPod<uint32_t>(bogus, 0u);                            // ...no titles...
+  bogus += "xx";                                             // ...backed by 2 bytes of records
   ASSERT_TRUE(writeAll(cacheFile, bogus));
 
   Fb2 cacheOnly(fixturePath("basic.fb2"), tmp.path());
@@ -277,7 +277,7 @@ TEST_F(Fb2BookTest, ChapterCountAboveTheCapIsRejectedWithoutReserving) {
   appendString(bogus, "Author");
   appendString(bogus, "en");
   appendString(bogus, "");
-  appendPod<uint16_t>(bogus, Fb2::FB2_MAX_CHAPTERS + 1);  // one past the cap
+  appendPod<uint16_t>(bogus, Fb2::FB2_CHAPTER_INDEX_LIMIT + 1);  // one past the cap
   appendPod<uint32_t>(bogus, 0u);
   ASSERT_TRUE(writeAll(cacheFile, bogus));
 
@@ -293,29 +293,29 @@ TEST_F(Fb2BookTest, ChapterCountAboveTheCapIsRejectedWithoutReserving) {
   EXPECT_LT(bytesAllocated, 64u * 1024u) << "over-cap chapter count allocated " << bytesAllocated << " bytes";
 }
 
-// Contract C6 end to end: the chapter list is capped, and no text is lost -
-// sections past the cap read as part of the chapter containing them.
-TEST_F(Fb2BookTest, ChapterCountIsCappedWhenParsingAHugeBook) {
+// FR-001: every section is a chapter, far past the old 256 cap, and the chapter
+// lengths still partition the body exactly (checked against the source itself).
+TEST_F(Fb2BookTest, EveryChapterOfAHugeBookIsKept) {
   const std::string path = tmp.path() + "/tower.fb2";
-  ASSERT_TRUE(writeAll(path, fb2test::makeSectionTowerFb2(Fb2::FB2_MAX_CHAPTERS + 80, 2)));
+  const std::string source = fb2test::makeSectionTowerFb2(4000, 2);
+  ASSERT_TRUE(writeAll(path, source));
 
   Fb2 book(path, tmp.path());
   ASSERT_TRUE(book.load());
-  EXPECT_EQ(book.getSectionCount(), static_cast<int>(Fb2::FB2_MAX_CHAPTERS));
-  EXPECT_EQ(book.getTocCount(), static_cast<int>(Fb2::FB2_MAX_CHAPTERS));
-  // Contract C6: the capped tail still belongs to the last chapter's bytes, so the
-  // chapter lengths keep partitioning the body and no text is lost.
-  EXPECT_GT(book.getBookSize(), 0u);
+  EXPECT_EQ(book.getSectionCount(), 4000);
+  EXPECT_EQ(book.getTocCount(), 4000);
+  EXPECT_EQ(book.getSectionInfo(3999).title, "Section number 3999 of the tower");
   size_t partitioned = 0;
   for (int i = 0; i < book.getSectionCount(); i++) {
     partitioned += book.getSectionInfo(i).length;
   }
-  EXPECT_EQ(partitioned, book.getBookSize()) << "chapters past the ceiling lost their text";
+  EXPECT_EQ(partitioned, fb2test::topLevelSectionBytes(source)) << "chapter lengths do not partition the body";
 
-  // ...and the cap survives the cache round-trip.
+  // ...and every chapter survives the cache round-trip.
   Fb2 cached(path, tmp.path());
   ASSERT_TRUE(cached.load(false));
-  EXPECT_EQ(cached.getSectionCount(), static_cast<int>(Fb2::FB2_MAX_CHAPTERS));
+  EXPECT_EQ(cached.getSectionCount(), 4000);
+  EXPECT_EQ(cached.getSectionInfo(3999).title, "Section number 3999 of the tower");
 }
 
 // FR-003 / SC-002. Chapter metadata lives in book.bin, so what an open book holds
@@ -343,51 +343,13 @@ TEST_F(Fb2BookTest, ChapterMemoryIsIndependentOfChapterCount) {
     return Measured{held, peak, book->getSectionCount()};
   };
   const Measured small = measure(4);
-  const Measured big = measure(250);
+  const Measured big = measure(4000);
   ASSERT_EQ(small.chapters, 4);
-  ASSERT_EQ(big.chapters, 250);
+  ASSERT_EQ(big.chapters, 4000);
   EXPECT_EQ(big.held, small.held) << "an open book holds " << (big.held - small.held)
-                                  << " more bytes for 246 more chapters";
+                                  << " more bytes for 3,996 more chapters";
   EXPECT_EQ(big.peak, small.peak) << "first indexing peaks " << (big.peak - small.peak)
-                                  << " bytes higher for 246 more chapters";
-}
-
-// A book.bin written by firmware with the old, higher ceiling claims more chapters
-// than this build will hold. It must be rejected and the book reparsed at the
-// current ceiling — never read partially, and never allowed to drive a reserve()
-// past the ceiling. This is the upgrade path every existing SD card takes.
-TEST_F(Fb2BookTest, CacheFromTheOldHigherCeilingIsRejectedAndRebuilt) {
-  const std::string path = tmp.path() + "/old-ceiling.fb2";
-  ASSERT_TRUE(writeAll(path, fb2test::makeSectionTowerFb2(200, 2)));
-
-  Fb2 book(path, tmp.path());
-  ASSERT_TRUE(book.load(true));
-  const std::string cacheFile = book.getCachePath() + "/book.bin";
-
-  // A structurally valid v5 cache claiming 1024 chapters, above this build's cap.
-  std::vector<fb2test::V5BookBin::Chapter> many;
-  for (int i = 0; i < 1024; i++) {
-    many.push_back({"Chapter title that exceeds the small buffer " + std::to_string(i), static_cast<uint32_t>(i * 16),
-                    16u, 0, false});
-  }
-  const std::string stale = fb2test::V5BookBin::from(many).encode();
-  ASSERT_TRUE(writeAll(cacheFile, stale));
-
-  Fb2 cacheOnly(path, tmp.path());
-  bool loaded = true;
-  size_t bytesAllocated = 0;
-  {
-    alloc_counter::CountingScope scope;
-    loaded = cacheOnly.load(false);
-    bytesAllocated = scope.bytes();
-  }
-  EXPECT_FALSE(loaded) << "a cache above the ceiling must not load";
-  EXPECT_LT(bytesAllocated, 64u * 1024u) << "over-ceiling cache allocated " << bytesAllocated << " bytes";
-
-  // ...and the book still opens, reparsed at the current ceiling.
-  Fb2 rebuilt(path, tmp.path());
-  ASSERT_TRUE(rebuilt.load(true));
-  EXPECT_EQ(rebuilt.getSectionCount(), 200);
+                                  << " bytes higher for 3,996 more chapters";
 }
 
 // book.bin carries the derived-label marker, so a label survives the round trip
@@ -589,8 +551,8 @@ TEST_F(Fb2BookTest, MalformedV5CachesAreRejectedAndRebuilt) {
     b.titles.clear();
     b.titlesSize = 0;
   });
-  with("count one above the cap", [](Bin& b) { b.chapterCount = Fb2::FB2_MAX_CHAPTERS + 1; });
-  with("count at the cap in a tiny file", [](Bin& b) { b.chapterCount = Fb2::FB2_MAX_CHAPTERS; });
+  with("count one above the cap", [](Bin& b) { b.chapterCount = Fb2::FB2_CHAPTER_INDEX_LIMIT + 1; });
+  with("count at the cap in a tiny file", [](Bin& b) { b.chapterCount = Fb2::FB2_CHAPTER_INDEX_LIMIT; });
   with("header string above the cap", [](Bin& b) { b.author.assign(4097, 'a'); });
 
   // The baseline really is valid, so each rejection below is the mutation's doing.

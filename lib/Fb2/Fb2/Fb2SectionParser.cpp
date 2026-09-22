@@ -10,7 +10,7 @@
 #include <cstring>
 #include <memory>
 
-#include "Fb2.h"  // Fb2::FB2_MAX_CHAPTERS: the chapter cap both parsers share
+#include "Fb2.h"  // Fb2::FB2_CHAPTER_INDEX_LIMIT: the chapter limit both parsers share
 #include "Fb2XmlEncoding.h"
 
 namespace {
@@ -126,7 +126,7 @@ void XMLCALL Fb2SectionParser::startElement(void* userData, const char* name, co
   // order. Counting happens before any suppression so a nested chapter's own
   // subtree still advances the counter and the two parsers stay in lockstep.
   if (strcmp(tag, "section") == 0 && self->inBody) {
-    if (self->chapterCount < Fb2::FB2_MAX_CHAPTERS) {
+    if (self->chapterCount < Fb2::FB2_CHAPTER_INDEX_LIMIT) {
       if (!self->inTargetSection && self->chapterCount == self->targetSectionIndex) {
         self->inTargetSection = true;
         self->targetSectionDepth = self->depth;

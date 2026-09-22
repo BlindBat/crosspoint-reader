@@ -134,9 +134,9 @@ void Fb2MetadataParser::startElement(void* userData, const char* name, const cha
   if (self->inBody) {
     if (strcmp(tag, "section") == 0) {
       // Every section is a chapter, at any depth, numbered in start-tag order.
-      // Past FB2_MAX_CHAPTERS a section is no longer a boundary: it reads as
-      // part of the chapter containing it, so no text is lost.
-      const bool isChapter = self->chapterCount < Fb2::FB2_MAX_CHAPTERS;
+      // Past FB2_CHAPTER_INDEX_LIMIT a section is no longer a boundary: it reads as
+      // part of the chapter containing it.
+      const bool isChapter = self->chapterCount < Fb2::FB2_CHAPTER_INDEX_LIMIT;
       const size_t startOffset = static_cast<size_t>(XML_GetCurrentByteIndex(static_cast<XML_Parser>(self->parser)));
       OpenSection open;
       open.startOffset = startOffset;
@@ -289,7 +289,7 @@ void Fb2MetadataParser::endElement(void* userData, const char* name) {
             return;
           }
         }
-        // A section past the cap is not a chapter, so its bytes stay with the
+        // A section past the limit is not a chapter, so its bytes stay with the
         // enclosing chapter and are deliberately not subtracted above.
       }
       self->inSectionTitle = false;

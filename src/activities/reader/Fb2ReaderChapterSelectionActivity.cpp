@@ -1,7 +1,9 @@
 #include "Fb2ReaderChapterSelectionActivity.h"
 
 #include <GfxRenderer.h>
+#include <HalStorage.h>
 #include <I18n.h>
+#include <Logging.h>
 
 #include <cstdio>
 #include <memory>
@@ -47,12 +49,15 @@ void Fb2ReaderChapterSelectionActivity::refreshTocWindow(const int start) {
   if (clamped < 0) clamped = 0;
   if (clamped == windowStart) return;
 
-  // ponytail: no fallback-glyph prewarm here. EPUB batches one per window refresh
-  // because its TOC entries are SD reads; FB2's are already in RAM. Add EPUB's
+  // ponytail: no fallback-glyph prewarm here, unlike EPUB. Add EPUB's
   // prewarmFallbackText if CJK FB2 lists repaint slowly on device.
+  const unsigned long startMs = millis();
   windowCount = total - clamped < TOC_WINDOW ? total - clamped : TOC_WINDOW;
+  // One book.bin open for the whole window: each entry is one record read.
+  HalFile bookBin;
+  const bool indexOpen = fb2->openIndex(bookBin);
   for (int i = 0; i < windowCount; i++) {
-    const auto tocEntry = fb2->getTocEntry(clamped + i);
+    const auto tocEntry = indexOpen ? fb2->getTocEntry(clamped + i, bookBin) : Fb2::SectionInfo{};
     // Indent by nesting depth so a story reads as a story inside its part, the
     // same convention the EPUB chapter list uses. Capped at three steps so a
     // deeply nested title is not pushed off the row.
@@ -76,6 +81,7 @@ void Fb2ReaderChapterSelectionActivity::refreshTocWindow(const int start) {
     windowItems[i] = item;
   }
   windowStart = clamped;
+  LOG_DBG("TOC", "window %d+%d in %lu ms", clamped, windowCount, millis() - startMs);
 }
 
 void Fb2ReaderChapterSelectionActivity::activateIndex(const int index) {

@@ -61,7 +61,7 @@ class Fb2MetadataParser {
     size_t childBytes = 0;    // bytes claimed by child chapters
     int elemDepth = 0;        // element depth of the <section> itself
     uint16_t index = 0;       // chapter number
-    bool isChapter = false;   // false past the chapter cap
+    bool isChapter = false;   // false past the chapter limit
     bool labelTaken = false;  // its first direct <p> has already been offered as a label
   };
   std::vector<OpenSection> openSections;

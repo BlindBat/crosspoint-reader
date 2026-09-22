@@ -150,33 +150,33 @@ description: "Task list for FB2 chapter metadata on SD (issue #8)"
 
 ### Tests for User Story 1 (write first)
 
-- [ ] T026 [P] [US1] In `test/fb2_book/Fb2BookTest.cpp`, flip the cap tests (`:279`, `:318-340`) into ceiling tests:
+- [X] T026 [P] [US1] In `test/fb2_book/Fb2BookTest.cpp`, flip the cap tests (`:279`, `:318-340`) into ceiling tests:
   - **Tower.** `makeSectionTowerFb2(4000, 2)` yields 4,000 chapters, and `Σ length` equals the fixture's top-level `<section>` span, measured with the same oracle as T011.
   - **Cached file.** A cached reload matches.
   - **Memory.** Extend T010 to 4 against 4,000 chapters (FR-003, SC-002).
-- [ ] T027 [P] [US1] In `test/fb2_metadata_parser/Fb2MetadataParserTest.cpp`, flip `:188-192`. Build the fixture inline: one top-level wrapper `<section>` holding `FB2_CHAPTER_INDEX_LIMIT + 2` flat child sections (about 1.3 MB). Then:
+- [X] T027 [P] [US1] In `test/fb2_metadata_parser/Fb2MetadataParserTest.cpp`, flip `:188-192`. Build the fixture inline: one top-level wrapper `<section>` holding `FB2_CHAPTER_INDEX_LIMIT + 2` flat child sections (about 1.3 MB). Then:
   - exactly 32,767 chapters are produced: the wrapper plus 32,766 children;
   - the last 3 children are not chapters, and their bytes are counted in the wrapper's own `length`, measured against the fixture string (C1 oracle);
   - no top-level section is used past the limit, because it would have no containing chapter (spec edge case, a documented ceiling).
-- [ ] T028 [P] [US1] In `test/fb2_section_cache/Fb2SectionCacheTest.cpp`, lay out chapter 3,000 of a 4,000-section tower. Its pages must hold that section's own title text and no neighbour's (FR-005 lockstep). Mutation: leave the section parser at 256.
-- [ ] T029 [P] [US1] In `test/xtc_fb2_readers/Fb2ReaderMathTest.cpp`:
+- [X] T028 [P] [US1] In `test/fb2_section_cache/Fb2SectionCacheTest.cpp`, lay out chapter 3,000 of a 4,000-section tower. Its pages must hold that section's own title text and no neighbour's (FR-005 lockstep). Mutation: leave the section parser at 256.
+- [X] T029 [P] [US1] In `test/xtc_fb2_readers/Fb2ReaderMathTest.cpp`:
   - `percentToSection` must return the same targets as the existing cases.
   - Over 4,000 sections, the cumulative callback must be called at most ⌈log₂ n⌉+2 times. Count the calls through the ctx.
 
 ### Implementation for User Story 1
 
-- [ ] T030 [US1] In `lib/Fb2/Fb2.h`, replace `FB2_MAX_CHAPTERS` and its comment block (`:9-21`, including the `ponytail:` note) with `static constexpr uint16_t FB2_CHAPTER_INDEX_LIMIT = INT16_MAX;`, commented: "Highest chapter the UI list can address: its row value and selection index are int16_t (FreeInkUI lists/list.h). Not a memory budget. Past it a nested <section> reads as part of the chapter containing it; a top-level one is unreachable." Update the uses in `lib/Fb2/Fb2/Fb2MetadataParser.cpp` (`:131-133`) and `lib/Fb2/Fb2/Fb2SectionParser.cpp` (`:13`, `:129`), and the corruption bound in `lib/Fb2/Fb2.cpp`.
-- [ ] T031 [US1] In `src/activities/reader/Fb2ReaderMath.cpp` (`:26-35`), change `percentToSection` from its linear scan to a lower-bound binary search over `cumulative(i)`. Cumulative sizes never decrease, so the result is the first `i` with `targetSize <= cumulative(i)`, and `prevCumulative = cumulative(i-1)` or 0.
-- [ ] T032 [US1] In `src/activities/reader/Fb2ReaderActivity.cpp`, change `jumpToPercent` (`:284-298`) and the `cumulativeSectionSize` helper (`:26-29`):
+- [X] T030 [US1] In `lib/Fb2/Fb2.h`, replace `FB2_MAX_CHAPTERS` and its comment block (`:9-21`, including the `ponytail:` note) with `static constexpr uint16_t FB2_CHAPTER_INDEX_LIMIT = INT16_MAX;`, commented: "Highest chapter the UI list can address: its row value and selection index are int16_t (FreeInkUI lists/list.h). Not a memory budget. Past it a nested <section> reads as part of the chapter containing it; a top-level one is unreachable." Update the uses in `lib/Fb2/Fb2/Fb2MetadataParser.cpp` (`:131-133`) and `lib/Fb2/Fb2/Fb2SectionParser.cpp` (`:13`, `:129`), and the corruption bound in `lib/Fb2/Fb2.cpp`.
+- [X] T031 [US1] In `src/activities/reader/Fb2ReaderMath.cpp` (`:26-35`), change `percentToSection` from its linear scan to a lower-bound binary search over `cumulative(i)`. Cumulative sizes never decrease, so the result is the first `i` with `targetSize <= cumulative(i)`, and `prevCumulative = cumulative(i-1)` or 0.
+- [X] T032 [US1] In `src/activities/reader/Fb2ReaderActivity.cpp`, change `jumpToPercent` (`:284-298`) and the `cumulativeSectionSize` helper (`:26-29`):
   - The ctx becomes a local `struct { const Fb2* fb2; HalFile* bookBin; }`, opened once with `fb2->openIndex`.
   - The callback uses `getCumulativeSectionSize(i, *bookBin)`.
   - If the open fails, fall back to returning with no jump.
-- [ ] T033 [US1] In `src/activities/reader/Fb2ReaderChapterSelectionActivity.{h,cpp}`:
+- [X] T033 [US1] In `src/activities/reader/Fb2ReaderChapterSelectionActivity.{h,cpp}`:
   - **Batching.** `refreshTocWindow` opens the index once (`HalFile bookBin; fb2->openIndex(bookBin)`) and calls `getTocEntry(clamped + i, bookBin)` for the window.
   - **Header comment.** Drop the `FB2_MAX_CHAPTERS` mention (`.h:16`).
   - **Prewarm comment.** Rewrite the `ponytail:` prewarm comment (`.cpp:47-49`) per research R9, keeping the upgrade path: "no fallback-glyph prewarm; add EPUB's prewarmFallbackText if CJK FB2 lists repaint slowly on device".
   - **Timing.** Add a permanent `LOG_DBG("TOC", "window %d+%d in %lu ms", clamped, windowCount, millis() - start)` in `refreshTocWindow`, for SC-005. For the EPUB comparison, add the same line to `EpubReaderChapterSelectionActivity` locally, only for the measurement, and do not commit it (the spec excludes EPUB changes).
-- [ ] T034 [US1] In `docs/file-formats.md`, set the chapter count range to `1..32767 (FB2_CHAPTER_INDEX_LIMIT)`, and replace the "count is capped because this metadata is RAM-resident" sentence with the ceiling rule. Run `bin/run-tests` and `bin/run-tests --asan`, and commit `feat(fb2): remove the 256-chapter cap`.
+- [X] T034 [US1] In `docs/file-formats.md`, set the chapter count range to `1..32767 (FB2_CHAPTER_INDEX_LIMIT)`, and replace the "count is capped because this metadata is RAM-resident" sentence with the ceiling rule. Run `bin/run-tests` and `bin/run-tests --asan`, and commit `feat(fb2): remove the 256-chapter cap`.
 
 **Checkpoint**: US1 and US2 both hold, and the 22 capped corpus books now list every chapter.
 

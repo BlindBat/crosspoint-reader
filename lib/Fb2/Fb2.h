@@ -7,20 +7,13 @@ class HalFile;
 
 class Fb2 {
  public:
-  // Chapter metadata is RAM-resident, so the count is bounded. Past the ceiling a
-  // <section> is no longer a chapter boundary: it reads as part of the chapter
-  // containing it, so no text is lost.
-  //
-  // 256 is measured, not rounded. Across 2,899 real FB2 books the worst costs
-  // 99,716 bytes of chapter metadata at a ceiling of 1024 — 44.9% of the 222,180
-  // bytes of heap the C3 has left after static allocation and the framebuffer —
-  // against 43,732 bytes (19.7%) at 256. The price is coarser navigation in 22 of
-  // those books (0.76%), none of them novels.
-  // ponytail: RAM-resident chapter list, so the count needs a ceiling at all, and a
-  // count is a weak proxy for the bytes it is protecting (books at 256 chapters span
-  // 9-44KB). Upgrade path is an SD-resident seekable LUT like BookMetadataCache uses
-  // for EPUB, which deletes this constant instead of tuning it.
-  static constexpr uint16_t FB2_MAX_CHAPTERS = 256;
+  // Highest chapter the UI list can address: its row value and selection index are
+  // int16_t (FreeInkUI lists/list.h), so a higher chapter could not be selected. Not
+  // a memory budget: chapter metadata lives in book.bin. 18x the largest of 2,899
+  // real books (1,772 chapters). Past it a nested <section> reads as part of the
+  // chapter containing it; a top-level one has no containing chapter and is
+  // unreachable, a documented ceiling rather than a supported case.
+  static constexpr uint16_t FB2_CHAPTER_INDEX_LIMIT = INT16_MAX;
 
   // Character cap for a DERIVED label only. A <title> the book supplies is stored
   // as-is: measured across 2,899 real books, capping real titles too saves 3% of

@@ -169,6 +169,26 @@ TEST_F(Fb2SectionCacheTest, WrapperChapterGetsExactlyOnePage) {
   EXPECT_NE(section->loadPage(0), nullptr);
 }
 
+// FR-005: far past the old 256 cap, the layout parser still numbers chapters in
+// lockstep with the metadata parser, so chapter 3000 lays out its own text and no
+// neighbour's (3001 is its child, 2999 the previous chain's child).
+TEST_F(Fb2SectionCacheTest, ChapterFarPastTheOldCapLaysOutItsOwnText) {
+  const std::string path = tmp.path() + "/tower.fb2";
+  ASSERT_TRUE(fb2test::writeAll(path, fb2test::makeSectionTowerFb2(4000, 2)));
+  auto tower = std::make_shared<Fb2>(path, tmp.path());
+  ASSERT_TRUE(tower->load());
+  ASSERT_EQ(tower->getSectionCount(), 4000);
+
+  auto section = std::make_unique<Fb2Section>(tower, 3000, renderer);
+  ASSERT_TRUE(section->createSectionFile(makeSpec()));
+  std::vector<std::unique_ptr<Page>> pages;
+  for (int i = 0; i < section->pageCount; i++) pages.push_back(section->loadPage(i));
+  const auto words = collectWords(pages);
+  EXPECT_TRUE(containsWord(words, "word3000"));
+  EXPECT_FALSE(containsWord(words, "word3001")) << "a child chapter's text leaked into its parent";
+  EXPECT_FALSE(containsWord(words, "word2999")) << "chapter numbering drifted between the parsers";
+}
+
 TEST_F(Fb2SectionCacheTest, LutEntriesAreMonotonicAndStartAfterHeader) {
   auto section = buildSection(makeSpec());
   ASSERT_NE(section, nullptr);

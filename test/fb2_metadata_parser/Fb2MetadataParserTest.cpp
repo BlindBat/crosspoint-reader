@@ -180,17 +180,38 @@ TEST(Fb2MetadataParser, WrapperSectionIsAChapterWithAnEmptyTitle) {
   EXPECT_EQ(sections[2].level, 2);
 }
 
-// Contract C6: the chapter count is bounded; sections past the cap are not
-// chapter boundaries.
-TEST(Fb2MetadataParser, ChapterCountIsCappedAtFb2MaxChapters) {
+// FR-001 at the ceiling: exactly FB2_CHAPTER_INDEX_LIMIT chapters are made, and the
+// sections past it read as part of the chapter containing them, so their bytes are
+// in that chapter's own length (measured against the source text).
+TEST(Fb2MetadataParser, SectionsPastTheChapterLimitStayInTheirContainingChapter) {
   fb2test::TempDir tmp;
   ASSERT_TRUE(tmp.valid());
-  const std::string path = tmp.path() + "/tower.fb2";
-  ASSERT_TRUE(fb2test::writeAll(path, fb2test::makeSectionTowerFb2(Fb2::FB2_MAX_CHAPTERS + 80, 2)));
+  const int children = Fb2::FB2_CHAPTER_INDEX_LIMIT + 2;  // the wrapper is chapter 0
+  std::string source =
+      "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<FictionBook>\n"
+      "<description><title-info><book-title>Wide</book-title><lang>en</lang></title-info></description>\n"
+      "<body><section><title><p>Wrapper</p></title>\n";
+  size_t overflowBytes = 0;
+  for (int i = 0; i < children; i++) {
+    const std::string child = "<section><p>c" + std::to_string(i) + "</p></section>\n";
+    // Children 1..LIMIT-1 are chapters 1..LIMIT-1; the rest are past the limit.
+    if (i >= Fb2::FB2_CHAPTER_INDEX_LIMIT - 1) overflowBytes += child.size() - 1;  // the newline is not a section byte
+    source += child;
+  }
+  source += "</section></body>\n</FictionBook>\n";
+  const std::string path = tmp.path() + "/wide.fb2";
+  ASSERT_TRUE(fb2test::writeAll(path, source));
 
   CollectingParser parser(path);
   ASSERT_TRUE(parser.parse());
-  EXPECT_EQ(parser.getSections().size(), static_cast<size_t>(Fb2::FB2_MAX_CHAPTERS));
+  const auto& sections = parser.getSections();
+  ASSERT_EQ(sections.size(), static_cast<size_t>(Fb2::FB2_CHAPTER_INDEX_LIMIT));
+  size_t childChapterBytes = 0;
+  for (size_t i = 1; i < sections.size(); i++) childChapterBytes += sections[i].length;
+  // The wrapper's own bytes are its span minus its child CHAPTERS: the overflow
+  // children are not chapters, so their bytes stay in the wrapper.
+  EXPECT_EQ(sections[0].length + childChapterBytes, fb2test::topLevelSectionBytes(source));
+  EXPECT_GE(sections[0].length, overflowBytes) << "sections past the limit lost their bytes";
 }
 
 // Hostile nesting must be bounded and deterministic, never a crash.

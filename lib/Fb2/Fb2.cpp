@@ -176,8 +176,8 @@ bool Fb2::loadMetadataCache() {
     return false;
   }
   // A build always writes at least one chapter (whole-file fallback) and never
-  // more than the cap, so anything else is corrupt, not empty.
-  if (count == 0 || count > FB2_MAX_CHAPTERS) {
+  // more than the limit, so anything else is corrupt, not empty.
+  if (count == 0 || count > FB2_CHAPTER_INDEX_LIMIT) {
     LOG_DBG("FB2", "Cache chapter count %u invalid", count);
     return false;
   }
@@ -271,7 +271,7 @@ bool Fb2::buildMetadataCache() {
     count = sink.count;
     builtTitlesSize = sink.titlesSize;
   }  // closes both temp files before they are reopened for reading
-  if (count == 0 || count > FB2_MAX_CHAPTERS) {
+  if (count == 0 || count > FB2_CHAPTER_INDEX_LIMIT) {
     LOG_ERR("FB2", "Parsed %u chapters", count);
     return cleanup();
   }

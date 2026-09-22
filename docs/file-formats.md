@@ -705,7 +705,7 @@ String title;           // u32 length + bytes, each header string <= 4096 bytes
 String author;
 String language;
 String coverBinaryId;
-u16    chapterCount;    // 1..256 (FB2_MAX_CHAPTERS)
+u16    chapterCount;    // 1..32767 (FB2_CHAPTER_INDEX_LIMIT)
 u32    titlesSize;      // bytes in the title area
 Record record[chapterCount];   // 20 bytes each, in chapter (start-tag) order
 u8     titles[titlesSize];     // raw title bytes, no prefixes, no terminators
@@ -749,7 +749,7 @@ filling in `cumulativeLength`, and both temp files are removed. A failed build r
 Every read is validated before use, and any failure falls back to reparsing the FB2 file:
 
 - `version == 5`, and each header string is at most 4096 bytes;
-- `1 <= chapterCount <= FB2_MAX_CHAPTERS`, and the file is exactly
+- `1 <= chapterCount <= FB2_CHAPTER_INDEX_LIMIT` (32767), and the file is exactly
   `header + chapterCount * 20 + titlesSize` bytes, checked before any record is read;
 - per record, in one sequential pass: `titleLength <= 4096` and
   `titleOffset + titleLength <= titlesSize`; no `flags` bit outside bit 0, and no derived
@@ -764,9 +764,13 @@ added `cumulativeLength`; a version-4 cache is rejected and the book's metadata 
 does not touch `sections/<index>.bin`. Version 4 added the `flags` byte. Version 2 stopped
 counting auxiliary `<body name="...">` sections as chapters, which shifts section numbering for
 books with footnote bodies. Version 3 makes every nested `<section>` a chapter of its own and
-adds the `level` byte, which renumbers chapters for any book that nests sections; the chapter
-count is capped, and past the cap a `<section>` reads as part of the chapter containing it
-rather than becoming one.
+adds the `level` byte, which renumbers chapters for any book that nests sections.
+
+The only limit on the chapter count is `FB2_CHAPTER_INDEX_LIMIT` (32767), set by the UI chapter
+list's `int16_t` row index rather than by memory. Past it, a nested `<section>` reads as part
+of the chapter containing it; a top-level one has no containing chapter and is unreachable.
+Firmware before version 5 capped the count at 256 (1024 before that) because the chapter list
+lived in RAM.
 
 ### `sections/<n>.bin` version 5
 

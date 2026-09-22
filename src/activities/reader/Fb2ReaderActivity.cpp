@@ -24,8 +24,14 @@
 #include "util/ScreenshotUtil.h"
 
 namespace {
+// Percent-jump lookups share one open book.bin handle instead of opening it per call.
+struct CumulativeCtx {
+  const Fb2* fb2;
+  HalFile* bookBin;
+};
 size_t cumulativeSectionSize(const void* ctx, const int index) {
-  return static_cast<const Fb2*>(ctx)->getCumulativeSectionSize(index);
+  const auto* c = static_cast<const CumulativeCtx*>(ctx);
+  return c->fb2->getCumulativeSectionSize(index, *c->bookBin);
 }
 }  // namespace
 
@@ -287,7 +293,13 @@ void Fb2ReaderActivity::jumpToPercent(const int percent) {
   onCoverPage = false;
   if (!fb2) return;
 
-  const fb2_reader::SectionSizes sizes{fb2.get(), &cumulativeSectionSize, fb2->getSectionCount(), fb2->getBookSize()};
+  HalFile bookBin;
+  if (!fb2->openIndex(bookBin)) {
+    LOG_ERR("FBR", "Chapter index unavailable for percent jump");
+    return;
+  }
+  const CumulativeCtx ctx{fb2.get(), &bookBin};
+  const fb2_reader::SectionSizes sizes{&ctx, &cumulativeSectionSize, fb2->getSectionCount(), fb2->getBookSize()};
   const auto target = fb2_reader::percentToSection(percent, sizes);
   if (!target.valid) return;
   pendingSectionProgress = target.sectionProgress;
