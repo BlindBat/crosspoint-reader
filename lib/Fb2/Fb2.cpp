@@ -19,6 +19,12 @@ namespace {
 // each record gains the running total of chapter lengths.
 constexpr uint8_t FB2_CACHE_VERSION = 5;
 
+// Lowest chapter cap any pre-v5 cache was built under. Layouts built then give a
+// chapter past it no boundary of its own, so its ancestors' layouts are stale once
+// the cap is gone. An unreadable old book.bin reports no version and keeps its
+// sections/: rare, and accepted.
+constexpr uint16_t FB2_OLD_CHAPTER_CAP = 256;
+
 // The only defined bit of a chapter's `flags` byte.
 constexpr uint8_t FB2_CHAPTER_FLAG_TITLE_DERIVED = 0x01;
 
@@ -143,7 +149,8 @@ Fb2::Fb2(std::string filepath, const std::string& cacheDir) : filepath(std::move
   cachePath = cacheDir + "/fb2_" + std::to_string(std::hash<std::string>{}(this->filepath));
 }
 
-bool Fb2::loadMetadataCache() {
+bool Fb2::loadMetadataCache(uint8_t* rejectedVersion) {
+  if (rejectedVersion) *rejectedVersion = 0;
   const auto cacheFile = cachePath + "/book.bin";
   HalFile file;
   if (!Storage.openFileForRead("FB2", cacheFile, file)) {
@@ -157,6 +164,7 @@ bool Fb2::loadMetadataCache() {
   }
   if (version != FB2_CACHE_VERSION) {
     LOG_DBG("FB2", "Cache version mismatch: %u vs %u", version, FB2_CACHE_VERSION);
+    if (rejectedVersion) *rejectedVersion = version;
     return false;
   }
 
@@ -323,7 +331,8 @@ bool Fb2::load(const bool buildIfMissing) {
   LOG_DBG("FB2", "Loading FB2: %s", filepath.c_str());
 
   // Try cache first
-  if (loadMetadataCache()) {
+  uint8_t rejectedVersion = 0;
+  if (loadMetadataCache(&rejectedVersion)) {
     loaded = true;
     return true;
   }
@@ -339,6 +348,10 @@ bool Fb2::load(const bool buildIfMissing) {
   if (!buildMetadataCache() || !loadMetadataCache()) {
     LOG_ERR("FB2", "Could not build metadata cache");
     return false;
+  }
+  if (rejectedVersion != 0 && rejectedVersion < FB2_CACHE_VERSION && chapterCount > FB2_OLD_CHAPTER_CAP) {
+    LOG_DBG("FB2", "Dropping layouts built under the old %u-chapter cap", FB2_OLD_CHAPTER_CAP);
+    Storage.removeDir((cachePath + "/sections").c_str());
   }
 
   loaded = true;

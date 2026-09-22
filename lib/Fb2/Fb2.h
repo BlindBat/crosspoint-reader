@@ -48,7 +48,9 @@ class Fb2 {
   bool loaded = false;
 
   bool buildMetadataCache();
-  bool loadMetadataCache();
+  // rejectedVersion, when given, receives the version byte of a cache rejected for
+  // having the wrong version (0 otherwise).
+  bool loadMetadataCache(uint8_t* rejectedVersion = nullptr);
 
  public:
   explicit Fb2(std::string filepath, const std::string& cacheDir);

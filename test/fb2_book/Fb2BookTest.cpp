@@ -594,6 +594,58 @@ TEST_F(Fb2BookTest, FailedBuildLeavesNoCacheOrTempFiles) {
   EXPECT_TRUE(book.load(true));
 }
 
+// US3 / FR-010. Layouts built under the old 256-chapter cap have stale chapter
+// boundaries only when the book has more than 256 chapters, so the upgrade from a
+// pre-v5 cache drops sections/ for exactly those books and keeps every other
+// book's layouts. A corrupt v5 cache was built under the same numbering, so it
+// never costs the reader their layouts.
+TEST_F(Fb2BookTest, UpgradeDropsLayoutsOnlyForBooksOverTheOldCap) {
+  struct Case {
+    const char* name;
+    int chapters;
+    uint8_t oldVersion;
+    bool layoutsSurvive;
+  };
+  for (const Case& c :
+       {Case{"v4 cache, 200 chapters", 200, 4, true}, Case{"v4 cache, 300 chapters", 300, 4, false},
+        Case{"v3 cache, 300 chapters", 300, 3, false}, Case{"corrupt v5 cache, 300 chapters", 300, 5, true}}) {
+    const std::string path =
+        tmp.path() + "/upgrade-" + std::to_string(c.chapters) + "-" + std::to_string(c.oldVersion) + ".fb2";
+    ASSERT_TRUE(writeAll(path, fb2test::makeSectionTowerFb2(c.chapters, 2))) << c.name;
+    Fb2 book(path, tmp.path());
+    book.setupCacheDir();
+    // An old-format cache: only the version byte matters, the rest is never read.
+    std::string old;
+    old.push_back(static_cast<char>(c.oldVersion));
+    appendString(old, "Old");
+    ASSERT_TRUE(writeAll(book.getCachePath() + "/book.bin", old)) << c.name;
+    Storage.mkdir((book.getCachePath() + "/sections").c_str());
+    const std::string layout = book.getCachePath() + "/sections/0.bin";
+    ASSERT_TRUE(writeAll(layout, "layout")) << c.name;
+
+    ASSERT_TRUE(book.load(true)) << c.name;
+    EXPECT_EQ(book.getSectionCount(), c.chapters) << c.name;
+    EXPECT_EQ(fileExists(layout), c.layoutsSurvive) << c.name;
+  }
+}
+
+// SC-004: once the reader holds the current chapter's record, progress and book
+// size are pure arithmetic, so a page turn opens nothing on the card.
+TEST_F(Fb2BookTest, ProgressFromAHeldChapterDoesNoIo) {
+  Fb2 book(fixturePath("nested-deep.fb2"), tmp.path());
+  ASSERT_TRUE(book.load());
+  const auto chapter = book.getSectionInfo(2);
+  Storage.resetOpenCounts();
+  float sum = 0.0f;
+  for (int page = 0; page <= 10; page++) {
+    sum += book.calculateProgress(chapter, static_cast<float>(page) / 10.0f);
+  }
+  const size_t size = book.getBookSize();
+  EXPECT_EQ(Storage.openForReadCount(), 0u);
+  EXPECT_GT(sum, 0.0f);
+  EXPECT_GT(size, 0u);
+}
+
 // ---------------------------------------------------------------------------
 // Progress / TOC math on a book loaded from a hand-built book.bin.
 // ---------------------------------------------------------------------------

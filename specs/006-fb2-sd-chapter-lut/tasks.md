@@ -190,19 +190,19 @@ description: "Task list for FB2 chapter metadata on SD (issue #8)"
 
 ### Tests for User Story 3 (write first)
 
-- [ ] T035 [P] [US3] In `test/fb2_book/Fb2BookTest.cpp`, add three migration cases. In each, write a v4 `book.bin` (byte layout from the old `saveMetadataCache`) plus a dummy `sections/0.bin`, then `load()`:
+- [X] T035 [P] [US3] In `test/fb2_book/Fb2BookTest.cpp`, add three migration cases. In each, write a v4 `book.bin` (byte layout from the old `saveMetadataCache`) plus a dummy `sections/0.bin`, then `load()`:
   1. A book with 200 chapters: `sections/0.bin` still exists.
   2. A book with 300 chapters: `sections/` is gone.
   3. A corrupt **v5** file for a book with 300 chapters: `sections/` survives, because a v5 cache used the same numbering.
 
   Mutation: drop the version condition.
-- [ ] T036 [P] [US3] In `test/fb2_book/Fb2BookTest.cpp`, add a test that after `resetOpenCounts()`, `calculateProgress(info, f)` and `getBookSize()` together perform 0 `openForReadCount()` (SC-004). The reader-side guard (T022's `chapterInfoIndex` check) is activity code with no host test; it is verified by inspection plus quickstart device step 5.
-- [ ] T037 [P] [US3] In `test/xtc_fb2_readers/Fb2ReaderMathTest.cpp`, confirm the existing legacy-progress cases (4/6/8-byte payloads, `firstChapterOfTopLevel`) still pass against a v5-backed book. Nothing new should be needed beyond T014's fixture.
+- [X] T036 [P] [US3] In `test/fb2_book/Fb2BookTest.cpp`, add a test that after `resetOpenCounts()`, `calculateProgress(info, f)` and `getBookSize()` together perform 0 `openForReadCount()` (SC-004). The reader-side guard (T022's `chapterInfoIndex` check) is activity code with no host test; it is verified by inspection plus quickstart device step 5.
+- [X] T037 [P] [US3] In `test/xtc_fb2_readers/Fb2ReaderMathTest.cpp`, confirm the existing legacy-progress cases (4/6/8-byte payloads, `firstChapterOfTopLevel`) still pass against a v5-backed book. Nothing new should be needed beyond T014's fixture.
 
 ### Implementation for User Story 3
 
-- [ ] T038 [US3] In `lib/Fb2/Fb2.cpp`, have `loadMetadataCache()` report the version byte it rejected (0 when there was no file or it was unreadable). In `load()`, after a successful parse: `if (rejectedVersion != 0 && rejectedVersion < FB2_CACHE_VERSION && chapterCount > FB2_OLD_CHAPTER_CAP) Storage.removeDir((cachePath + "/sections").c_str());`. Use `constexpr uint16_t FB2_OLD_CHAPTER_CAP = 256; // lowest cap any pre-v5 cache was built under; layouts past it have stale boundaries. An unreadable old book.bin reports 0 and keeps sections/: rare, accepted` (research R6). Keep `progress.bin`.
-- [ ] T039 [US3] Run `bin/run-tests` and `bin/run-tests --asan`. Commit `fix(fb2): drop layouts built under the old chapter cap`.
+- [X] T038 [US3] In `lib/Fb2/Fb2.cpp`, have `loadMetadataCache()` report the version byte it rejected (0 when there was no file or it was unreadable). In `load()`, after a successful parse: `if (rejectedVersion != 0 && rejectedVersion < FB2_CACHE_VERSION && chapterCount > FB2_OLD_CHAPTER_CAP) Storage.removeDir((cachePath + "/sections").c_str());`. Use `constexpr uint16_t FB2_OLD_CHAPTER_CAP = 256; // lowest cap any pre-v5 cache was built under; layouts past it have stale boundaries. An unreadable old book.bin reports 0 and keeps sections/: rare, accepted` (research R6). Keep `progress.bin`.
+- [X] T039 [US3] Run `bin/run-tests` and `bin/run-tests --asan`. Commit `fix(fb2): drop layouts built under the old chapter cap`.
 
 **Checkpoint**: all stories are green on host.
 
