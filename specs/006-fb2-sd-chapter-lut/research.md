@@ -16,9 +16,13 @@ All figures below were measured on 2026-09-22 unless marked otherwise.
 | Largest per-book sum of title bytes | 83,658 |
 | Longest single title | 1,144 bytes |
 
-**Decision**: the only ceiling left is the `u16` chapter number, **65,535**: 37× the
-largest real book. Past it the existing "extra sections belong to the chapter that contains
-them" rule applies.
+**Decision**: the only ceiling left is **32,767** (`INT16_MAX`): 18× the largest real book.
+The `u16` fields would allow 65,535, but the UI chapter list stores each row's value and the
+selection as `int16_t` (`freeink-sdk/libs/ui/FreeInkUI/include/components/lists/list.h:15,63`),
+and `Fb2ReaderChapterSelectionActivity.cpp:75` casts to it, so a higher chapter could not be
+selected. Past it, a nested section still belongs to the chapter that contains it. A top-level
+section past the limit has no parent, so its bytes land in no chapter and its text is
+unreachable (`Fb2MetadataParser.cpp:270-280`). That is the documented ceiling.
 
 **Why it matters**: kept in RAM, the 1,772-chapter book would cost about 64 KB of
 `SectionInfo` (36 B each on riscv32) plus its long-title heap blocks. That exceeds the

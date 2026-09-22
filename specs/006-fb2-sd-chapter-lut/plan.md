@@ -11,8 +11,8 @@ Move FB2 chapter metadata from `std::vector<SectionInfo>` in RAM to fixed 20-byt
 records. The first parse streams records to two temp files. A single pass then assembles
 `book.bin` and fills in the running byte totals, so progress needs one record, not a scan.
 Lookups return `SectionInfo` by value. The reader caches the current chapter's record, so page
-turns do no index I/O. `FB2_MAX_CHAPTERS` is deleted. The only ceiling left is the `u16`
-chapter number (65,535), which is 37× the largest of 2,899 real books (1,772, research R1).
+turns do no index I/O. `FB2_MAX_CHAPTERS` is deleted. The only ceiling left is 32,767,
+set by the UI list's `int16_t` row index, which is 18× the largest of 2,899 real books (1,772, research R1).
 
 Ponytail scope: the same struct, the same accessor names, the same TOC identity, the same
 `progress.bin` and the same section files. No code is shared with EPUB, and no new
@@ -39,7 +39,7 @@ abstraction is added beyond a two-callback parser sink.
 - no member file handle (research R3);
 - stack locals under 256 B (the copy buffer is 128 B).
 
-**Scale/Scope**: real books run up to 1,772 chapters and 83,658 B of titles (R1); the format allows 65,535 chapters. About 8 files touched plus docs and tests.
+**Scale/Scope**: real books run up to 1,772 chapters and 83,658 B of titles (R1); the ceiling is 32,767 chapters. About 8 files touched plus docs and tests.
 
 ## Constitution Check
 
@@ -50,7 +50,7 @@ abstraction is added beyond a two-callback parser sink.
 | I. Focused reading device | PASS | Makes every chapter of the 22 capped books reachable, and removes a RAM-driven limit. No new UI or scope. |
 | II. Memory is the constraint | PASS | Removes the O(n) vector: 43,732 B for the worst book at the cap, and about 150 KB if the cap were removed with no other change (R1). New heap use is transient only: one `std::string` per lookup, and one `SectionInfo` per open section while parsing (in place of n). There are no `push_back` loops over chapters. The copy buffer is on the stack at 128 B. |
 | III. Portability behind the HAL | PASS | All I/O goes through `HalFile`/`HalStorage`. `lib/Fb2` stays host-compilable. The stub already supports seek then overwrite in `"wb"` mode, matching the device's `O_RDWR` open (`SDCardManager.cpp:385`). |
-| IV. Evidence over claims | PASS | Every number cites R1 (the corpus), the device note (138 KB free), or the format width. SC-002's allowance is defined as 0 for books of equal depth, not guessed. First-open cost is measured, not assumed (quickstart device step 3). |
+| IV. Evidence over claims | PASS | Every number cites R1 (the corpus), the device note (138 KB free), or the UI list's `int16_t` index (`list.h:15,63`). SC-002's allowance is defined as 0 for books of equal depth, not guessed. First-open cost is measured, not assumed (quickstart device step 3). |
 | V. Tests prove behavior | PASS (obligation) | Each FR maps to a host test in the quickstart. The malformed v5 corpus is generated in the test. Each new test must show a mutation it catches. The existing cap tests flip into tests of the new ceiling. |
 | VI. Untrusted input | PASS | An exact file-size equation, bounds on every record's title, checks on level, flags and cumulative totals, and a count checked against the file size before any read. No count drives an allocation. |
 | VII. Upstream-first hygiene | PASS | FB2 is fork-only (`docs/file-formats.md` "FB2 caches *(fork-only)*"). Upstream has no overlapping PRs (searched `fb2`: only #755, the original fork PR, and #2484, closed). The work happens on a feature branch, with one logical change per commit. |
@@ -60,8 +60,8 @@ abstraction is added beyond a two-callback parser sink.
 ### Post-design re-check (after Phase 1)
 
 Still PASS. The design adds two obligations, both captured in the contracts:
-- **VI**: `titleLength` is `u16` but is capped at 4,096 on read. `chapterCount = 65535` in a
-  tiny file must fail the size equation before any per-record read.
+- **VI**: `titleLength` is `u16` but is capped at 4,096 on read. `chapterCount = 32768` must fail the
+  count bound, and `32767` in a tiny file the size equation, both before any per-record read.
 - **V/III**: the SC-004 test needs an open counter on the shared stub. It is added in the stub
   and counts on host exactly what the device does (every `openFileForRead`).
 
@@ -102,6 +102,8 @@ test/xtc_fb2_readers, test/fb2_common # updated and new tests, stub open counter
 struct is declared in `Fb2.h`, beside `SectionInfo`, because both parsers already include it.
 
 ## Commit plan (one logical change each, Principle VII)
+
+> Superseded by the commit named at the end of each phase in [tasks.md](tasks.md) (four commits: the status-bar cache folds into v5, the batched reads into the cap removal). Kept as the original design record.
 
 1. `refactor(fb2): parser emits chapters through a sink`: this commit has no format change.
    `Fb2` collects the sink into its vector. Parser tests switch to a collecting sink.

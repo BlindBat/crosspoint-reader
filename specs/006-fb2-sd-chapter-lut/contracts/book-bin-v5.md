@@ -11,7 +11,7 @@ String title;           // u32 length + bytes, ≤ 4096
 String author;
 String language;
 String coverBinaryId;
-u16    chapterCount;    // 1..65535
+u16    chapterCount;    // 1..32767 (FB2_CHAPTER_INDEX_LIMIT)
 u32    titlesSize;      // bytes in the title area
 // recordsOffset = position here
 Record record[chapterCount];   // 20 bytes each, chapter order (start-tag order)

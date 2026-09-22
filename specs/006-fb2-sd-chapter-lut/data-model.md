@@ -8,7 +8,7 @@ what lives in memory and when.
 | Field | Type | Notes |
 |---|---|---|
 | `filepath`, `cachePath`, `title`, `author`, `language`, `coverBinaryId` | `std::string` | unchanged |
-| `chapterCount` | `uint16_t` | 1..65,535 |
+| `chapterCount` | `uint16_t` | 1..32,767 (`FB2_CHAPTER_INDEX_LIMIT`) |
 | `recordsOffset` | `uint32_t` | byte offset of record 0 in `book.bin` |
 | `titlesOffset` | `uint32_t` | byte offset of the title area |
 | `bookSize` | `uint32_t` | `cumulativeLength` of the last record |
@@ -42,7 +42,7 @@ Copies of it exist only where the code keeps one:
 Every current write site already targets `back()` (`Fb2MetadataParser.cpp:154,166,240,253`).
 
 The chapter counter replaces `sections.size()`. Two transitions reach the sink:
-- **start tag**: counter below 65,535 → `sink.reserve()`, push an `OpenSection`, and increment the counter.
+- **start tag**: counter below `FB2_CHAPTER_INDEX_LIMIT` (32,767) → `sink.reserve()`, push an `OpenSection`, and increment the counter.
 - **end tag**, or `</body>` closing still-open sections (`:285`): `sink.write(index, info)` with
   the final length. The same 0 length as today applies when a section is never closed.
 
@@ -59,7 +59,7 @@ titled with the book title.
 ## Validation rules (enforced at load; any failure rejects the file and the book is re-parsed)
 
 1. `version == 5`; each header string ≤ 4,096 bytes.
-2. `1 ≤ chapterCount`, and `recordsOffset + chapterCount·20 + titlesSize == fileSize` exactly.
+2. `1 ≤ chapterCount ≤ 32,767`, and `recordsOffset + chapterCount·20 + titlesSize == fileSize` exactly.
 3. For each record *i*, in order:
    - `titleLength ≤ 4,096` and `titleOffset + titleLength ≤ titlesSize`;
    - `flags & ~0x01 == 0`, and a derived flag never sits on an empty title;

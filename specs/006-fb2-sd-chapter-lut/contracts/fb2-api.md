@@ -5,9 +5,10 @@ Only the chapter accessors change. Every other `Fb2` method keeps its signature.
 ```c++
 class Fb2 {
  public:
-  // Width of the chapter number stored in book.bin and progress.bin. It is not a
-  // memory budget: past it a <section> reads as part of the chapter containing it.
-  static constexpr uint16_t FB2_CHAPTER_INDEX_LIMIT = UINT16_MAX;   // replaces FB2_MAX_CHAPTERS
+  // Highest chapter the UI list can address: its row value and selection index are
+  // int16_t (FreeInkUI lists/list.h). Not a memory budget. Past it a nested <section>
+  // reads as part of the chapter containing it; a top-level one is unreachable.
+  static constexpr uint16_t FB2_CHAPTER_INDEX_LIMIT = INT16_MAX;   // replaces FB2_MAX_CHAPTERS
 
   int getSectionCount() const;                       // unchanged; from the header
 
