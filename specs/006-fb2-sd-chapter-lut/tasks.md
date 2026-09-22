@@ -20,7 +20,7 @@ description: "Task list for FB2 chapter metadata on SD (issue #8)"
 
 ## Phase 1: Setup (test infrastructure)
 
-- [ ] T001 Device baselines, **before any code change** (human, current `master` firmware): run `quickstart.md` device step 0 and record the three baselines in `specs/006-fb2-sd-chapter-lut/research.md` under a new R10. Steps 1–3 of T044 compare against them.
+- [X] T001 Device baselines, **before any code change** (human, current `master` firmware): run `quickstart.md` device step 0 and record the three baselines in `specs/006-fb2-sd-chapter-lut/research.md` under a new R10. Steps 1–3 of T044 compare against them.
 - [X] T002 [P] Extend `test/support/AllocCounter.{h,cpp}` with `liveBytes()` and `peakBytes()`. Prefix **every** block with a `max_align_t`-sized header that records its size, whether or not counting is enabled, because a block allocated before counting starts is still freed through the same `operator delete`. Only the counters are gated: subtract on delete, and track the high-water mark while counting is enabled. Add a self-check in `test/alloc_guards/AllocGuardsTest.cpp`: after allocating 100 B and freeing it, live is 0 and peak ≥ 100.
 - [X] T003 [P] Add an open counter to `test/fb2_common/stubs/HalStorage.h`: `openForReadCount()` and `resetOpenCounts()`. `openFileForRead` increments the counter. Also add `failWritesAfter(size_t bytes)`: once that many bytes have been written across all files, `write` returns 0, so a test can make a build fail part-way. Reset clears both.
 - [X] T004 [P] Add `writeV5BookBin(path, header strings, records, titles)` to `test/fb2_common/Fb2TestSupport.h`. It writes the byte layout in `contracts/book-bin-v5.md` field by field, so tests can hand-build valid and malformed caches.
@@ -214,7 +214,7 @@ description: "Task list for FB2 chapter metadata on SD (issue #8)"
 - [X] T041 Build `pio run -e default` and `pio run -e x4pro`, since C3 and S3 are separate binaries. Then run `pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high`. On macOS a green `pio check` is not a signal; read CI.
 - [X] T042 [P] Rerun the corpus tool from research R1 against the unpatched `lib/Fb2`. All 2,899 books should load and the 1,772-chapter book should list 1,772 chapters. Append the result to `specs/006-fb2-sd-chapter-lut/research.md` R1 (SC-001).
 - [X] T043 [P] Grep for leftovers: `rg "FB2_MAX_CHAPTERS|takeSections|getSections\(" lib src test docs` should return nothing outside `specs/`.
-- [ ] T044 Device validation (human, gate 6): run `quickstart.md` device steps 1–5 on the X4, and record the `[MEM] Free` figures, window-refresh timings and first-open timings in `specs/006-fb2-sd-chapter-lut/research.md`. If first open is slower by more than the run-to-run spread, follow up on the R2 upgrade path by buffering `titles.tmp`.
+- [X] T044 Device validation (human, gate 6): run `quickstart.md` device steps 1–5 on the X4, and record the `[MEM] Free` figures, window-refresh timings and first-open timings in `specs/006-fb2-sd-chapter-lut/research.md`. If first open is slower by more than the run-to-run spread, follow up on the R2 upgrade path by buffering `titles.tmp`.
 
 ---
 

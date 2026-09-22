@@ -158,3 +158,47 @@ EPUB batches `prewarmFallbackText` on each window refresh. FB2 skipped it "becau
 are already in RAM", and that reason no longer holds. **Decision**: still skip it. Prewarm is
 about CJK fallback glyphs, not SD latency, and nothing shows FB2 lists repainting slowly.
 Update the `ponytail:` comment's reason and keep its upgrade path.
+
+## R10. Device measurements (T001 baseline, T044 validation)
+
+Measured on the Xteink X4 (ESP32-C3, 160 MHz) on 2026-09-22 with a throwaway boot-time harness,
+since deleted. The same harness ran on `master` (T001) and on this branch (T044) against the
+same SD card: 944 FB2 books and 2 EPUBs. The 1,772-chapter corpus book is **not** on the card,
+so the eight largest FB2 files stood in for it. Two of them were pinned at the old cap.
+
+| Measurement | `master` (book.bin v4) | this branch (v5) |
+|---|---|---|
+| Largest-chapter book ("Звездный ковчег", 17.3 MB) | 256 chapters (capped) | **677 chapters** |
+| Second capped book (Bradbury omnibus, 11.8 MB) | 256 chapters (capped) | **343 chapters** |
+| Heap held by that open book | 21,552 B | **432 B** |
+| Heap held by a 26-chapter book | 3,608 B | 584 B |
+| Lowest free heap during the run (first opens included) | 100,092 B | **132,744 B** |
+| First open, largest book, 3 runs | 31,767 / 31,775 / 31,768 ms | 42,351 / 40,460 / 40,460 ms |
+| First open, 26-chapter 24 MB book, 3 runs | 44,982 / 44,982 / 44,986 ms | 45,409 / 45,415 / (run 3 not captured) ms |
+| Chapter-list window (24 entries), largest book | in RAM, ~0 ms | mean 66 ms, max 72 ms (29 windows) |
+| Chapter-list window, 26-chapter book | ~0 ms | mean 30 ms, max 51 ms |
+| EPUB window, same card (51 TOC entries) | mean 33, max 47 ms | mean 33, max 48 ms |
+| Free heap across a full chapter-list scroll | — | flat (149,828 B throughout) |
+
+**Migration (US3), on real v4 caches written by `master`:** a stand-in layout file was left in
+`sections/` for all eight books. After the first open on this branch, it survived in the six
+books with ≤256 chapters and was removed in the two that grew past 256.
+
+**Titles past the old cap (US1 scenario 4):** chapters 256, 300 and 676 of the 677-chapter book
+read back their own titles ("Благодарности", "42 Старший", "Владимир Марышев «ТЕНИ ПРОШЛОГО»").
+This was checked in the log only; the status bar was not photographed.
+
+**Findings against the success criteria**
+
+- **SC-003 (heap) met.** A book with 677 chapters holds 432 B, against 21,552 B for the same book
+  capped at 256 on `master`. The indexing peak is 32,652 B lower.
+- **SC-005 (chapter list vs EPUB) not met as written.** A 24-entry FB2 window takes 66 ms mean,
+  against 33 ms for this card's EPUB. The EPUB baseline has only 51 entries, far short of the
+  ~1,000 the criterion assumes, and both are small next to a ~1 s panel refresh. Each FB2
+  lookup does two seeks (the record, then the title elsewhere in the file). Reading the 24
+  records in one 480-byte read would halve them.
+- **R2 trigger fired: first open is slower.** The 677-chapter book takes ~8.7 s (27%) longer to
+  index. That is about 4 ms per unbuffered temp-file write, 3 writes per chapter, consistent
+  with sector-cache contention against the source reads. The 26-chapter book is ~430 ms (1%)
+  slower, outside a run-to-run spread of ≤6 ms. This is the planned follow-up: buffer
+  `titles.tmp` (append-only).
