@@ -1,8 +1,18 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 2.0.0 → 2.1.0 (MINOR: Principle IV gains an explicit rule for numeric
-limits; Development Workflow gains the macOS gate caveat)
+Version change: 2.1.0 → 2.2.0 (MINOR: Platform Constraints gains an SD access rule for
+binary caches)
+Modified sections (2.2.0):
+  - Platform Constraints & Standards, Files bullet: code reading a binary cache batches by
+    region and moves a fixed-size record in one call. Added after specs/006 measured both
+    mistakes on device: alternating record/title reads cost 66 ms per 24-row chapter screen
+    (6x the EPUB list it is benchmarked against) because SdFat caches one sector and reloaded
+    it twice per row, and writing each 20-byte record as 7 per-field calls made the first open
+    of a 677-chapter book 8.7 s slower. Batching by region and packing the record fixed both
+    (66 -> 11 ms; 8.7 -> 2.9 s). Both were found only after the code shipped to a device.
+
+Previous report (2.1.0), retained:
 Modified principles:
   - IV. Evidence Over Claims (title unchanged): adds that any numeric limit, threshold or
     capacity MUST cite the measurement that chose it. Added after a ceiling was written
@@ -163,6 +173,13 @@ keep upstream contributions free of fork-only code.
 - Files: `FsFile` destructors auto-close (`DESTRUCTOR_CLOSES_FILE=1`); explicit
   `close()` only before delete, reopen, or at a member's release point. Storage
   goes through `HalStorage` under the storage mutex; SPIFFS is not mounted.
+- SD access shape: SdFat caches a **single** sector and every `HalFile` call takes the
+  storage mutex, so how reads are grouped decides their cost. Code reading a binary cache
+  MUST batch by region — all of a window's fixed-size records, then their variable-length
+  strings — instead of alternating between distant areas of one file, and MUST move a
+  fixed-size record in one call rather than field by field. Writes that only append during
+  a cache build go through `serialization::BufferedFileWriter`; a stream that is patched in
+  place is the documented exception. Measured on device in specs/006 research R10.
 - XML: expat with `XML_GE=0` and `XML_CONTEXT_BYTES=1024`. New host parser suites
   SHOULD compile the in-tree expat with those same flags for device parity; a suite
   that links the system expat instead MUST document the behavioral divergence in a
@@ -227,4 +244,4 @@ and PRs MUST check compliance with Principles I–VII; violations require a
 documented justification in the plan's Complexity Tracking table or a change to
 this document — silent exceptions are not permitted.
 
-**Version**: 2.1.0 | **Ratified**: 2026-09-14 | **Last Amended**: 2026-09-21
+**Version**: 2.2.0 | **Ratified**: 2026-09-14 | **Last Amended**: 2026-09-22
