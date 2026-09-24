@@ -41,6 +41,11 @@ class Fb2MetadataParser {
   };
   Context context = Context::NONE;
   int bodyCount = 0;
+  // Byte offset of the current reading body's "<body" tag, pending attachment to that
+  // body's first chapter: the bytes between it and the first "<section" are rendered
+  // into that chapter, so they carry its weight. NO_BODY_PREFIX when nothing is pending.
+  static constexpr size_t NO_BODY_PREFIX = static_cast<size_t>(-1);
+  size_t bodyPrefixStart = NO_BODY_PREFIX;
   int elemDepth = 0;
   bool inBody = false;
   bool inTitleInfo = false;

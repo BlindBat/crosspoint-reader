@@ -124,10 +124,10 @@ void Fb2MetadataParser::startElement(void* userData, const char* name, const cha
       return;
     }
     self->inBody = true;
-    // ponytail: a body's own <title>/<epigraph>, ahead of its first <section>,
-    // is in no chapter's length, so it carries no progress weight (it reads
-    // with the first chapter — see Fb2SectionParser::inBodyPrefix). It is a few
-    // hundred bytes of a whole body; give it its own chapter if that ever shows.
+    // A body's own <title>/<epigraph> ahead of its first <section> reads with that
+    // body's first chapter (Fb2SectionParser::inBodyPrefix), so its bytes weigh into
+    // that chapter: hold the body's offset until the first section claims it.
+    self->bodyPrefixStart = static_cast<size_t>(XML_GetCurrentByteIndex(static_cast<XML_Parser>(self->parser)));
     return;
   }
 
@@ -139,7 +139,11 @@ void Fb2MetadataParser::startElement(void* userData, const char* name, const cha
       const bool isChapter = self->chapterCount < Fb2::FB2_CHAPTER_INDEX_LIMIT;
       const size_t startOffset = static_cast<size_t>(XML_GetCurrentByteIndex(static_cast<XML_Parser>(self->parser)));
       OpenSection open;
-      open.startOffset = startOffset;
+      // The body's first chapter starts its span at the <body> tag; every other
+      // chapter at its own. Clamped: a byte index that is not strictly below this
+      // section's own offset degrades to the section tag rather than underflowing.
+      open.startOffset = self->bodyPrefixStart < startOffset ? self->bodyPrefixStart : startOffset;
+      self->bodyPrefixStart = NO_BODY_PREFIX;
       open.elemDepth = depth;
       open.isChapter = isChapter;
       if (isChapter) {
@@ -295,6 +299,8 @@ void Fb2MetadataParser::endElement(void* userData, const char* name) {
       self->inSectionTitle = false;
     } else if (strcmp(tag, "body") == 0) {
       self->inBody = false;
+      // The next reading body carries its own prefix, never this one's.
+      self->bodyPrefixStart = NO_BODY_PREFIX;
       // Unbalanced markup can leave sections open; a body never spans another.
       // Their chapters are still emitted, with the zero length they never got.
       for (auto& open : self->openSections) {

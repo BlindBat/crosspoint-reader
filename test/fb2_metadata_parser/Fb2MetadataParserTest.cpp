@@ -45,6 +45,12 @@ TEST(Fb2MetadataParser, SectionOffsetsPointAtTheSectionTags) {
   EXPECT_EQ(sections[0].title, "Chapter One");
   EXPECT_EQ(sections[1].title, "Chapter Two");
 
+  // fileOffset is always the "<section" tag, in every chapter: it is what the
+  // renderer and the chapter list index by, and this feature must not move it.
+  // The span is a different question: chapter 0 is its body's first, so its weight
+  // starts at the "<body" tag (contract C7'), while chapter 1's starts at its own.
+  const size_t bodyPos = raw.find("<body");
+  ASSERT_NE(bodyPos, std::string::npos);
   for (int i = 0; i < 2; i++) {
     const size_t openPos = nthOccurrence(raw, "<section", i);
     const size_t closePos = nthOccurrence(raw, "</section>", i);
@@ -53,7 +59,8 @@ TEST(Fb2MetadataParser, SectionOffsetsPointAtTheSectionTags) {
     EXPECT_EQ(sections[i].fileOffset, openPos) << "section " << i;
     // The parser estimates the end as the closing tag's offset plus
     // strlen("section") + 3 == strlen("</section>").
-    EXPECT_EQ(sections[i].fileOffset + sections[i].length, closePos + 10) << "section " << i;
+    const size_t spanStart = i == 0 ? bodyPos : openPos;
+    EXPECT_EQ(spanStart + sections[i].length, closePos + 10) << "section " << i;
   }
 }
 
@@ -130,8 +137,11 @@ TEST(Fb2MetadataParser, NestedChapterLengthsExcludeChildSpans) {
   const size_t innerEnd = nthOccurrence(raw, "</section>", 0) + 10;
   EXPECT_EQ(sections[1].length, innerEnd - innerStart);
 
-  // The parent's own bytes are its full span minus the inner chapter's.
-  const size_t parentStart = nthOccurrence(raw, "<section", 0);
+  // The parent's own bytes are its full span minus the inner chapter's. It is also
+  // its body's first chapter, so that span starts at the "<body" tag (contract C7'),
+  // not at its own "<section" — the front matter between them is rendered into it.
+  const size_t parentStart = raw.find("<body");
+  ASSERT_NE(parentStart, std::string::npos);
   const size_t parentEnd = nthOccurrence(raw, "</section>", 1) + 10;
   EXPECT_EQ(sections[0].length, (parentEnd - parentStart) - (innerEnd - innerStart));
 }
@@ -212,6 +222,118 @@ TEST(Fb2MetadataParser, SectionsPastTheChapterLimitStayInTheirContainingChapter)
   // children are not chapters, so their bytes stay in the wrapper.
   EXPECT_EQ(sections[0].length + childChapterBytes, fb2test::topLevelSectionBytes(source));
   EXPECT_GE(sections[0].length, overflowBytes) << "sections past the limit lost their bytes";
+}
+
+// A reading body's bytes ahead of its first <section> are rendered into that body's
+// first chapter, so they carry its weight (contract C7'). body-prefix.fb2 puts 126 B of
+// <title>/<epigraph> between the <body> tag at 188 and the first <section> at 314.
+TEST(Fb2MetadataParser, BodyFrontMatterWeighsIntoTheBodysFirstChapter) {
+  CollectingParser parser(fixturePath("body-prefix.fb2"));
+  ASSERT_TRUE(parser.parse());
+
+  const auto& sections = parser.getSections();
+  ASSERT_EQ(sections.size(), 2u);
+
+  // Chapter 0 spans the <body> tag through its own </section>: 110 B of section
+  // plus the 126 B of front matter ahead of it.
+  EXPECT_EQ(sections[0].length, 236u);
+  // Chapter 1 is untouched: its span still starts at its own <section>.
+  EXPECT_EQ(sections[1].length, 113u);
+  // cumulativeLength is accumulated by Fb2, not by this parser; the book-level
+  // total is pinned in Fb2BookTest.BodyFrontMatterMovesTheProgressPercentage.
+  EXPECT_EQ(sections[0].length + sections[1].length, 349u);
+
+  // The offset must NOT move: it is what the renderer and the chapter list use.
+  EXPECT_EQ(sections[0].fileOffset, 314u) << "fileOffset is the <section> tag, never the <body> tag";
+}
+
+// FR-005: an auxiliary body (a later <body> with a name attribute) carries no weight,
+// and that includes its own front matter. notes-body.fb2 has a named second body.
+TEST(Fb2MetadataParser, AuxiliaryBodyFrontMatterAddsNoWeight) {
+  const std::string raw = readAll(fixturePath("notes-body.fb2"));
+  CollectingParser parser(fixturePath("notes-body.fb2"));
+  ASSERT_TRUE(parser.parse());
+
+  size_t total = 0;
+  for (const auto& section : parser.getSections()) total += section.length;
+
+  // The oracle counts reading bodies only, so agreeing with it is exactly the
+  // claim that the named body contributed nothing -- its prefix included.
+  EXPECT_EQ(total, fb2test::topLevelSectionBytes(raw));
+  EXPECT_LT(total, raw.size()) << "the named body's bytes must not be in the total";
+}
+
+// FR-006: with several reading bodies, each body's front matter weighs into that
+// body's own first chapter, never into chapter 0 of the book.
+TEST(Fb2MetadataParser, EachReadingBodyFrontMatterWeighsIntoItsOwnFirstChapter) {
+  const std::string raw = readAll(fixturePath("multi-reading-body.fb2"));
+  CollectingParser parser(fixturePath("multi-reading-body.fb2"));
+  ASSERT_TRUE(parser.parse());
+
+  const auto& sections = parser.getSections();
+  ASSERT_EQ(sections.size(), 4u);
+
+  const size_t body0 = raw.find("<body");
+  const size_t body1 = raw.find("<body", body0 + 1);
+  ASSERT_NE(body1, std::string::npos);
+
+  // Chapters 0 and 2 are their bodies' firsts: each spans from its own body tag.
+  for (size_t i = 0; i < 4; i++) {
+    const size_t openPos = nthOccurrence(raw, "<section", static_cast<int>(i));
+    const size_t closePos = nthOccurrence(raw, "</section>", static_cast<int>(i)) + 10;
+    const size_t spanStart = i == 0 ? body0 : (i == 2 ? body1 : openPos);
+    EXPECT_EQ(sections[i].length, closePos - spanStart) << "chapter " << i;
+    EXPECT_EQ(sections[i].fileOffset, openPos) << "chapter " << i;
+  }
+
+  // Body 1's prefix went to chapter 2, so chapter 0 spans only its own body.
+  EXPECT_LT(sections[0].length + sections[1].length, body1 - body0 + 1);
+}
+
+// FR-007: a reading body with no <section> already spans the whole file as one
+// chapter. Nothing is added on top, and the oracle (which counts sections) agrees.
+TEST(Fb2MetadataParser, NoSectionBodyKeepsItsWholeFileWeight) {
+  // no-sections.fb2 has no <section> at all, so contract C9's whole-file fallback
+  // gives it one chapter spanning the file. The section-counting oracle returns 0
+  // here by construction, so the fallback is asserted directly: the body prefix
+  // must NOT be added on top of a span that already covers everything.
+  {
+    const std::string raw = readAll(fixturePath("no-sections.fb2"));
+    CollectingParser parser(fixturePath("no-sections.fb2"));
+    ASSERT_TRUE(parser.parse());
+    ASSERT_EQ(parser.getSections().size(), 1u);
+    EXPECT_EQ(parser.getSections()[0].length, raw.size());
+    EXPECT_EQ(fb2test::topLevelSectionBytes(raw), 0u) << "the oracle counts sections, and there are none";
+  }
+
+  // wrapper-only.fb2 does have sections, so the oracle applies unchanged.
+  {
+    const std::string raw = readAll(fixturePath("wrapper-only.fb2"));
+    CollectingParser parser(fixturePath("wrapper-only.fb2"));
+    ASSERT_TRUE(parser.parse());
+    size_t total = 0;
+    for (const auto& section : parser.getSections()) total += section.length;
+    EXPECT_EQ(total, fb2test::topLevelSectionBytes(raw));
+    EXPECT_LE(total, raw.size());
+  }
+}
+
+// FR-008 / Constitution VI: malformed input clamps to zero rather than underflowing.
+// No reported weight may exceed the file, and none may wrap.
+TEST(Fb2MetadataParser, MalformedInputNeverWrapsOrExceedsTheFile) {
+  for (const char* fixture : {"malformed-truncated.fb2", "wrong-root.fb2"}) {
+    const std::string raw = readAll(fixturePath(fixture));
+    CollectingParser parser(fixturePath(fixture));
+    parser.parse();  // may fail; either way nothing may wrap
+
+    size_t total = 0;
+    for (const auto& section : parser.getSections()) {
+      EXPECT_LE(section.length, raw.size()) << fixture;
+      EXPECT_LE(section.fileOffset, raw.size()) << fixture;
+      total += section.length;
+    }
+    EXPECT_LE(total, raw.size()) << fixture;
+  }
 }
 
 // Hostile nesting must be bounded and deterministic, never a crash.

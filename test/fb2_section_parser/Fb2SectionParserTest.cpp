@@ -556,7 +556,7 @@ TEST(Fb2SectionParserFile, ChapterTextsPartitionTheBodyForEveryFixture) {
   static const char* kFixtures[] = {
       "basic.fb2",        "nested-sections.fb2", "nested-deep.fb2", "trailing-parent-text.fb2",
       "wrapper-only.fb2", "styles.fb2",          "no-sections.fb2", "long.fb2",
-      "notes-body.fb2",   "unicode-titles.fb2",  "body-prefix.fb2"};
+      "notes-body.fb2",   "unicode-titles.fb2",  "body-prefix.fb2", "multi-reading-body.fb2"};
   for (const char* fixture : kFixtures) {
     CollectingParser metadata(fixturePath(fixture));
     ASSERT_TRUE(metadata.parse()) << fixture;

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook>
+  <description>
+    <title-info>
+      <book-title>Multi Reading Body</book-title>
+      <lang>en</lang>
+    </title-info>
+  </description>
+  <body>
+    <title><p>Alphatitleword of the first part</p></title>
+    <epigraph><p>Alphaepigraphword stands alone.</p></epigraph>
+    <section>
+      <title><p>Alphaonechapter</p></title>
+      <p>Alphaoneword of the first chapter.</p>
+    </section>
+    <section>
+      <title><p>Alphatwochapter</p></title>
+      <p>Alphatwoword of the second chapter.</p>
+    </section>
+  </body>
+  <body>
+    <title><p>Betatitleword of the second part</p></title>
+    <epigraph><p>Betaepigraphword stands alone.</p></epigraph>
+    <section>
+      <title><p>Betaonechapter</p></title>
+      <p>Betaoneword of the third chapter.</p>
+    </section>
+    <section>
+      <title><p>Betatwochapter</p></title>
+      <p>Betatwoword of the fourth chapter.</p>
+    </section>
+  </body>
+</FictionBook>

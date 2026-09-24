@@ -41,6 +41,24 @@ class Fb2BookTest : public ::testing::Test {
   fb2test::TempDir tmp;
 };
 
+// The percentage must move while the reader is inside a body's front matter (FR-004).
+// body-prefix.fb2 weighs 236 B into chapter 0 of a 349 B book, so chapter 0 alone is
+// 67.6% of the book rather than the 49.3% it was when its front matter counted for
+// nothing.
+TEST_F(Fb2BookTest, BodyFrontMatterMovesTheProgressPercentage) {
+  Fb2 book(fixturePath("body-prefix.fb2"), tmp.path());
+  ASSERT_TRUE(book.load());
+  ASSERT_EQ(book.getSectionCount(), 2);
+  EXPECT_EQ(book.getBookSize(), 349u);
+
+  const auto chapter0 = book.getSectionInfo(0);
+  const auto chapter1 = book.getSectionInfo(1);
+
+  EXPECT_FLOAT_EQ(book.calculateProgress(chapter0, 0.0f), 0.0f);
+  EXPECT_FLOAT_EQ(book.calculateProgress(chapter0, 1.0f), 236.0f / 349.0f);
+  EXPECT_FLOAT_EQ(book.calculateProgress(chapter1, 1.0f), 1.0f);
+}
+
 TEST_F(Fb2BookTest, LoadParsesMetadataAndWritesBookBin) {
   Fb2 book(fixturePath("basic.fb2"), tmp.path());
   ASSERT_TRUE(book.load());
@@ -159,10 +177,11 @@ TEST_F(Fb2BookTest, CacheVersionMismatchIsRejectedThenRebuilt) {
   Fb2 rebuilt(fixturePath("basic.fb2"), tmp.path());
   ASSERT_TRUE(rebuilt.load(true));
   EXPECT_EQ(rebuilt.getTitle(), "The Crosspoint Chronicle");
-  // The cache file was rewritten with the current version byte.
+  // The cache file was rewritten with the current version byte. Bump this with
+  // FB2_CACHE_VERSION: it is the assertion that notices an unintended bump.
   const std::string fresh = readAll(cacheFile);
   ASSERT_FALSE(fresh.empty());
-  EXPECT_EQ(fresh[0], 5);
+  EXPECT_EQ(fresh[0], 6);
 }
 
 // A book.bin whose tail was replaced by zeros must be rejected (a valid
@@ -476,7 +495,7 @@ TEST_F(Fb2BookTest, GenerateThumbWithoutCoverWritesEmptyMarkerAndFails) {
 
 // book.bin v5 round trip: a reopened book reads every chapter field back exactly,
 // the lengths partition the source, and a build leaves no temp files behind.
-TEST_F(Fb2BookTest, V5CacheRoundTripsEveryChapterField) {
+TEST_F(Fb2BookTest, V6CacheRoundTripsEveryChapterField) {
   for (const char* fixture : {"nested-deep.fb2", "nested-sections.fb2", "trailing-parent-text.fb2"}) {
     Fb2 built(fixturePath(fixture), tmp.path());
     ASSERT_TRUE(built.load(true)) << fixture;
@@ -508,7 +527,7 @@ TEST_F(Fb2BookTest, V5CacheRoundTripsEveryChapterField) {
 // corrupts exactly one field of an otherwise valid file; each must be rejected so
 // load() re-parses the source and writes a valid cache in its place.
 TEST_F(Fb2BookTest, MalformedV5CachesAreRejectedAndRebuilt) {
-  using Bin = fb2test::V5BookBin;
+  using Bin = fb2test::V6BookBin;
   const Bin good = Bin::from({{"One", 0, 100, 0, false}, {"Two", 100, 50, 1, true}, {"Three", 150, 25, 0, false}});
 
   struct Case {
@@ -684,6 +703,59 @@ TEST_F(Fb2BookTest, BatchedTocReadMatchesSingleLookups) {
 // Progress / TOC math on a book loaded from a hand-built book.bin.
 // ---------------------------------------------------------------------------
 
+// FR-009: a cache written before this feature computed chapter weights under the old
+// rule, so it must be rejected and rebuilt rather than trusted -- its numbers are wrong
+// in a way that has no symptom.
+TEST_F(Fb2BookTest, V5CacheIsRejectedAndRebuiltAtV6) {
+  Fb2 book(fixturePath("body-prefix.fb2"), tmp.path());
+  book.setupCacheDir();
+
+  // A structurally valid cache carrying the OLD weights, stamped v5.
+  auto bin = fb2test::V6BookBin::from({{"Firstchapter", 314, 110, 0, false}, {"Secondchapter", 429, 113, 0, false}});
+  bin.version = 5;
+  ASSERT_TRUE(writeAll(book.getCachePath() + "/book.bin", bin.encode()));
+
+  ASSERT_TRUE(book.load());  // rebuilds rather than trusting
+  ASSERT_EQ(book.getSectionCount(), 2);
+
+  // The rebuilt weights are the from-scratch ones, not the v5 file's.
+  EXPECT_EQ(book.getSectionInfo(0).length, 236u);
+  EXPECT_EQ(book.getBookSize(), 349u);
+
+  // And the file on disk now says v6.
+  const std::string rebuilt = readAll(book.getCachePath() + "/book.bin");
+  ASSERT_FALSE(rebuilt.empty());
+  EXPECT_EQ(static_cast<uint8_t>(rebuilt[0]), 6u);
+}
+
+// FR-009 (cost) and FR-010 (position): a v5 -> v6 rejection rebuilds book.bin only.
+// sections/ survives, so a long book pays one metadata parse and not a full relayout;
+// progress.bin survives, so the reader reopens on the same page. lib/Fb2 never opens
+// progress.bin -- src/activities/reader/ProgressFile.h owns it -- so this holds
+// precisely because the drop clause in Fb2.cpp targets sections/ alone.
+TEST_F(Fb2BookTest, V5RejectionKeepsSectionsAndProgress) {
+  Fb2 book(fixturePath("body-prefix.fb2"), tmp.path());
+  book.setupCacheDir();
+
+  auto bin = fb2test::V6BookBin::from({{"Firstchapter", 314, 110, 0, false}});
+  bin.version = 5;
+  ASSERT_TRUE(writeAll(book.getCachePath() + "/book.bin", bin.encode()));
+
+  const std::string sectionsDir = book.getCachePath() + "/sections";
+  Storage.mkdir(sectionsDir.c_str());
+  ASSERT_TRUE(writeAll(sectionsDir + "/0.bin", "layout bytes"));
+
+  const std::string progressPath = book.getCachePath() + "/progress.bin";
+  const std::string progress("\x01\x00\x00\x00\x07\x00\x2a\x00", 8);
+  ASSERT_TRUE(writeAll(progressPath, progress));
+
+  ASSERT_TRUE(book.load());
+
+  EXPECT_TRUE(fileExists(sectionsDir + "/0.bin")) << "a v5 -> v6 bump must not force a relayout";
+  EXPECT_TRUE(fileExists(progressPath)) << "the saved reading position must survive (FR-010)";
+  EXPECT_EQ(readAll(progressPath), progress) << "progress.bin must be untouched, not rewritten";
+}
+
 class Fb2MathTest : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -692,10 +764,10 @@ class Fb2MathTest : public ::testing::Test {
   }
 
   // Replaces the book with one whose cache holds exactly these chapters.
-  void loadChapters(const std::vector<fb2test::V5BookBin::Chapter>& chapters) {
+  void loadChapters(const std::vector<fb2test::V6BookBin::Chapter>& chapters) {
     book = std::make_unique<Fb2>(tmp.path() + "/unused.fb2", tmp.path());
     book->setupCacheDir();
-    ASSERT_TRUE(writeAll(book->getCachePath() + "/book.bin", fb2test::V5BookBin::from(chapters).encode()));
+    ASSERT_TRUE(writeAll(book->getCachePath() + "/book.bin", fb2test::V6BookBin::from(chapters).encode()));
     ASSERT_TRUE(book->load(false));
   }
 

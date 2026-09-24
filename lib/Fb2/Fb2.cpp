@@ -22,13 +22,22 @@ namespace {
 // v5: chapters become fixed 20-byte records followed by a packed title area, so
 // one chapter is read with one seek instead of the whole list living in RAM;
 // each record gains the running total of chapter lengths.
-constexpr uint8_t FB2_CACHE_VERSION = 5;
+// v6: a body's own content ahead of its first <section> is counted in that body's first
+// chapter's length; record layout is unchanged, only the values.
+constexpr uint8_t FB2_CACHE_VERSION = 6;
 
 // Lowest chapter cap any pre-v5 cache was built under. Layouts built then give a
 // chapter past it no boundary of its own, so its ancestors' layouts are stale once
 // the cap is gone. An unreadable old book.bin reports no version and keeps its
 // sections/: rare, and accepted.
 constexpr uint16_t FB2_OLD_CHAPTER_CAP = 256;
+
+// First version built without the chapter cap. The sections/ drop below targets caches
+// from the capped era, not every older version: a later bump that changes only chapter
+// WEIGHTS leaves page layout valid, and dropping sections/ would cost a needless
+// relayout (specs/006 research R10 measured 2.9 s for a 677-chapter metadata rebuild
+// alone).
+constexpr uint8_t FB2_CAP_FREE_CACHE_VERSION = 5;
 
 // The only defined bit of a chapter's `flags` byte.
 constexpr uint8_t FB2_CHAPTER_FLAG_TITLE_DERIVED = 0x01;
@@ -381,7 +390,7 @@ bool Fb2::load(const bool buildIfMissing) {
     LOG_ERR("FB2", "Could not build metadata cache");
     return false;
   }
-  if (rejectedVersion != 0 && rejectedVersion < FB2_CACHE_VERSION && chapterCount > FB2_OLD_CHAPTER_CAP) {
+  if (rejectedVersion != 0 && rejectedVersion < FB2_CAP_FREE_CACHE_VERSION && chapterCount > FB2_OLD_CHAPTER_CAP) {
     LOG_DBG("FB2", "Dropping layouts built under the old %u-chapter cap", FB2_OLD_CHAPTER_CAP);
     Storage.removeDir((cachePath + "/sections").c_str());
   }
