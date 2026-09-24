@@ -150,12 +150,18 @@ inline std::string makeShortTitleTowerFb2(const int sectionCount) {
 }
 
 // Independent oracle for "chapter lengths partition the body": the summed byte
-// spans ("<section" through "</section>") of the top-level sections of every
-// reading body, measured from the source text itself. Reading bodies are the first
-// <body> and any later one without a name attribute, the rule both parsers apply.
+// spans of the top-level sections of every reading body, measured from the source
+// text itself. Reading bodies are the first <body> and any later one without a name
+// attribute, the rule both parsers apply.
+//
+// A body's first top-level section is measured from that body's "<body" tag, not from
+// its own "<section": the bytes between the two are rendered into that chapter, so they
+// belong to its weight (contract C7'). Every later section is measured from its own tag.
 inline size_t topLevelSectionBytes(const std::string& xml) {
   size_t total = 0;
   size_t start = 0;
+  size_t bodyStart = 0;
+  bool prefixPending = false;
   int depth = 0;
   int bodies = 0;
   bool reading = false;
@@ -165,11 +171,17 @@ inline size_t topLevelSectionBytes(const std::string& xml) {
       const std::string tag = xml.substr(pos, close - pos);
       bodies++;
       reading = bodies == 1 || tag.find(" name=") == std::string::npos;
+      bodyStart = pos;
+      prefixPending = reading;
     } else if (xml.compare(pos, 7, "</body>") == 0) {
       reading = false;
+      prefixPending = false;
     } else if (reading && xml.compare(pos, 8, "<section") == 0 &&
                (xml[pos + 8] == '>' || xml[pos + 8] == ' ' || xml[pos + 8] == '/')) {
-      if (depth++ == 0) start = pos;
+      if (depth++ == 0) {
+        start = prefixPending ? bodyStart : pos;
+        prefixPending = false;
+      }
     } else if (reading && xml.compare(pos, 10, "</section>") == 0 && depth > 0) {
       if (--depth == 0) total += pos + 10 - start;
     }
@@ -177,10 +189,12 @@ inline size_t topLevelSectionBytes(const std::string& xml) {
   return total;
 }
 
-// Byte-for-byte FB2 book.bin v5 (specs/006-fb2-sd-chapter-lut/contracts/book-bin-v5.md), so
+// Byte-for-byte FB2 book.bin v6, whose record layout is identical to v5
+// (specs/006-fb2-sd-chapter-lut/contracts/book-bin-v5.md); only the version byte and the
+// length VALUES differ (specs/007 data-model.md). So
 // tests can hand-build valid caches and then corrupt exactly one field. Every field is public
 // and written as given: nothing is recomputed, so a test can make any of them lie.
-struct V5Record {
+struct V6Record {
   uint32_t titleOffset = 0;
   uint16_t titleLength = 0;
   uint32_t fileOffset = 0;
@@ -190,15 +204,15 @@ struct V5Record {
   uint8_t flags = 0;
 };
 
-struct V5BookBin {
-  uint8_t version = 5;
+struct V6BookBin {
+  uint8_t version = 6;
   std::string title = "Book";
   std::string author = "Author";
   std::string language = "en";
   std::string coverBinaryId;
   uint16_t chapterCount = 0;
   uint32_t titlesSize = 0;
-  std::vector<V5Record> records;
+  std::vector<V6Record> records;
   std::string titles;
 
   // A consistent file from {title, fileOffset, ownLength, level, derived} chapters.
@@ -209,11 +223,11 @@ struct V5BookBin {
     uint8_t level;
     bool derived;
   };
-  static V5BookBin from(const std::vector<Chapter>& chapters) {
-    V5BookBin bin;
+  static V6BookBin from(const std::vector<Chapter>& chapters) {
+    V6BookBin bin;
     uint32_t cumulative = 0;
     for (const auto& c : chapters) {
-      V5Record r;
+      V6Record r;
       r.titleOffset = static_cast<uint32_t>(bin.titles.size());
       r.titleLength = static_cast<uint16_t>(c.title.size());
       r.fileOffset = c.fileOffset;
