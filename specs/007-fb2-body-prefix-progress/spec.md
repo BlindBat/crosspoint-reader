@@ -152,4 +152,4 @@ percentages match a clean build from scratch.
 - **Weight is measured in source bytes**, as it already is throughout the FB2 reader. Markup overhead is counted the same way for front matter as for sections, so the two are weighted on the same scale.
 - **Persisted chapter records change shape or meaning**, so the existing cache-version mechanism is the intended invalidation route; no new migration path is introduced.
 - **Body-level text after the first section is a separate defect** and is deliberately left alone here.
-- **Progress synchronisation with external services** (KOReader) consumes the same percentage and therefore follows this change automatically; no separate mapping work is assumed.
+- **Progress synchronisation with external services** needs no work, but not for the reason first assumed: `lib/KOReaderSync/` carries no FB2 path at all — `ProgressMapper` is EPUB-only (`ProgressMapper.cpp:837`) — so there is nothing to follow this change rather than something that follows it automatically (research R4).
