@@ -756,7 +756,7 @@ upstream    https://github.com/crosspoint-reader/crosspoint-reader.git (fetch/pu
 
 1. Integration branches and PR comparisons target `develop`, not `master` or the remote's symbolic HEAD.
 2. Never push to any remote or open/close a PR without explicit user approval. Complete local work and any requested local commit, then stop.
-3. If the user explicitly approves a push, inspect remotes again and use `fork` for the feature branch unless the user specifies otherwise.
+3. If the user explicitly approves a push, inspect remotes again and push the feature branch to `origin` (the personal fork) unless the user specifies otherwise.
 4. Never add Claude, Codex, or assistant self-attribution as a commit co-author or generated-by trailer.
 5. When a change supersedes or adapts another person's PR, verify the original human author from Git/GitHub and add that person as `Co-Authored-By`; skip bot authors.
 
