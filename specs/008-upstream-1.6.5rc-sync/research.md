@@ -375,6 +375,11 @@ workflow` and `93e98bb7 fix: pin pioarduino in release.yml too` — the release 
 and the fork's tag-check relaxation. Landing (`gh pr merge --merge --delete-branch`) awaits Test Status and a
 separate go-ahead.
 
+**T056 (2026-09-27):** pre-release https://github.com/BlindBat/crosspoint-reader/releases/tag/1.6.5rc-bb.1 on
+`73804c66`; release run 36340949677 built the five `*-gh_release_rc` envs and attached
+`crosspoint-1.6.5rc-bb.1-{x3-x4,sticky,x4pro,x4c,papermono}.bin` itself (SC-007: five assets, zero manual uploads;
+`strings` finds the version in each — the PSRAM boards stamp `1.6.5rc-bb.1-rc+73804c6`).
+
 ## R16. Analyze findings and dispositions (2026-09-27)
 
 `/speckit-analyze` raised 11 findings, none critical; walked one by one with the user:

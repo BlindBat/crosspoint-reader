@@ -1000,6 +1000,7 @@ build_flags =
 1. **Enhanced**: `python3 scripts/debugging_monitor.py` (color-coded, recommended)
 2. **Standard**: `pio device monitor` (basic, no colors)
 3. **VS Code**: Monitor (🔌) button (IDE-integrated)
+4. **Scripted**: `scripts/flash_and_capture.sh <tree> <env> <out.log> <seconds>` flashes, then captures the boot with a DTR/RTS reset *under* capture (`scripts/sercap.py OUT SECS [--reset]` alone for a plain capture; needs pyserial)
 
 ### Live Debugging Patterns
 
