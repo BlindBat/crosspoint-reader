@@ -81,6 +81,14 @@ Derived from the 242 fork commits `54337e6d..b68be959`.
 | QA program | 59 host suites / 3,349 tests (measured 2026-09-26, `bin/run-tests`, 100% pass, 5 by-design skips); `bin/run-tests` with `--asan`, `--quick`, `--filter`; `bin/run-tests-linux`; the malformed-input corpus; allocation-budget guards; the ASan+UBSan CI variant; `clang-format-fix -c`; the opt-in pre-push hook |
 | Tooling & governance | spec-kit scaffolding, constitution, autocommit hooks; `bin/run-simulator` and its skill; `catalog-info.yaml`; dev version stamping on all five development environments; the `x4c-gh_release_rc` environment (upstream added the identical one; the trial merge keeps a single copy) |
 
+## Clarifications
+
+### Session 2026-09-27
+
+- Q: When the sync PR lands on `master`, is it a merge commit, a squash (the fork's convention), or a rebase? → A: A merge commit; the squash convention does not apply to upstream syncs.
+- Q: Does the fork adopt upstream's release workflow (CI attaches the assets on release publish), and how are fork releases named? → A: CI builds and attaches the assets. A fork release built on an upstream release candidate is named `<upstream version>rc-bb.N` (this sync: `1.6.5rc-bb.1`) and published as a GitHub pre-release; one built on an upstream final release is `<upstream version>-bb.N` and published as a normal release. The workflow's tag check is reduced to "tag equals the configured version" for both, since the fork's version already carries the `rc`.
+- Q: How much on-device measurement before the sync ships — a three-run before/after bench, a single before/after run, or functional checks only? → A: One run before (on `1.6.0-bb.5`) and one after for each figure; any regression is explained by a named upstream change in the release notes or fixed.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A fork user gets everything 1.6.5rc has (Priority: P1)
@@ -179,13 +187,14 @@ range; the fork's hand-attached `firmware-<board>.bin` process is now the wrong 
 the new pipeline is both an enhancement to the fork's process and the only way the naming
 stays coherent.
 
-**Independent Test**: Publish `1.6.5-bb.1` and watch the release workflow attach exactly
-five assets.
+**Independent Test**: Publish `1.6.5rc-bb.1` as a pre-release and watch the release workflow attach
+exactly five assets.
 
 **Acceptance Scenarios**:
 
-1. **Given** the version line reads `1.6.5-bb.1`, **When** a release tagged `1.6.5-bb.1` is published, **Then** the workflow builds all five environments and attaches `crosspoint-1.6.5-bb.1-x3-x4.bin`, `-sticky.bin`, `-x4pro.bin`, `-x4c.bin` and `-papermono.bin`, and nothing else.
-2. **Given** a published fork release, **When** each asset is inspected, **Then** it contains the version string `1.6.5-bb.1` (proof it came from the tagged commit).
+1. **Given** the version line reads `1.6.5rc-bb.1`, **When** a release tagged `1.6.5rc-bb.1` is published as a pre-release, **Then** the workflow builds all five environments and attaches `crosspoint-1.6.5rc-bb.1-x3-x4.bin`, `-sticky.bin`, `-x4pro.bin`, `-x4c.bin` and `-papermono.bin`, and nothing else.
+2. **Given** a published fork release, **When** each asset is inspected, **Then** it contains the release tag as its version string (proof it came from the tagged commit).
+4. **Given** a later fork release built on an upstream final release (for example `1.6.5-bb.1` on upstream `1.6.5`), **When** it is published as a normal release with the matching version line, **Then** the same workflow attaches its five assets with no edit.
 3. **Given** the release notes, **When** they are read, **Then** they follow the fork's convention: measured figures against `1.6.0-bb.5` on the same device and card, and an explicit section for behaviour changes — Recent Books replaced by the Library, EPUB caches rebuilt once, and the release being based on an upstream release candidate.
 
 ---
@@ -223,6 +232,7 @@ screen; read the agent guide's cache-version table against the code constants.
 - **Very large FB2 files during an index build.** Reading an FB2's metadata for the index must stop at the end of the description block, never read the body; a build over the whole card must not exhaust the C3's heap.
 - **Toolchain change.** The new pioarduino platform must install into the fork's pinned environment and build all five firmwares; the simulator must still build for the gate-6 check.
 - **An abandoned or interrupted sync.** The sync branch is disposable; `master` is untouched until the PR lands. Re-running the merge from `master` yields the same 42 conflicts.
+- **A pre-release flagged fork RC.** Upstream's workflow only attaches assets to a pre-release whose tag is `<configured version>rc`; the fork's `1.6.5rc-bb.1` carries its `rc` inside the version and would ship with no binaries under that rule — hence FR-031's single relaxation. Without it the failure is silent: the release exists, empty.
 - **Landing.** The sync PR lands as a **merge commit**, not the fork's usual squash: a squash would erase the upstream ancestry that User Story 1 requires and force the next sync to re-resolve every conflict.
 
 ## Requirements *(mandatory)*
@@ -232,7 +242,7 @@ screen; read the agent guide's cache-version table against the code constants.
 **Upgrade**
 
 - **FR-001**: Upstream tag `1.6.5rc` MUST be an ancestor of the sync branch tip and, after landing, of fork `master`: the sync is a merge, never a rebase, squash, or re-implementation of upstream commits.
-- **FR-002**: The sync MUST land on `master` through a sync branch and pull request whose merge is a merge commit; the fork's squash convention MUST NOT be applied to this PR.
+- **FR-002**: The sync MUST land on `master` through a sync branch and pull request merged as a merge commit (`gh pr merge --merge`); the fork's squash convention MUST NOT be applied to this PR, and this holds for every future upstream sync.
 - **FR-003**: Every behaviour in inventory A MUST be present and functional in the fork build, as it is in stock `1.6.5rc`.
 - **FR-004**: Where both sides solved the same problem differently — web path normalisation, the smart-sync decision, font-manifest storage, dither-row validity checks, the file-handle accessors, the page model's ownership — the resolution MUST take upstream's shape (Constitution VII), and MUST keep each fork guarantee upstream's version lacks: (a) a protected item is refused at any path depth, not only as the last component; (b) no fallible allocation aborts — every one is null-checked; (c) a page whose cached image dimensions are impossible is rejected before it reaches the framebuffer; (d) manifest, asset and record sizes stay bounded before they drive an allocation.
 - **FR-005**: The build configuration MUST define each environment exactly once; all five firmware environments MUST build; the fork's dev version stamping (branch and short SHA on every development environment) and the fork's sanitised CI test variant MUST survive the merge.
@@ -258,8 +268,8 @@ screen; read the agent guide's cache-version table against the code constants.
 
 **Release**
 
-- **FR-030**: The fork version MUST become `1.6.5-bb.1` (one line in the build configuration); firmware assets MUST be named `crosspoint-<version>-<device>.bin` with the five device names `x3-x4`, `sticky`, `x4pro`, `x4c`, `papermono`.
-- **FR-031**: Publishing a GitHub release tagged with the configured version MUST build and attach all five assets automatically; the manual five-asset upload step is retired.
+- **FR-030**: Fork versions MUST follow `<upstream version>rc-bb.N` when built on an upstream release candidate and `<upstream version>-bb.N` when built on an upstream final release; this sync sets the configured version to `1.6.5rc-bb.1` (one line in the build configuration). Firmware assets MUST be named `crosspoint-<tag>-<device>.bin` with the five device names `x3-x4`, `sticky`, `x4pro`, `x4c`, `papermono`.
+- **FR-031**: Publishing a GitHub release tagged with the configured version MUST build and attach all five assets automatically, whether the release is flagged pre-release (RC-based fork releases) or not (final-based ones): the release workflow's tag check MUST accept "tag equals configured version" in both cases — the one deliberate fork-only edit to upstream's workflow. The manual five-asset upload step is retired.
 - **FR-032**: The release notes MUST follow the fork's convention (measured figures against `1.6.0-bb.5` on the same device and card; an explicit behaviour-change section naming the Library, the one-time EPUB cache rebuild, and the RC basis).
 
 **Documentation and governance**
@@ -288,21 +298,21 @@ screen; read the agent guide's cache-version table against the code constants.
 - **SC-003**: The sync PR's CI "Test Status" is green — format, cppcheck, all five firmware builds, both unit-test variants.
 - **SC-004**: On the X4 with the device card, the Library's Title tab lists every `.fb2` on the card (the count matches a card scan), one FB2 opens from each of the four tabs into the FB2 reader, and the quickstart checks of specs/003–007 pass on the reference books.
 - **SC-005**: Index build time on that card is measured with **Use book metadata** on and off and recorded in the release notes, alongside the number of books indexed.
-- **SC-006**: Free heap at Home and with an FB2 open, the 24-row FB2 chapter-list window read, and the first open of the 677-chapter reference book are each measured three times on `1.6.0-bb.5` and three times on the sync build, same device and card; every post-sync median lies within the pre-sync run spread (min to max), or the regression is attributed to a named upstream change in the release notes. Pre-sync references: 138,200 bytes free at Home (2026-09-20), 11 ms per window read and 2.9 s first open (specs/006 research R10).
-- **SC-007**: Release `1.6.5-bb.1` has exactly five assets, all attached by the workflow with zero manual uploads, and each asset contains the string `1.6.5-bb.1`.
+- **SC-006**: Free heap at Home and with an FB2 open, the 24-row FB2 chapter-list window read, and the first open of the 677-chapter reference book are each measured once on `1.6.0-bb.5` and once on the sync build, same device and card, and both readings are published in the release notes; every figure that is worse after the sync is either attributed to a named upstream change in the notes or fixed before release. Pre-sync references from earlier sessions: 138,200 bytes free at Home (2026-09-20), 11 ms per window read and 2.9 s first open (specs/006 research R10).
+- **SC-007**: Pre-release `1.6.5rc-bb.1` has exactly five assets, all attached by the workflow with zero manual uploads, and each asset contains the string `1.6.5rc-bb.1`.
 - **SC-008**: No remaining reference to a top-level Recent Books screen in `USER_GUIDE.md`, `README.md` or `AGENTS.md`; the agent guide's cache-version table matches the code constants line for line.
 - **SC-009**: All hand-written change in the sync beyond conflict resolution is confined to the "Apply" areas (Library ↔ FB2, FB2 reader chrome parity, sleep-cover parity, test-suite reconciliation) and documentation; the plan lists every such file.
 
 ## Assumptions
 
 - "The origin" in the request means the upstream project, and the target is exactly tag `1.6.5rc` (`a1ceb633`), not `upstream/develop` (55 commits further as of 2026-09-26, including TrueType fonts on PSRAM boards, the Cover Grid theme, file rename, and "release SD-font caches on reader exit"). Those belong to a later sync.
-- The fork's next version is `1.6.5-bb.1`, tagged without a `v` prefix like the rest of the `-bb` series, and published as a normal (non-pre) release, so upstream's workflow check "tag equals configured version" applies directly.
-- Upstream's release workflow is adopted wholesale, replacing the fork's artifact-only workflow and the hand-attached `firmware-<board>.bin` assets. The firmware's own update check continues to point where it points today (upstream's releases); changing that is out of scope.
+- Fork tags carry no `v` prefix, like the rest of the `-bb` series; the version line and the tag are always identical, so the `rc` marker lives in the version itself (`1.6.5rc-bb.1`) rather than as a suffix the workflow appends.
+- Upstream's release workflow replaces the fork's artifact-only workflow and the hand-attached `firmware-<board>.bin` assets, with one fork-only edit (FR-031). The firmware's own update check continues to point where it points today (upstream's releases); changing that is out of scope.
 - The FB2 reader renders text only (its cover page is drawn black-and-white by design, `src/activities/reader/Fb2ReaderActivity.cpp:79`), so upstream's absolute-grayscale image-page path has nothing to reach in it; only the text anti-aliasing sequencing applies.
 - Upstream's Library reads EPUB metadata by stopping the normal parser at the end of the metadata block; the FB2 equivalent stops at the end of the description block, which precedes the body in every FB2 file.
 - Same-purpose test-suite pairs are kept as separate suites unless one is a strict subset of the other; the fork's runner discovers suites by directory, so upstream's suites are found without registration.
 - The new pioarduino platform installs into the fork's pinned PlatformIO environment; if it does not, that is a plan-level blocker, not a scope change.
-- Device measurements (SC-004 to SC-006) are taken on the X4 (ESP32-C3) with the card that held 944 `.fb2` files on 2026-09-22, using the fork's existing boot-time bench approach; simulator checks cover the four orientations for the Library and FB2 screens.
+- Device measurements (SC-004 to SC-006) are taken on the X4 (ESP32-C3) with the card that held 944 `.fb2` files on 2026-09-22, using the fork's existing boot-time bench approach; the "before" readings are taken while `1.6.0-bb.5` is still on the device, before the sync build is flashed. Simulator checks cover the four orientations for the Library and FB2 screens.
 
 ## Out of Scope
 
