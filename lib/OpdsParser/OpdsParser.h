@@ -46,7 +46,7 @@ using OpdsBook = OpdsEntry;
 class OpdsParser final : public platform::ByteSink {
  public:
   OpdsParser();
-  ~OpdsParser();
+  ~OpdsParser() override;
 
   // Disable copy
   const std::string& getSearchTemplate() const { return searchTemplate; }
