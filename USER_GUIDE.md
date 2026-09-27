@@ -121,7 +121,7 @@ Upon turning the device on for the first time, you will be placed on the **[Home
 The Home screen is the main entry point to the firmware. From here you can navigate to **[Reading Mode](#4-reading-mode)** with the most recently read book, **[Browse Files](#33-browse-files-screen)**, the **[Library](#34-library-screen)**, **[File Transfer](#35-file-transfer-screen)**, or **[Settings](#36-settings)**.
 
 * **Continue Reading:** The top of the screen shows the most recently read book as a cover tile with its title. Books whose file is no longer on the SD card are skipped. The layout follows the **[UI Theme](#361-display)**: "Lyra Extended" shows three books side by side instead of one, and "RoundedRaff" shows a cover-only tile, puts the book title in the header band and adds a **Continue Reading** row to the menu. Missing cover thumbnails are generated in the background after the screen first appears, with a progress popup.
-* **OPDS Browser:** An extra **OPDS Browser** row appears between **Recent Books** and **File Transfer**, but only once at least one server has been added in **[OPDS Servers](#365-opds-servers-multiple-libraries)**.
+* **OPDS Browser:** An extra **OPDS Browser** row appears between **Library** and **File Transfer**, but only once at least one server has been added in **[OPDS Servers](#365-opds-servers-multiple-libraries)**.
 * **Navigation:** **Left**/**Right** (or **Side Up**/**Side Down**) move the cursor and wrap around at both ends; **Confirm** activates the selected tile or row. On touch boards you can also swipe vertically or tap directly.
 * **Resume:** Pressing **Back** on the Home screen opens the most recently read book straight away — the button hint reads **Resume**. If there are no recent books, the hint is blank and **Back** does nothing.
 
@@ -403,7 +403,7 @@ This sub-screen configures the status bar drawn while reading, with a live previ
 
 - **Show Hidden Files**: Show files and directories whose names begin with `.` in the file browser; options are "On" or "Off" (default).
 
-- **Clear Read Books from Recent List**: Remove a book from the Recent Books list once its End-of-Book screen is reached; options are "On" or "Off" (default).
+- **Clear Read Books from Recent List**: Remove a book from the recent list (the Library's **Recent** tab and the Home **Continue Reading** tile) once its End-of-Book screen is reached; options are "On" or "Off" (default).
 
 - **Move Finished Books to Read Folder**: Move a finished EPUB into a `/read` folder on the SD card; options are "On" or "Off" (default).
 

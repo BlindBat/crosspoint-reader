@@ -250,6 +250,48 @@ sister repo maintained by upstream against this range.
   1.6.5rc -- AGENTS.md SCOPE.md` is empty) → re-affirmed in the plan's Constitution Check, no
   amendment.
 
+## R15. Device and build figures (2026-09-27)
+
+Firmware, one build per environment at the merge commit `0d7d98a7` (+ the one-line `uninitvar` fix):
+
+| Environment | RAM | Flash |
+|---|---|---|
+| `default` (C3) | 17.3 % — 56,616 B of 327,680 | 85.4 % — 5,593,701 B of 6,553,600 |
+| `sticky` | 20.4 % — 66,720 B | 82.0 % — 5,372,767 B |
+| `x4pro` | 30.6 % — 100,240 B | 83.7 % — 5,485,470 B |
+| `x4c` | 30.5 % — 100,088 B | 83.3 % — 5,461,519 B |
+| `papermono` | 35.6 % — 116,656 B | 83.8 % — 5,492,294 B |
+
+`1.6.0-bb.5` for comparison, from the fork's `Compile Release` run 36041527400 (the `*-gh_release` envs, LOG_LEVEL=1, so a
+few hundred bytes lighter than the dev envs above): `gh_release` 17.2 % RAM (56,284 B) / 83.5 % Flash (5,473,571 B);
+`sticky` 20.2 % / 80.5 %; `x4pro` 27.4 % / 82.1 %; `papermono` 32.4 % / 82.2 %. The sync adds ~0.3 KB RAM and
+~100–120 KB flash per board (Library index, arena manifest, upstream 1.6.1–1.6.5rc).
+`pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high`: clean after the T024 fix.
+Host program at the merge: 3,484 tests, plain and ASan; after US3 (T031–T044): +12 tests, the ten touched suites green,
+every planned mutation kills exactly its own test (isBookName, extractionExpected, failure branch, title-info stop,
+loadMetadata via load(), font-cache release, fraction clamp, threshold flag).
+
+Toolchain note: platform 55.03.311's SCons needs the pioarduino platformio-core fork (v6.1.19 zip) in **both** the
+`pio` venv and `~/.platformio/penv` — `sticky`'s hybrid build re-invokes `<penv>/bin/pio run -e sticky`, and the
+stock core there fails with `No module named 'SCons.Tool.FortranCommon'`.
+
+Device figures (SC-006, human — T001 before, T054 after):
+
+| Figure | `1.6.0-bb.5` | sync build |
+|---|---|---|
+| Free heap at Home | | |
+| Free heap with an FB2 open | | |
+| 24-row FB2 chapter-list window read (ms) | | |
+| First open of the 677-chapter reference book (s) | | |
+
+US2 audits (2026-09-27): T027 (a) `pathHasProtectedComponent` guards six web-server sites (list, create, delete,
+folder create, WS upload, command path); (b) no bare `new` outside vendored code (`grep -rn 'new [A-Z]…' src lib`
+matches only a log string); (c) `MAX_PAGE_IMAGE_EDGE` check at `Page.cpp:105` precedes `makeUniqueNoThrow<PageImage>`
+at `:111`; (d) `FONT_MANIFEST_MAX_SCRIPT_GROUPS` and the `crc32` type check are in `src/util/FontManifest.cpp`, and
+`test/release_json_parser/ReleaseJsonParserCorpusTest.cpp` still rejects a 26-digit asset size. T028: all 24 suites of
+the inventory pass. T030: the 15 corpus suites pass under ASan with no sanitizer output.
+T048, T052 and T053 are appended here as they run.
+
 ## R16. Analyze findings and dispositions (2026-09-27)
 
 `/speckit-analyze` raised 11 findings, none critical; walked one by one with the user:
