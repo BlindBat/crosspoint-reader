@@ -279,10 +279,32 @@ Device figures (SC-006, human — T001 before, T054 after):
 
 | Figure | `1.6.0-bb.5` | sync build |
 |---|---|---|
-| Free heap at Home | | |
-| Free heap with an FB2 open | | |
-| 24-row FB2 chapter-list window read (ms) | | |
-| First open of the 677-chapter reference book (s) | | |
+| Free heap at Home | 135,268 B (dev-level bench build; the shipped `gh_release` idles at 138,308 B) | 134,344 B (−924 B) |
+| Free heap with an FB2 open | 153,120 B (after `Fb2::load`, before any section) | 152,312 B (−808 B) |
+| 24-row FB2 chapter-list window read (ms) | 4.1 / 8.4 / 8.1 / 4.6 / 4.6 at rows 0/120/240/360/480 | 2.1 / 3.9 / 3.6 / 2.1 / 2.1 |
+| First open of the 677-chapter reference book (s) | 36.9 s (`book.bin` removed, `Fb2::load(true)`, 17.3 MB) | 17.7 s |
+
+Both heap figures are within 1 KB of `1.6.0-bb.5` (the Library's `HalMemory`/index code and the arena manifest are
+flash, not resident DRAM). The two SD-bound timings halved on the same card and file; the FB2 parser is unchanged, so
+the gain is the platform bump (pioarduino 55.03.37 → 55.03.311, arduino-esp32 3.3.7 → 3.3.11, freeink-sdk `e30d25a0`) —
+reported as observed, not claimed as a fork optimisation. Boot heap on the sync build: 152,772 B free before any activity.
+
+**SC-005 (T046), same run:** `library::buildLibraryIndex("/")` over the 944-FB2 card — **Use book metadata off: 19.0 s,
+947 books**; **on: 42.7 s, 946 parsed / 946 enriched**; heap low-water 118,664 B (off) and 99,664 B (on), largest block
+114,676 B throughout. The metadata pass ran `Fb2::loadMetadata` on every FB2: 11 caches were refused as
+`Cache version mismatch: 5|4|2 vs 6` (written by fork builds older than bb.5, re-read by the metadata-only parse as
+designed) and **no v6 cache was refused — FR-006 for FB2 holds on every cache `1.6.0-bb.5` left on the card** (T026's
+first check, without opening a book). The reference book's own cache was deleted by the bench between runs, so its
+"cache-only load: rejected" line is the bench's sequencing, not a firmware rejection (`FB2_CACHE_VERSION` is 6 in both
+trees and the cache read/write code has no diff).
+
+Method (2026-09-27, no buttons): the boot-time bench from memory *device-bench-harness* — `src/SyncBenchMeasure.cpp`
+behind `-DSYNC_BENCH=1` in a gitignored `measure` env, hooked before the final routing in `setup()`, built once on a
+worktree of `1.6.0-bb.5` and once on the sync tree, serial captured with a pyserial loop. Same card, same book
+(`/Хайнлайн/…/2019 - Звездный ковчег.fb2`). The "before" run's own reset happened before the capture attached, so its
+boot-heap and cache-only lines were not seen; the "after" run resets under capture. Harness, worktree and the local
+`measure` env were removed afterwards (`git status` clean, `main.cpp` unchanged); the device was left on the plain `default`
+build of the final tree.
 
 US2 audits (2026-09-27): T027 (a) `pathHasProtectedComponent` guards six web-server sites (list, create, delete,
 folder create, WS upload, command path); (b) no bare `new` outside vendored code (`grep -rn 'new [A-Z]…' src lib`
