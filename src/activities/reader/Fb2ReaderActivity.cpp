@@ -92,7 +92,7 @@ void Fb2ReaderActivity::applyInitialOrientation() {
 void Fb2ReaderActivity::loadProgress() {
   HalFile f;
   if (Storage.openFileForRead("FBR", fb2->getCachePath() + "/progress.bin", f)) {
-    uint8_t data[fb2_reader::PROGRESS_SIZE];
+    uint8_t data[fb2_reader::PROGRESS_SIZE] = {};
     const auto progress = fb2_reader::decodeProgress(data, f.read(data, sizeof(data)));
     if (progress.valid) {
       // A payload without the marker stored a top-level ordinal, not a chapter
@@ -121,13 +121,14 @@ void Fb2ReaderActivity::saveProgress(const int sectionIndex, const int currentPa
   }
 }
 
-float Fb2ReaderActivity::bookProgressPercent() const {
-  if (!fb2 || fb2->getBookSize() == 0 || !section || section->pageCount == 0 ||
-      chapterInfoIndex != currentSectionIndex) {
-    return 0.0f;
-  }
-  const float chapterProgress = static_cast<float>(section->currentPage) / static_cast<float>(section->pageCount);
-  return fb2->calculateProgress(chapterInfo, chapterProgress) * 100.0f;
+ChapterPosition Fb2ReaderActivity::chapterPosition() const {
+  if (section) return {section->currentPage, section->pageCount};
+  return {nextPageNumber, cachedSectionTotalPageCount};
+}
+
+int Fb2ReaderActivity::bookProgressPercent() const {
+  if (!fb2 || chapterInfoIndex != currentSectionIndex) return 0;
+  return fb2_reader::percentForPosition(*fb2, chapterInfo, chapterPosition());
 }
 
 bool Fb2ReaderActivity::handleFormatInput() {
@@ -144,14 +145,15 @@ bool Fb2ReaderActivity::handleFormatInput() {
 }
 
 void Fb2ReaderActivity::openReaderMenu() {
-  const int currentPage = section ? section->currentPage + 1 : 0;
-  const int totalPages = section ? section->pageCount : 0;
-  const int progressPercent = fb2_reader::roundedPercent(bookProgressPercent());
+  // Reached from a child screen's result handler with the section released;
+  // chapterPosition() covers that with the cached position.
+  const ChapterPosition position = chapterPosition();
+  const int progressPercent = bookProgressPercent();
   stopPrefetch();
   startActivityForResult(
-      makeUniqueNoThrow<EpubReaderMenuActivity>(renderer, mappedInput, fb2->getTitle(), currentPage, totalPages,
-                                                progressPercent, SETTINGS.orientation, /*hasFootnotes=*/false,
-                                                /*hasBookmarks=*/false),
+      makeUniqueNoThrow<EpubReaderMenuActivity>(renderer, mappedInput, fb2->getTitle(), position.displayPage(),
+                                                position.totalPages, progressPercent, SETTINGS.orientation,
+                                                /*hasFootnotes=*/false, /*hasBookmarks=*/false),
       [this](const ActivityResult& result) {
         const auto& menu = std::get<MenuResult>(result.data);
         if (SETTINGS.orientation != menu.orientation || appliedOrientation != menu.orientation) {
@@ -218,7 +220,7 @@ void Fb2ReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
       break;
     }
     case EpubReaderMenuActivity::MenuAction::GO_TO_PERCENT: {
-      const int initialPercent = fb2_reader::roundedPercent(bookProgressPercent());
+      const int initialPercent = bookProgressPercent();
       stopPrefetch();
       startActivityForResult(
           makeUniqueNoThrow<EpubReaderPercentSelectionActivity>(renderer, mappedInput, initialPercent),
@@ -702,6 +704,6 @@ ScreenshotInfo Fb2ReaderActivity::getScreenshotInfo() const {
   }
   info.currentPage = section ? section->currentPage + 1 : 0;
   info.totalPages = section ? section->pageCount : 0;
-  info.progressPercent = fb2_reader::roundedPercent(bookProgressPercent());
+  info.progressPercent = bookProgressPercent();
   return info;
 }

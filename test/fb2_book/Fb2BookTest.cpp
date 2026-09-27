@@ -15,6 +15,8 @@
 #include <HalStorage.h>
 
 #include "AllocCounter.h"
+#include "ChapterPosition.h"
+#include "Fb2ReaderMath.h"
 #include "Fb2TestSupport.h"
 
 namespace {
@@ -526,6 +528,50 @@ TEST_F(Fb2BookTest, LoadMetadataComposesDecomposedText) {
   EXPECT_EQ(author, "Caf\xC3\xA9");
 }
 
+// The library walk reads title and author only: the cache header when the reader
+// has built one, else a parse that stops at the end of <title-info>, and it never
+// creates the reader's cache.
+TEST_F(Fb2BookTest, LoadMetadataReadsTheCacheHeaderWithoutBuilding) {
+  Fb2 built(fixturePath("basic.fb2"), tmp.path());
+  ASSERT_TRUE(built.load());
+
+  Fb2 fresh(fixturePath("basic.fb2"), tmp.path());
+  Storage.resetOpenCounts();
+  std::string title, author;
+  ASSERT_TRUE(fresh.loadMetadata(title, author));
+  EXPECT_EQ(title, built.getTitle());
+  EXPECT_EQ(author, built.getAuthor());
+  EXPECT_EQ(Storage.openForReadCount(), 1u) << "book.bin alone, never the source";
+  EXPECT_FALSE(fileExists(fresh.getCachePath() + "/sections"));
+}
+
+TEST_F(Fb2BookTest, LoadMetadataWithoutCacheParsesAndWritesNothing) {
+  Fb2 book(fixturePath("basic.fb2"), tmp.path());
+  std::string title, author;
+  ASSERT_TRUE(book.loadMetadata(title, author));
+  EXPECT_EQ(title, "The Crosspoint Chronicle");
+  EXPECT_EQ(author, "John Doe");
+  EXPECT_FALSE(fileExists(book.getCachePath())) << "the library walk must not create the reader's cache";
+}
+
+TEST_F(Fb2BookTest, LoadMetadataComposesDecomposedText) {
+  const std::string decomposed = "Cafe\xCC\x81";  // e + combining acute
+  const std::string raw =
+      "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<FictionBook><description><title-info>"
+      "<book-title>" +
+      decomposed + "</book-title><author><last-name>" + decomposed +
+      "</last-name></author></title-info></description>"
+      "<body><section><p>x</p></section></body></FictionBook>\n";
+  const std::string path = tmp.path() + "/nfd.fb2";
+  ASSERT_TRUE(writeAll(path, raw));
+
+  Fb2 book(path, tmp.path());
+  std::string title, author;
+  ASSERT_TRUE(book.loadMetadata(title, author));
+  EXPECT_EQ(title, "Caf\xC3\xA9");
+  EXPECT_EQ(author, "Caf\xC3\xA9");
+}
+
 TEST_F(Fb2BookTest, GenerateThumbWithoutCoverWritesEmptyMarkerAndFails) {
   Fb2 book(fixturePath("no-cover.fb2"), tmp.path());
   ASSERT_TRUE(book.load());
@@ -833,6 +879,16 @@ TEST_F(Fb2MathTest, ProgressWeightsSectionsByLength) {
   // Halfway through section 1 (300 bytes): (100 + 150) / 1000.
   EXPECT_FLOAT_EQ(book->calculateProgress(book->getSectionInfo(1), 0.5f), 0.25f);
   EXPECT_FLOAT_EQ(book->calculateProgress(book->getSectionInfo(2), 1.0f), 1.0f);
+}
+
+// The reader menu and the go-to-percent seed read a ChapterPosition that may be
+// the cached one (section released under a child screen); the percent comes from
+// the position alone and a page index past the estimated total stays in its chapter.
+TEST_F(Fb2MathTest, PercentForPositionClampsAPageIndexPastTheChapterTotal) {
+  const auto chapter = book->getSectionInfo(1);  // bytes 100..400 of 1000
+  EXPECT_EQ(fb2_reader::percentForPosition(*book, chapter, ChapterPosition{5, 10}), 25);
+  EXPECT_EQ(fb2_reader::percentForPosition(*book, chapter, ChapterPosition{0, 0}), 0);
+  EXPECT_EQ(fb2_reader::percentForPosition(*book, chapter, ChapterPosition{30, 10}), 40);
 }
 
 TEST_F(Fb2MathTest, ProgressOnUnloadedBookIsZero) {

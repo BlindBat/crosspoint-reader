@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 
+#include "ChapterPosition.h"
 #include "EpubReaderMenuActivity.h"
 #include "Fb2ReaderMath.h"
 #include "ReaderActivity.h"
@@ -128,7 +129,9 @@ class Fb2ReaderActivity final : public ReaderActivity {
   void applyInitialOrientation() override;
   void renderContents(std::unique_ptr<Page> page, int orientedMarginTop, int orientedMarginLeft);
   void renderStatusBar() const;
-  float bookProgressPercent() const;
+  // Live position, or the one cached before a child screen released the section.
+  ChapterPosition chapterPosition() const;
+  int bookProgressPercent() const;
 
   bool loadBook() override;
   std::string getBookTitle() const override { return fb2 ? fb2->getTitle() : ""; }

@@ -1,16 +1,29 @@
 #pragma once
 
+#include <Fb2.h>
+
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 
+#include "ChapterPosition.h"
+
 // Pure progress/percent arithmetic for the FB2 reader (FR-105), kept free of
-// Fb2/section state so it compiles in the host test program.
+// section state so it compiles in the host test program.
 namespace fb2_reader {
 
 int clampPercent(int percent);
 
 // Nearest whole percent of a 0-100 float, clamped.
 int roundedPercent(float percent);
+
+// Whole-percent book progress at a chapter position (live or cached), 0 while
+// the chapter's page count is unknown. The page index can run past the estimated
+// total, so the fraction is clamped before it weighs into the book.
+inline int percentForPosition(const Fb2& book, const Fb2::SectionInfo& chapter, const ChapterPosition& pos) {
+  if (!pos.hasTotal()) return 0;
+  return roundedPercent(book.calculateProgress(chapter, std::clamp(pos.chapterFraction(), 0.0f, 1.0f)) * 100.0f);
+}
 
 // Cumulative section byte sizes, read through a callback so no vector is built.
 struct SectionSizes {
