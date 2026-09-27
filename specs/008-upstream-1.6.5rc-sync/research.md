@@ -364,6 +364,17 @@ panic or reset other than one deliberate silent restart:**
 - Not exercised: an FB2 with an NFD-composed Korean name (none on the card) and a white-background sleep cover (no known
   candidate); an EPUB ordered list was not specifically located in `design-patterns-ru.epub`.
 
+**T055 (2026-09-27):** branch pushed to `origin`; PR https://github.com/BlindBat/crosspoint-reader/pull/21 opened
+against `master` (title `chore: sync with upstream 1.6.5rc`, AI usage disclosed). `gh pr create` from this fork needs
+`-R BlindBat/crosspoint-reader --head BlindBat:<branch>` — without them it resolves the head against the upstream parent
+and fails with "Head ref must be a branch". The first CI run failed `Build default` and `Build sticky` with
+`ModuleNotFoundError: No module named 'SCons.Tool.FortranCommon'` in the hybrid builds' nested Arduino compile — the
+same failure upstream hit on its own 1.6.5 release run and fixed after 1.6.5rc; cherry-picked (`-x`, upstream authors
+kept) `e1c267b4 fix(ci): pin pioarduino core inside the platform penv (#3594)`, `8e10f51d fix: pin packages in rc
+workflow` and `93e98bb7 fix: pin pioarduino in release.yml too` — the release workflow now carries both upstream's pin
+and the fork's tag-check relaxation. Landing (`gh pr merge --merge --delete-branch`) awaits Test Status and a
+separate go-ahead.
+
 ## R16. Analyze findings and dispositions (2026-09-27)
 
 `/speckit-analyze` raised 11 findings, none critical; walked one by one with the user:
