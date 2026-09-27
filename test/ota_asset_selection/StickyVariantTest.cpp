@@ -1,7 +1,7 @@
 // The sticky build is its own compatibility class, tagged "sticky" and served by
-// the crosspoint-<tag>-sticky.bin release asset (upstream #3493 layout). The main suite binary is built as x4pro; this TU
-// compiles the same production sources again as sticky inside a namespace, using
-// the mechanics documented in X4VariantTest.cpp.
+// the crosspoint-<tag>-sticky.bin release asset (upstream #3493 layout). The main suite binary is built as x4pro; this
+// TU compiles the same production sources again as sticky inside a namespace, using the mechanics documented in
+// X4VariantTest.cpp.
 
 #undef FREEINK_DEVICE_X4PRO
 #define FREEINK_DEVICE_STICKY 1

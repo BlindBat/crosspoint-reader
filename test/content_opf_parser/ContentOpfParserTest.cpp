@@ -621,10 +621,11 @@ TEST(ContentOpfParserMetadata, ClampsOversizedMetadataTextInsteadOfGrowingUnboun
 }
 
 TEST(ContentOpfParserMetadata, SeparatesCreatorElementsAndCollapsesXmlWhitespace) {
-  const Parsed p = parse(opf("<dc:title>  The\n   Left Hand   of Darkness  </dc:title>"
-                             "<dc:creator> Ursula   K. Le Guin </dc:creator>"
-                             "<dc:creator>\nOctavia E. Butler\n</dc:creator>",
-                             kManifest, kSpine));
+  const Parsed p =
+      parse(opf("<dc:title>  The\n   Left Hand   of Darkness  </dc:title>"
+                "<dc:creator> Ursula   K. Le Guin </dc:creator>"
+                "<dc:creator>\nOctavia E. Butler\n</dc:creator>",
+                kManifest, kSpine));
   EXPECT_EQ("The Left Hand of Darkness", p.title);
   EXPECT_EQ("Ursula K. Le Guin, Octavia E. Butler", p.author);
 }

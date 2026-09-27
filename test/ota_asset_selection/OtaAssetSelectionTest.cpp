@@ -266,9 +266,9 @@ TEST_F(OtaTest, DuplicateAssetNamesLastOneWins) {
 
 TEST_F(OtaTest, MissingTagNameIsParseError) {
   OtaUpdater updater;
-  FakeHttp::instance().setBody(
-      makeReleaseJson("unused", {{"crosspoint-unused-x4pro.bin", "https://cdn.example/x4pro.bin", 2222}},
-                      /*includeTag=*/false));
+  FakeHttp::instance().setBody(makeReleaseJson("unused",
+                                               {{"crosspoint-unused-x4pro.bin", "https://cdn.example/x4pro.bin", 2222}},
+                                               /*includeTag=*/false));
   EXPECT_EQ(updater.checkForUpdate(), OtaUpdater::JSON_PARSE_ERROR);
 }
 

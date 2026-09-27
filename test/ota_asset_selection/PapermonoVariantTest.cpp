@@ -1,7 +1,7 @@
 // The papermono build is its own compatibility class, tagged "papermono" and served by
-// the crosspoint-<tag>-papermono.bin release asset (upstream #3493 layout). The main suite binary is built as x4pro; this TU
-// compiles the same production sources again as papermono inside a namespace, using
-// the mechanics documented in X4VariantTest.cpp.
+// the crosspoint-<tag>-papermono.bin release asset (upstream #3493 layout). The main suite binary is built as x4pro;
+// this TU compiles the same production sources again as papermono inside a namespace, using the mechanics documented in
+// X4VariantTest.cpp.
 
 #undef FREEINK_DEVICE_X4PRO
 #define FREEINK_DEVICE_PAPERMONO 1

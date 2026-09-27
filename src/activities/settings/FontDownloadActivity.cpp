@@ -246,7 +246,8 @@ bool FontDownloadActivity::fetchAndParseManifest() {
   rowLabels_.reserve(rowCapacity);
   rowItems_.reserve(rowCapacity);
 
-  LOG_DBG("FONT", "Manifest loaded: %zu families, %zu script groups", manifest_.families.size(), manifest_.scriptGroupLabels.size());
+  LOG_DBG("FONT", "Manifest loaded: %zu families, %zu script groups", manifest_.families.size(),
+          manifest_.scriptGroupLabels.size());
   return true;
 }
 
@@ -697,7 +698,8 @@ void FontDownloadActivity::rebuildGroupRowItems() {
   for (int rowIndex = 0; rowIndex < listSize; rowIndex++) {
     fui::ListItem item;
     item.label = rowIndex == 0 ? tr(STR_ALL_FONTS) : manifest_.str(manifest_.scriptGroupLabels[rowIndex - 1]);
-    const int memberCount = rowIndex == 0 ? static_cast<int>(manifest_.families.size()) : groupMemberCount(rowIndex - 1);
+    const int memberCount =
+        rowIndex == 0 ? static_cast<int>(manifest_.families.size()) : groupMemberCount(rowIndex - 1);
     rowLabels_[rowIndex] = std::to_string(memberCount);
     item.value = rowLabels_[rowIndex].c_str();
     item.actionValue = static_cast<int16_t>(rowIndex);
