@@ -1,3 +1,4 @@
+#include <HalStorage.h>
 #include <gtest/gtest.h>
 
 #include <memory>
@@ -21,6 +22,43 @@ size_t nthOccurrence(const std::string& haystack, const std::string& needle, int
     pos = haystack.find(needle, pos + 1);
   }
   return pos;
+}
+
+bool neverReserve(void*) {
+  ADD_FAILURE() << "metadata-only parse reached the chapter sink";
+  return false;
+}
+bool neverWrite(void*, uint16_t, Fb2::SectionInfo&) {
+  ADD_FAILURE() << "metadata-only parse reached the chapter sink";
+  return false;
+}
+
+// The library walk wants the title block only: the parser stops at the end of
+// <title-info> instead of scanning the body for chapters.
+TEST(Fb2MetadataParser, MetadataOnlyParseStopsBeforeTheBody) {
+  fb2test::TempDir tmp;
+  ASSERT_TRUE(tmp.valid());
+  // 2 KB of <document-info> between the title block and the body: the stop lands
+  // in the first 1024-byte parser buffer while the first <section> sits past the second.
+  std::string raw =
+      "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<FictionBook>\n<description>"
+      "<title-info><book-title>Stop Here</book-title><author><first-name>Ada</first-name>"
+      "<last-name>Lovelace</last-name></author><lang>en</lang></title-info>"
+      "<document-info><program-used>";
+  raw.append(2048, 'x');
+  raw +=
+      "</program-used></document-info></description>\n<body>\n"
+      "<section><title><p>One</p></title><p>text</p></section>\n</body>\n</FictionBook>\n";
+  const std::string path = tmp.path() + "/stop.fb2";
+  ASSERT_TRUE(writeAll(path, raw));
+
+  halstub::readCalls = 0;
+  Fb2MetadataParser parser(path, Fb2ChapterSink{nullptr, &neverReserve, &neverWrite}, /*metadataOnly=*/true);
+  ASSERT_TRUE(parser.parse());
+  EXPECT_EQ(parser.getTitle(), "Stop Here");
+  EXPECT_EQ(parser.getAuthor(), "Ada Lovelace");
+  EXPECT_EQ(parser.getChapterCount(), 0u);
+  EXPECT_LT(halstub::readCalls * 1024, raw.find("<section"));
 }
 
 TEST(Fb2MetadataParser, ExtractsTitleAuthorLanguageAndCoverId) {

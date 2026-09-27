@@ -7,6 +7,7 @@ add_executable(Fb2BookTest
   ${REPO_ROOT}/lib/Fb2/Fb2/Fb2MetadataParser.cpp
   ${REPO_ROOT}/lib/Fb2/Fb2/Fb2CoverExtractor.cpp
   ${REPO_ROOT}/lib/Fb2/Fb2/Fb2XmlEncoding.cpp
+  ${REPO_ROOT}/lib/Utf8/Utf8.cpp
   ${REPO_ROOT}/lib/expat/xmlparse.c
   ${REPO_ROOT}/lib/expat/xmlrole.c
   ${REPO_ROOT}/lib/expat/xmltok.c
@@ -20,6 +21,7 @@ target_include_directories(Fb2BookTest PRIVATE
   ${REPO_ROOT}/lib/Fb2
   ${REPO_ROOT}/lib/Memory
   ${REPO_ROOT}/lib/Serialization
+  ${REPO_ROOT}/lib/Utf8
 )
 
 target_compile_definitions(Fb2BookTest PRIVATE

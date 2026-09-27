@@ -482,6 +482,50 @@ TEST_F(Fb2BookTest, GenerateCoverBmpDecodesTheDeclaredBinary) {
   EXPECT_EQ(readAll(book.getCoverBmpPath()), "STUBJPEG:basic-cover-payload-0123456789");
 }
 
+// The library walk reads title and author only: the cache header when the reader
+// has built one, else a parse that stops at the end of <title-info>, and it never
+// creates the reader's cache.
+TEST_F(Fb2BookTest, LoadMetadataReadsTheCacheHeaderWithoutBuilding) {
+  Fb2 built(fixturePath("basic.fb2"), tmp.path());
+  ASSERT_TRUE(built.load());
+
+  Fb2 fresh(fixturePath("basic.fb2"), tmp.path());
+  Storage.resetOpenCounts();
+  std::string title, author;
+  ASSERT_TRUE(fresh.loadMetadata(title, author));
+  EXPECT_EQ(title, built.getTitle());
+  EXPECT_EQ(author, built.getAuthor());
+  EXPECT_EQ(Storage.openForReadCount(), 1u) << "book.bin alone, never the source";
+  EXPECT_FALSE(fileExists(fresh.getCachePath() + "/sections"));
+}
+
+TEST_F(Fb2BookTest, LoadMetadataWithoutCacheParsesAndWritesNothing) {
+  Fb2 book(fixturePath("basic.fb2"), tmp.path());
+  std::string title, author;
+  ASSERT_TRUE(book.loadMetadata(title, author));
+  EXPECT_EQ(title, "The Crosspoint Chronicle");
+  EXPECT_EQ(author, "John Doe");
+  EXPECT_FALSE(fileExists(book.getCachePath())) << "the library walk must not create the reader's cache";
+}
+
+TEST_F(Fb2BookTest, LoadMetadataComposesDecomposedText) {
+  const std::string decomposed = "Cafe\xCC\x81";  // e + combining acute
+  const std::string raw =
+      "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<FictionBook><description><title-info>"
+      "<book-title>" +
+      decomposed + "</book-title><author><last-name>" + decomposed +
+      "</last-name></author></title-info></description>"
+      "<body><section><p>x</p></section></body></FictionBook>\n";
+  const std::string path = tmp.path() + "/nfd.fb2";
+  ASSERT_TRUE(writeAll(path, raw));
+
+  Fb2 book(path, tmp.path());
+  std::string title, author;
+  ASSERT_TRUE(book.loadMetadata(title, author));
+  EXPECT_EQ(title, "Caf\xC3\xA9");
+  EXPECT_EQ(author, "Caf\xC3\xA9");
+}
+
 TEST_F(Fb2BookTest, GenerateThumbWithoutCoverWritesEmptyMarkerAndFails) {
   Fb2 book(fixturePath("no-cover.fb2"), tmp.path());
   ASSERT_TRUE(book.load());

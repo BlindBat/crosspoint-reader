@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <BufferedFile.h>
 #include <Epub.h>
+#include <Fb2.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
 #include <Logging.h>
@@ -175,8 +176,9 @@ bool installNewIndex() {
 }
 
 bool isBookName(const std::string& name) {
-  return FsHelpers::checkFileExtension(name, ".epub") || FsHelpers::checkFileExtension(name, ".txt") ||
-         FsHelpers::checkFileExtension(name, ".md") || FsHelpers::checkFileExtension(name, ".xtc");
+  return FsHelpers::checkFileExtension(name, ".epub") || FsHelpers::checkFileExtension(name, ".fb2") ||
+         FsHelpers::checkFileExtension(name, ".txt") || FsHelpers::checkFileExtension(name, ".md") ||
+         FsHelpers::checkFileExtension(name, ".xtc");
 }
 
 // macOS AppleDouble sidecars and hidden entries. The file browser already hides
@@ -294,7 +296,8 @@ int findPrior(WalkState& st, const uint64_t pathHash) {
   entry.pathHash = clixPathHash(fullPath.data(), fullPath.size());
   const int priorIndex = findPrior(st, entry.pathHash);
 
-  const bool extractionExpected = st.readMetadata && FsHelpers::hasEpubExtension(name);
+  const bool extractionExpected =
+      st.readMetadata && (FsHelpers::hasEpubExtension(name) || FsHelpers::hasFb2Extension(name));
   const uint8_t expectedStatus = extractionExpected ? CLIX_METADATA_EXTRACTED : CLIX_METADATA_NOT_ATTEMPTED;
   bool reuseMetadata = false;
   ClixRecord priorRecord{};
@@ -330,13 +333,15 @@ int findPrior(WalkState& st, const uint64_t pathHash) {
   }
 
   // Prefer the reader's existing cache. For an unopened book, loadMetadata()
-  // reuses the same EPUB parser but stops before the manifest, so this never
-  // builds spine, TOC, CSS, cover, or section caches during the library walk.
+  // reuses the same parser but stops before the manifest (EPUB) or at the end of
+  // the title block (FB2), so this never builds spine, TOC, CSS, cover, or
+  // section caches during the library walk.
   if (!reuseMetadata && extractionExpected) {
     st.stats->parsed++;
-    Epub epub(fullPath, CACHE_DIR);
     std::string bookTitle;
-    if (epub.loadMetadata(bookTitle, author)) {
+    const bool extracted = FsHelpers::hasFb2Extension(name) ? Fb2(fullPath, CACHE_DIR).loadMetadata(bookTitle, author)
+                                                            : Epub(fullPath, CACHE_DIR).loadMetadata(bookTitle, author);
+    if (extracted) {
       entry.record.metadataStatus = CLIX_METADATA_EXTRACTED;
       if (!bookTitle.empty()) {
         title = std::move(bookTitle);

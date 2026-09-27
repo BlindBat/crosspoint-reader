@@ -75,6 +75,11 @@ void Fb2MetadataParser::stopForSink() {
   XML_StopParser(static_cast<XML_Parser>(parser), XML_FALSE);
 }
 
+void Fb2MetadataParser::stopAfterMetadata() {
+  metadataDone = true;
+  XML_StopParser(static_cast<XML_Parser>(parser), XML_FALSE);
+}
+
 void Fb2MetadataParser::startElement(void* userData, const char* name, const char** atts) {
   auto* self = static_cast<Fb2MetadataParser*>(userData);
   if (self->sinkFailed) return;
@@ -116,6 +121,10 @@ void Fb2MetadataParser::startElement(void* userData, const char* name, const cha
   }
 
   if (strcmp(tag, "body") == 0 && !self->inBody) {
+    if (self->metadataOnly) {
+      self->stopAfterMetadata();
+      return;
+    }
     self->bodyCount++;
     // FB2 convention: bodies after the first carry a name attribute
     // (name="notes"/"comments") and hold auxiliary content, not reading
@@ -199,6 +208,7 @@ void Fb2MetadataParser::endElement(void* userData, const char* name) {
   if (strcmp(tag, "title-info") == 0 && self->inTitleInfo) {
     self->inTitleInfo = false;
     self->context = Context::NONE;
+    if (self->metadataOnly) self->stopAfterMetadata();
     return;
   }
 
@@ -369,6 +379,7 @@ bool Fb2MetadataParser::parse() {
     done = file.available() == 0;
 
     if (XML_ParseBuffer(xmlParser, len, done) == XML_STATUS_ERROR) {
+      if (metadataDone) break;  // stopped on purpose: the title block is complete
       LOG_ERR("FB2", "Parse error at line %lu: %s", XML_GetCurrentLineNumber(xmlParser),
               XML_ErrorString(XML_GetErrorCode(xmlParser)));
       success = false;
@@ -385,7 +396,7 @@ bool Fb2MetadataParser::parse() {
   }
 
   // If no sections found, treat entire body as one section
-  if (success && chapterCount == 0) {
+  if (success && chapterCount == 0 && !metadataOnly) {
     LOG_DBG("FB2", "No sections found, treating entire file as one section");
     // Re-parse is too expensive; create a dummy section covering the whole file.
     // The book title stands in for the section title (empty titles display as "Unnamed").

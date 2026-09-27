@@ -4,6 +4,7 @@
 #include <HalStorage.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <Utf8.h>
 
 #include <algorithm>
 #include <cstring>
@@ -396,6 +397,20 @@ bool Fb2::load(const bool buildIfMissing) {
   }
 
   loaded = true;
+  return true;
+}
+
+bool Fb2::loadMetadata(std::string& outTitle, std::string& outAuthor) {
+  outTitle.clear();
+  outAuthor.clear();
+  if (!loadMetadataCache()) {
+    Fb2MetadataParser parser(filepath, Fb2ChapterSink{}, /*metadataOnly=*/true);
+    if (!parser.parse()) return false;
+    title = parser.getTitle();
+    author = parser.getAuthor();
+  }
+  outTitle = utf8ComposeNfc(title);
+  outAuthor = utf8ComposeNfc(author);
   return true;
 }
 

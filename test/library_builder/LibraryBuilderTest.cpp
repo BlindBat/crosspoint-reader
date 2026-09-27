@@ -32,6 +32,15 @@ std::string pathAt(LibraryIndexFile& index, const SortOrder order, const uint16_
   return index.readPath(record, path) ? path : std::string();
 }
 
+// Record of the book at `path`, found by scanning the record section.
+bool recordForPath(LibraryIndexFile& index, const std::string& path, ClixRecord& record) {
+  for (uint16_t ordinal = 0; ordinal < index.header().bookCount; ordinal++) {
+    std::string candidate;
+    if (index.readRecord(ordinal, record) && index.readPath(record, candidate) && candidate == path) return true;
+  }
+  return false;
+}
+
 class LibraryBuilderTest : public ::testing::Test {
  protected:
   BuildStats stats;
@@ -170,6 +179,53 @@ TEST_F(LibraryBuilderTest, MetadataModeChangesInvalidateCachedMetadata) {
 
   ASSERT_TRUE(buildLibraryIndex("/", stats, true));
   EXPECT_EQ(fake::parses, 2u);
+}
+
+// FictionBook 2 is a fork format: the index must list it beside EPUBs and read
+// its title block the same way, through Fb2::loadMetadata.
+TEST_F(LibraryBuilderTest, Fb2BooksAreIndexedBesideEpubs) {
+  fake::add("/a.fb2");
+
+  ASSERT_TRUE(buildLibraryIndex("/", stats, false));
+
+  EXPECT_EQ(stats.books, 3);
+}
+
+TEST_F(LibraryBuilderTest, Fb2MetadataIsExtractedOnceLikeAnEpubs) {
+  fake::add("/a.fb2");
+  bookMetadata["/a.fb2"] = {"Master and Margarita", "Mikhail Bulgakov"};
+
+  initial();
+
+  EXPECT_EQ(stats.parsed, 3);
+  LibraryIndexFile index;
+  ASSERT_TRUE(index.open(INDEX));
+  ClixRecord record{};
+  ASSERT_TRUE(recordForPath(index, "/a.fb2", record));
+  EXPECT_EQ(record.metadataStatus, CLIX_METADATA_EXTRACTED);
+  std::string title, author;
+  ASSERT_TRUE(index.readTitle(record, title));
+  ASSERT_TRUE(index.readAuthor(record, author));
+  EXPECT_EQ(title, "Master and Margarita");
+  EXPECT_EQ(author, "Mikhail Bulgakov");
+}
+
+TEST_F(LibraryBuilderTest, FailedFb2ExtractionFallsBackToTheFilename) {
+  fake::add("/a.fb2");
+  bookMetadata["/a.fb2"].success = false;
+
+  initial();
+
+  LibraryIndexFile index;
+  ASSERT_TRUE(index.open(INDEX));
+  ClixRecord record{};
+  ASSERT_TRUE(recordForPath(index, "/a.fb2", record));
+  EXPECT_EQ(record.metadataStatus, CLIX_METADATA_FAILED);
+  std::string title;
+  EXPECT_FALSE(index.readTitle(record, title)) << "no stored title: the row shows the filename";
+  std::string name;
+  ASSERT_TRUE(index.readName(record, name));
+  EXPECT_EQ(name, "a.fb2");
 }
 
 TEST_F(LibraryBuilderTest, RebuildVotesFromSourceAuthorInsteadOfPriorCanonicalAuthor) {

@@ -57,6 +57,10 @@ class Fb2 {
   ~Fb2() = default;
 
   bool load(bool buildIfMissing = true);
+  // Title and author only, for the library walk: the cache header when the reader
+  // has built one, else a parse that stops at the end of <title-info>. Never
+  // creates the cache directory or book.bin.
+  bool loadMetadata(std::string& outTitle, std::string& outAuthor);
   bool clearCache() const;
   void setupCacheDir() const;
   const std::string& getCachePath() const;
