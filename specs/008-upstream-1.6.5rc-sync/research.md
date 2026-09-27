@@ -326,9 +326,43 @@ files needed one `style:` commit (`-g` had skipped them because they were staged
 `src/activities/reader/Fb2*`, the shared `ReaderUtils.h` helper — see the plan's Complexity Tracking — `SleepActivity.cpp`,
 `release.yml`, tests), docs, the formatting commit and the `override` one-liner.
 
-T053: the simulator (`bin/run-simulator --build-only`, `.pio/build/simulator/program`) builds from the final tree; the
-visual walk (Library tabs / collapse / search, FB2 from each tab, FB2 menu after the chapter list, coverless FB2 sleep
-stub, four orientations) needs a person at the window — outcome to be noted here.
+T053 (2026-09-27, driven with `CROSSPOINT_SIM_INPUT_SCRIPT` / `CROSSPOINT_SIM_SCREENSHOTS`, screenshots read back):
+Home shows Browse Files / Library / File Transfer / Settings; the Library builds its index (4,096-book cap hit on the
+symlinked `_books` fixture tree, 4.0 s), shows the three tabs Recent ▾ / Title ▴ / Author ▴ (the "Added" view is the
+Recent tab's sort toggle, not a fourth tab — the walk text above overstated it), lists FB2 titles and authors read
+through `Fb2::loadMetadata` (*Мое тело — Босфор* / По, *Марсианские хроники* / Брэдбери), collapses Author to five
+groups, opens Search. `cover-test.fb2` (*Маленькие мужчины*): chapter list → menu shows the same chapter page
+(1/1, later 4/66 and 3/86 after page turns); the Reading Orientation popup steps Portrait → Landscape CW → Inverted →
+Landscape CCW → Portrait, the page re-paginating 86 ↔ 92 pages with the position kept (10/86 → 10/92 → 9/86 → 9/92 →
+8/86); Home's Continue-reading tile shows the FB2 cover thumbnail and the book lands in Recent. The Library and the
+menus are portrait-only by design (the reading orientation rotates the page, not the shelf). Not repeated in the
+simulator: the coverless sleep stub (its Sleep Screen setting is Dark; verified on the device above).
+Two simulator facts, not firmware ones: the stock simulator (`crosspoint-simulator` @ `d843842`) cannot build the
+Library index because its directory handles have no `position()`/`seekSet()` — a local `telldir`/`seekdir` patch in its
+`HalStorage.cpp` fixes the walk (worth upstreaming); and the fixture tree's symlinks make the walk see the same books
+many times ("Untitled Fields" rows, duplicate Bradbury entries), which a real card cannot do.
+
+**Device walk (T026, T029, T045), 2026-09-27 evening, `default` build `…-c22f4721`, serial captured throughout, no
+panic or reset other than one deliberate silent restart:**
+
+- Home shows Library; Library opens on the existing index (no build), four tabs, Title count 947; Search (keyboard) and
+  letter-group collapse work; Recent hold-remove works (confirmation dialog, entry gone).
+- **Rebuild library index** with nothing changed: 15.2 s, 947 reused, 0 parsed, index not replaced (third SC-005 figure).
+- The 677-chapter anthology opens straight from its bb.5-era cache (`Loaded metadata cache: 677 chapters`, no indexing
+  popup); chapter list → back → menu shows the same chapter page (FR-024); Go to % seeds from the cached position; hold
+  Down through repaints drops nothing; 30 s idle then one short press turns the page (FR-027); end-of-book selection keeps
+  its highlight across redraws (FR-025).
+- Sleep from that book: `fb2_…/cover_original.bmp` generated (18 s for the 17.3 MB binary) and drawn 533×800 → 0×40.
+  Sleep from the coverless `Чепушинка.fb2`: `No cover image available` → stub card. Wake returns to the reader.
+- `design-patterns-ru.epub` opens and re-lays out its chapter after the CSS cache refresh (`Cache not found, building…`,
+  pages processed) — the FR-006 EPUB half. Its 248 KB stylesheet trips the pre-existing 128 KB CSS cap (`[ERR] CSS file
+  too large … skipping`), so it renders with default styling, as before the sync.
+- Browse Files delete of `1992 - Бесконечная игра.fb2`: `Deleted successfully` after the `[BookCache]` metadata-cache
+  check that removes its `fb2_<hash>` directory.
+- "Check for updates" with the saved WiFi unreachable → `WiFi connection failed` → the firmware's own
+  `Silent restart (target=home)`; expected behaviour, not a defect.
+- Not exercised: an FB2 with an NFD-composed Korean name (none on the card) and a white-background sleep cover (no known
+  candidate); an EPUB ordered list was not specifically located in `design-patterns-ru.epub`.
 
 ## R16. Analyze findings and dispositions (2026-09-27)
 
