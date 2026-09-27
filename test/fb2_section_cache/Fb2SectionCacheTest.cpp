@@ -136,6 +136,14 @@ TEST_F(Fb2SectionCacheTest, CreateSectionFileWritesSpecStampedHeader) {
 
 // FR-006: a chapter is paginated over its OWN content, so page counts differ
 // per chapter and none of them is the whole book's.
+// #3527 for FB2: the rebuildable SD-font caches are released once before a
+// chapter is laid out, so the layout has the heap they held.
+TEST_F(Fb2SectionCacheTest, StartBuildReleasesSdFontCachesOnce) {
+  renderer.fontCache.releaseSdFontCachesCalls = 0;
+  ASSERT_NE(buildSection(makeSpec()), nullptr);
+  EXPECT_EQ(renderer.fontCache.releaseSdFontCachesCalls, 1);
+}
+
 TEST_F(Fb2SectionCacheTest, PageCountsArePerChapterNotPerBook) {
   auto nested = std::make_shared<Fb2>(fixturePath("nested-deep.fb2"), tmp.path());
   ASSERT_TRUE(nested->load());
