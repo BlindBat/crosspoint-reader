@@ -5,6 +5,7 @@
 // compute expected line/page breaks by hand. Draw calls are no-ops.
 
 #include <EpdFontFamily.h>
+#include <FontCacheManager.h>
 
 #include <cstdint>
 #include <deque>
@@ -44,6 +45,9 @@ class GfxRenderer {
   bool isSdCardFont(int) const { return false; }
   void ensureSdCardFontReady(int, const std::deque<std::string>&, bool, uint8_t) const {}
   bool isFontCacheScanning() const { return false; }
+  // Counts the pre-layout cache releases (Section.cpp, Fb2Section.cpp).
+  mutable FontCacheManager fontCache;
+  FontCacheManager* getFontCacheManager() const { return &fontCache; }
   void drawText(int, int, int, const char*, bool = true, EpdFontFamily::Style = EpdFontFamily::REGULAR,
                 BidiUtils::BidiBaseDir = BidiUtils::BidiBaseDir::AUTO) const {}
   void drawLine(int, int, int, int, bool = true) const {}

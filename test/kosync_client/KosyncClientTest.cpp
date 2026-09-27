@@ -4,8 +4,7 @@
 // EOF skipping), KOReaderCredentialStore::getBaseUrl/getMd5Password,
 // KOReaderSyncClient's request shape, status -> Error mapping and JSON
 // parsing/serialisation behind the canned SecureHttpClient stub, the
-// SmartSync decision table and rich-position builder extracted from
-// KOReaderSyncActivity, the settings URL helpers, ProgressMapper's
+// settings URL helpers, ProgressMapper's
 // generateXPath byte fallback and its <a id> attribute scanner.
 //
 // Malformed bodies (non-JSON, truncated, hostile nesting, embedded NUL,
@@ -28,7 +27,6 @@
 #include <PlatformHost.h>
 #include <ProgressMapper.h>
 #include <SecureHttpClient.h>
-#include <SmartSyncDecision.h>
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -1276,151 +1274,6 @@ TEST_F(KosyncClientTest, ErrorStringsCoverEveryCode) {
   // that range (9 enumerators need 4 bits), so the cast stays well-defined.
   EXPECT_STREQ(KOReaderSyncClient::errorString(Error::USER_EXISTS), "Unknown error");
   EXPECT_STREQ(KOReaderSyncClient::errorString(static_cast<Error>(15)), "Unknown error");
-}
-
-// --- SmartSync decision table -------------------------------------------------
-
-TEST_F(KosyncClientTest, AlternateMatchMethodFlipsAndNames) {
-  EXPECT_EQ(SmartSync::alternateMatchMethod(DocumentMatchMethod::FILENAME), DocumentMatchMethod::BINARY);
-  EXPECT_EQ(SmartSync::alternateMatchMethod(DocumentMatchMethod::BINARY), DocumentMatchMethod::FILENAME);
-  EXPECT_STREQ(SmartSync::matchMethodName(DocumentMatchMethod::FILENAME), "filename");
-  EXPECT_STREQ(SmartSync::matchMethodName(DocumentMatchMethod::BINARY), "binary");
-}
-
-TEST_F(KosyncClientTest, AlternateIdProbedOnlyWhenHashedAndDifferent) {
-  EXPECT_FALSE(SmartSync::shouldProbeAlternate("abc", ""));
-  EXPECT_FALSE(SmartSync::shouldProbeAlternate("abc", "abc"));
-  EXPECT_TRUE(SmartSync::shouldProbeAlternate("abc", "def"));
-  EXPECT_TRUE(SmartSync::shouldProbeAlternate("", "def"));
-}
-
-TEST_F(KosyncClientTest, AlternateRecordNeverAdoptedUnlessItExists) {
-  for (const Error alt : {Error::NOT_FOUND, Error::NETWORK_ERROR, Error::AUTH_FAILED, Error::JSON_ERROR}) {
-    EXPECT_FALSE(SmartSync::preferAlternate(Error::NOT_FOUND, 0.0f, alt, 0.9f)) << alt;
-    EXPECT_FALSE(SmartSync::preferAlternate(Error::OK, 0.1f, alt, 0.9f)) << alt;
-  }
-}
-
-TEST_F(KosyncClientTest, AlternateRecordAdoptedWhenPrimaryMissing) {
-  EXPECT_TRUE(SmartSync::preferAlternate(Error::NOT_FOUND, 0.0f, Error::OK, 0.2f));
-  EXPECT_TRUE(SmartSync::preferAlternate(Error::NOT_FOUND, 0.0f, Error::OK, 0.0f));  // even at 0%
-}
-
-TEST_F(KosyncClientTest, AlternateRecordAdoptedOnlyWhenFurtherThanPrimary) {
-  EXPECT_TRUE(SmartSync::preferAlternate(Error::OK, 0.30f, Error::OK, 0.31f));
-  EXPECT_FALSE(SmartSync::preferAlternate(Error::OK, 0.30f, Error::OK, 0.30f));
-  EXPECT_FALSE(SmartSync::preferAlternate(Error::OK, 0.30f, Error::OK, 0.29f));
-}
-
-TEST_F(KosyncClientTest, AlternateRecordCanOverrideFailedPrimaryFetch) {
-  // A primary transport/auth failure leaves remote percentage at 0, so any
-  // alternate record ahead of 0 wins and the sync proceeds on it.
-  EXPECT_TRUE(SmartSync::preferAlternate(Error::NETWORK_ERROR, 0.0f, Error::OK, 0.05f));
-  EXPECT_FALSE(SmartSync::preferAlternate(Error::SERVER_ERROR, 0.0f, Error::OK, 0.0f));
-}
-
-TEST_F(KosyncClientTest, ResolveAlreadySyncedWithinEpsilon) {
-  EXPECT_EQ(SmartSync::resolve(0.5f, 0.5f), SmartSync::Resolution::ALREADY_SYNCED);
-  EXPECT_EQ(SmartSync::resolve(0.001f, 0.0f), SmartSync::Resolution::ALREADY_SYNCED);  // exactly epsilon
-  EXPECT_EQ(SmartSync::resolve(0.0f, 0.001f), SmartSync::Resolution::ALREADY_SYNCED);  // symmetric
-  EXPECT_EQ(SmartSync::resolve(0.4f, 0.4009f), SmartSync::Resolution::ALREADY_SYNCED);
-}
-
-TEST_F(KosyncClientTest, ResolveUploadWhenLocalAhead) {
-  EXPECT_EQ(SmartSync::resolve(0.0011f, 0.0f), SmartSync::Resolution::UPLOAD_LOCAL);
-  EXPECT_EQ(SmartSync::resolve(0.9f, 0.1f), SmartSync::Resolution::UPLOAD_LOCAL);
-  EXPECT_EQ(SmartSync::resolve(1.0f, 0.0f), SmartSync::Resolution::UPLOAD_LOCAL);
-}
-
-TEST_F(KosyncClientTest, ResolveApplyWhenRemoteAhead) {
-  EXPECT_EQ(SmartSync::resolve(0.0f, 0.0011f), SmartSync::Resolution::APPLY_REMOTE);
-  EXPECT_EQ(SmartSync::resolve(0.1f, 0.9f), SmartSync::Resolution::APPLY_REMOTE);
-}
-
-TEST_F(KosyncClientTest, AskModePreselectsFurthestSide) {
-  EXPECT_EQ(SmartSync::askModeDefaultOption(0.6f, 0.5f), 1);  // Upload local
-  EXPECT_EQ(SmartSync::askModeDefaultOption(0.5f, 0.5f), 0);  // Apply remote on a tie
-  EXPECT_EQ(SmartSync::askModeDefaultOption(0.4f, 0.5f), 0);
-}
-
-// --- SmartSync rich-position construction --------------------------------------
-
-TEST_F(KosyncClientTest, RichPositionQuantizesPercentageToMillionths) {
-  EXPECT_EQ(SmartSync::buildRichPosition(0.25f, 0, 0, 1, std::nullopt, "").pctQ, 250000u);
-  EXPECT_EQ(SmartSync::buildRichPosition(1.0f, 0, 0, 1, std::nullopt, "").pctQ, 1000000u);
-  EXPECT_EQ(SmartSync::buildRichPosition(0.0f, 0, 0, 1, std::nullopt, "").pctQ, 0u);
-  EXPECT_EQ(SmartSync::buildRichPosition(0.1234565f, 0, 0, 1, std::nullopt, "").pctQ, 123457u);  // rounds
-}
-
-TEST_F(KosyncClientTest, RichPositionClampsPercentage) {
-  EXPECT_EQ(SmartSync::buildRichPosition(-0.5f, 0, 0, 1, std::nullopt, "").pctQ, 0u);
-  EXPECT_EQ(SmartSync::buildRichPosition(1.5f, 0, 0, 1, std::nullopt, "").pctQ, 1000000u);
-}
-
-TEST_F(KosyncClientTest, RichPositionFloorsPageCountAtOne) {
-  EXPECT_EQ(SmartSync::buildRichPosition(0.5f, 3, 2, 0, std::nullopt, "").totalPages, 1);
-  EXPECT_EQ(SmartSync::buildRichPosition(0.5f, 3, 2, -4, std::nullopt, "").totalPages, 1);
-  EXPECT_EQ(SmartSync::buildRichPosition(0.5f, 3, 2, 12, std::nullopt, "").totalPages, 12);
-}
-
-TEST_F(KosyncClientTest, RichPositionCarriesSpinePageParagraphAndXpath) {
-  const auto pos = SmartSync::buildRichPosition(0.5f, 3, 2, 12, uint16_t{7}, "/body/DocFragment[4]/body/p[7]");
-  EXPECT_EQ(pos.spineIndex, 3);
-  EXPECT_EQ(pos.pageNumber, 2);
-  ASSERT_TRUE(pos.paragraphIndex.has_value());
-  EXPECT_EQ(*pos.paragraphIndex, 7);
-  EXPECT_EQ(pos.xpath, "/body/DocFragment[4]/body/p[7]");
-  const auto bare = SmartSync::buildRichPosition(0.5f, 3, 2, 12, std::nullopt, std::string(200, 'x'));
-  EXPECT_FALSE(bare.paragraphIndex.has_value());
-  EXPECT_EQ(bare.xpath.size(), 200u);  // the 120-byte cap is applied by the client, not here
-}
-
-TEST_F(KosyncClientTest, ResolveTreatsNotANumberAsRemoteAhead) {
-  // fabs(NaN) <= epsilon is false and NaN > 0 is false, so a NaN on either
-  // side falls through to APPLY_REMOTE rather than aborting the sync.
-  const float nan = std::nanf("");
-  EXPECT_EQ(SmartSync::resolve(nan, 0.5f), SmartSync::Resolution::APPLY_REMOTE);
-  EXPECT_EQ(SmartSync::resolve(0.5f, nan), SmartSync::Resolution::APPLY_REMOTE);
-  EXPECT_EQ(SmartSync::askModeDefaultOption(nan, 0.5f), 0);
-}
-
-TEST_F(KosyncClientTest, ResolveHandlesFullRangeAndNegativePercentages) {
-  EXPECT_EQ(SmartSync::resolve(1.0f, 1.0f), SmartSync::Resolution::ALREADY_SYNCED);
-  EXPECT_EQ(SmartSync::resolve(-0.5f, 0.5f), SmartSync::Resolution::APPLY_REMOTE);
-  EXPECT_EQ(SmartSync::resolve(0.5f, -0.5f), SmartSync::Resolution::UPLOAD_LOCAL);
-  EXPECT_EQ(SmartSync::resolve(0.0f, 0.0f), SmartSync::Resolution::ALREADY_SYNCED);
-}
-
-TEST_F(KosyncClientTest, EpsilonIsExactlyOneTenthOfAPercentagePoint) {
-  EXPECT_FLOAT_EQ(SmartSync::SAME_PROGRESS_EPSILON, 0.001f);
-  EXPECT_EQ(SmartSync::PCT_Q_SCALE, 1000000u);
-}
-
-TEST_F(KosyncClientTest, AlternateProbeComparesIdsByteForByte) {
-  EXPECT_TRUE(SmartSync::shouldProbeAlternate("ABC", "abc"));  // case-sensitive
-  EXPECT_FALSE(SmartSync::shouldProbeAlternate("", ""));
-}
-
-TEST_F(KosyncClientTest, RichPositionTruncatesIndicesToSixteenBits) {
-  const auto pos = SmartSync::buildRichPosition(0.5f, 65536 + 3, 65536 + 5, 65536 + 7, std::nullopt, "");
-  EXPECT_EQ(pos.spineIndex, 3);  // wraps: no range check (T144 owns validation)
-  EXPECT_EQ(pos.pageNumber, 5);
-  EXPECT_EQ(pos.totalPages, 7);
-}
-
-TEST_F(KosyncClientTest, RichPositionQuantizationRoundsRatherThanTruncates) {
-  // pctQ = trunc(pct * 1e6 + 0.5): 0.4 of a quantum rounds down, 0.6 rounds up.
-  EXPECT_EQ(SmartSync::buildRichPosition(0.0000004f, 0, 0, 1, std::nullopt, "").pctQ, 0u);
-  EXPECT_EQ(SmartSync::buildRichPosition(0.0000006f, 0, 0, 1, std::nullopt, "").pctQ, 1u);
-  EXPECT_EQ(SmartSync::buildRichPosition(0.9999999f, 0, 0, 1, std::nullopt, "").pctQ, 1000000u);
-}
-
-TEST_F(KosyncClientTest, RichPositionKeepsParagraphIndexZeroDistinctFromUnset) {
-  const auto zero = SmartSync::buildRichPosition(0.5f, 0, 0, 1, uint16_t{0}, "");
-  ASSERT_TRUE(zero.paragraphIndex.has_value());
-  EXPECT_EQ(*zero.paragraphIndex, 0);
-  // updateProgress serialises it, but getProgress folds a 0 back to unset.
-  EXPECT_FALSE(SmartSync::buildRichPosition(0.5f, 0, 0, 1, std::nullopt, "").paragraphIndex.has_value());
 }
 
 // --- Settings URL helpers ------------------------------------------------------

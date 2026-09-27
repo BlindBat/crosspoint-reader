@@ -1,5 +1,5 @@
 # KOSync client suite: the real KOReaderDocumentId / KOReaderSyncClient /
-# KOReaderCredentialStore / SmartSyncDecision / KOReaderServerUrl code plus the
+# KOReaderCredentialStore / KOReaderServerUrl code plus the
 # real ProgressMapper (for generateXPath's byte fallback and the anchor-id
 # attribute scanner), compiled against ArduinoJson 7.4.2 (platformio.ini pin)
 # with the SDK/HAL surfaces stubbed in stubs/: an in-memory HalStorage, a
@@ -22,7 +22,6 @@ add_executable(KosyncClientTest
   ${REPO_ROOT}/lib/KOReaderSync/KOReaderDocumentId.cpp
   ${REPO_ROOT}/lib/KOReaderSync/KOReaderSyncClient.cpp
   ${REPO_ROOT}/lib/KOReaderSync/KOReaderCredentialStore.cpp
-  ${REPO_ROOT}/lib/KOReaderSync/SmartSyncDecision.cpp
   ${REPO_ROOT}/lib/KOReaderSync/ProgressMapper.cpp
   ${REPO_ROOT}/lib/KOReaderSync/ChapterXPathResolver.cpp
   ${REPO_ROOT}/lib/Serialization/PersistableStore.cpp

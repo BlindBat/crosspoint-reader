@@ -40,6 +40,7 @@ target_include_directories(PlatformHelpersTest PRIVATE
   ${REPO_ROOT}/lib/Memory
   ${REPO_ROOT}/lib/ZipFile
   ${REPO_ROOT}/lib/miniz/src
+  ${REPO_ROOT}/test/support  # HalMemory.h stub ahead of lib/hal's declaration-only header
   ${REPO_ROOT}/lib/hal
   ${REPO_ROOT}/lib/FsHelpers
   ${REPO_ROOT}/lib/Platform

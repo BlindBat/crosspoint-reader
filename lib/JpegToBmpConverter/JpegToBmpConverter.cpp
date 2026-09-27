@@ -511,7 +511,8 @@ int bmpDrawCallback(JPEGDRAW* pDraw) {
 
 // Internal implementation with configurable target size and bit depth
 bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& bmpOut, int targetWidth,
-                                                     int targetHeight, bool oneBit, bool crop) {
+                                                     int targetHeight, bool oneBit, bool crop,
+                                                     bool originalThresholds) {
   LOG_DBG("JPG", "Converting JPEG to %s BMP (target: %dx%d)", oneBit ? "1-bit" : "2-bit", targetWidth, targetHeight);
 
   const size_t freeHeap = platform::freeHeap();
@@ -679,36 +680,22 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& b
 
   if (oneBit) {
     ctx.atkinson1BitDitherer = makeUniqueNoThrow<Atkinson1BitDitherer>(outWidth);
-    if (!ctx.atkinson1BitDitherer) {
+    if (!ctx.atkinson1BitDitherer || !ctx.atkinson1BitDitherer->isValid()) {
       LOG_ERR("JPG", "OOM: Atkinson1BitDitherer");
       return false;
     }
-    // The object fits but its error rows may not; dithering is an enhancement, so
-    // drop it and let the row loop fall back to plain quantisation.
-    if (!ctx.atkinson1BitDitherer->valid()) {
-      LOG_ERR("JPG", "OOM: dithering disabled for this image");
-      ctx.atkinson1BitDitherer.reset();
-    }
   } else if (!USE_8BIT_OUTPUT) {
     if (USE_ATKINSON) {
-      ctx.atkinsonDitherer = makeUniqueNoThrow<AtkinsonDitherer>(outWidth);
-      if (!ctx.atkinsonDitherer) {
+      ctx.atkinsonDitherer = makeUniqueNoThrow<AtkinsonDitherer>(outWidth, originalThresholds);
+      if (!ctx.atkinsonDitherer || !ctx.atkinsonDitherer->isValid()) {
         LOG_ERR("JPG", "OOM: AtkinsonDitherer");
         return false;
       }
-      if (!ctx.atkinsonDitherer->valid()) {
-        LOG_ERR("JPG", "OOM: dithering disabled for this image");
-        ctx.atkinsonDitherer.reset();
-      }
     } else if (USE_FLOYD_STEINBERG) {
-      ctx.fsDitherer = makeUniqueNoThrow<FloydSteinbergDitherer>(outWidth);
-      if (!ctx.fsDitherer) {
+      ctx.fsDitherer = makeUniqueNoThrow<FloydSteinbergDitherer>(outWidth, originalThresholds);
+      if (!ctx.fsDitherer || !ctx.fsDitherer->isValid()) {
         LOG_ERR("JPG", "OOM: FloydSteinbergDitherer");
         return false;
-      }
-      if (!ctx.fsDitherer->valid()) {
-        LOG_ERR("JPG", "OOM: dithering disabled for this image");
-        ctx.fsDitherer.reset();
       }
     }
   }
@@ -732,11 +719,11 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& b
 }
 
 // Core function: Convert JPEG file to 2-bit BMP (uses default target size)
-bool JpegToBmpConverter::jpegFileToBmpStream(HalFile& jpegFile, Print& bmpOut, bool crop) {
+bool JpegToBmpConverter::jpegFileToBmpStream(HalFile& jpegFile, Print& bmpOut, bool crop, bool originalThresholds) {
   // Use runtime display dimensions (swapped for portrait cover sizing)
   const int targetWidth = display.getDisplayHeight();
   const int targetHeight = display.getDisplayWidth();
-  return jpegFileToBmpStreamInternal(jpegFile, bmpOut, targetWidth, targetHeight, false, crop);
+  return jpegFileToBmpStreamInternal(jpegFile, bmpOut, targetWidth, targetHeight, false, crop, originalThresholds);
 }
 
 // Convert with custom target size (for thumbnails, 2-bit)

@@ -577,3 +577,74 @@ TEST(ContentOpfParser, StorageWriteFailureLeavesSpineEmptyWithoutCrashing) {
   EXPECT_TRUE(p.cache.spine.empty());
   EXPECT_EQ("Main Title", p.title);
 }
+
+// --- Metadata-only parsing (upstream 1.6.5rc, #3366: the Library index stops the
+// parser at the end of <metadata> so a never-opened book never spills its
+// manifest to the cache directory) ---
+
+namespace {
+
+// Drives a metadata-only parser and reports how much of the document it consumed.
+struct MetadataParsed {
+  std::string title, author, language;
+  bool consumedEverything = false;
+  bool itemsBinLeftBehind = false;
+};
+
+MetadataParsed parseMetadataOnly(const std::string& doc) {
+  TempDir dir;
+  MetadataParsed out;
+  {
+    ContentOpfParser parser(dir.path(), kBase, doc.size(), nullptr, /*metadataOnly=*/true);
+    EXPECT_TRUE(parser.setup());
+    out.consumedEverything = feed(parser, doc);
+    out.title = parser.title;
+    out.author = parser.author;
+    out.language = parser.language;
+  }
+  out.itemsBinLeftBehind = Storage.exists((dir.path() + "/.items.bin").c_str());
+  return out;
+}
+
+}  // namespace
+
+TEST(ContentOpfParserMetadata, EntityCallbackDoesNotSplitOneAuthor) {
+  const Parsed p = parse(opf("<dc:creator>&#201;mile Zola</dc:creator>", kManifest, kSpine));
+  EXPECT_EQ("\xC3\x89mile Zola", p.author);
+}
+
+TEST(ContentOpfParserMetadata, ClampsOversizedMetadataTextInsteadOfGrowingUnbounded) {
+  const std::string hugeTitle(64 * 1024, 'A');
+  const Parsed p = parse(opf("<dc:title>" + hugeTitle + " tail</dc:title>", kManifest, kSpine));
+  EXPECT_EQ(512u, p.title.size());
+  EXPECT_EQ('A', p.title[0]);
+}
+
+TEST(ContentOpfParserMetadata, SeparatesCreatorElementsAndCollapsesXmlWhitespace) {
+  const Parsed p = parse(opf("<dc:title>  The\n   Left Hand   of Darkness  </dc:title>"
+                             "<dc:creator> Ursula   K. Le Guin </dc:creator>"
+                             "<dc:creator>\nOctavia E. Butler\n</dc:creator>",
+                             kManifest, kSpine));
+  EXPECT_EQ("The Left Hand of Darkness", p.title);
+  EXPECT_EQ("Ursula K. Le Guin, Octavia E. Butler", p.author);
+}
+
+TEST(ContentOpfParserMetadata, StopsBeforeManifestWithoutOpeningTemporaryStorage) {
+  // Writes are refused for the whole parse: a parser that reached the manifest
+  // would fail to spill it, so a clean stop is the only way to get here.
+  FailWritesGuard noWrites;
+  const MetadataParsed p = parseMetadataOnly(opf(kMeta, kManifest, kSpine));
+  EXPECT_FALSE(p.consumedEverything) << "the parser stops at </metadata>";
+  EXPECT_EQ("Main Title", p.title);
+  EXPECT_EQ("Ada", p.author);
+  EXPECT_EQ("en", p.language);
+  EXPECT_FALSE(p.itemsBinLeftBehind);
+}
+
+TEST(ContentOpfParserMetadata, NeverEntersManifestWhenMetadataElementIsMissing) {
+  FailWritesGuard noWrites;
+  const MetadataParsed p = parseMetadataOnly(
+      "<package><manifest><item id=\"chapter\" href=\"chapter.xhtml\"/></manifest><spine/></package>");
+  EXPECT_FALSE(p.consumedEverything);
+  EXPECT_FALSE(p.itemsBinLeftBehind);
+}

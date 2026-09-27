@@ -238,6 +238,10 @@ void truncateAtInvalidUtf8(char* output, size_t length) {
 
 }  // namespace
 
+bool isSafePathComponent(std::string_view name) {
+  return !name.empty() && name.find_first_of("/\\") == std::string_view::npos && name != "." && name != "..";
+}
+
 void sanitizePathComponentForFat32(const char* input, char* output, size_t maxLen) {
   if (maxLen == 0) {
     return;

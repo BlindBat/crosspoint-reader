@@ -7,7 +7,7 @@
 // Host stub: records the bytes it was handed and returns imgconv_host::jpeg.result.
 class JpegToBmpConverter {
  public:
-  static bool jpegFileToBmpStream(HalFile& jpegFile, Print& bmpOut, bool crop = true) {
+  static bool jpegFileToBmpStream(HalFile& jpegFile, Print& bmpOut, bool crop = true, bool originalThresholds = false) {
     return imgconv_host::run(imgconv_host::jpeg, jpegFile, bmpOut, 0, 0, crop);
   }
   static bool jpegFileToBmpStreamWithSize(HalFile& jpegFile, Print& bmpOut, int targetMaxWidth, int targetMaxHeight) {

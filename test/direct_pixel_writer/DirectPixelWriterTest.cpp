@@ -462,39 +462,42 @@ TEST(Quantizers, Quantize1BitOriginThresholdAndExtremes) {
 
 // --- BitmapHelpers: Atkinson error diffusion (2-bit path) ---
 
+// The hand-derived tables below pin the DEFAULT quantiser as upstream #3478 retuned it
+// (thresholds 30 / 55 / 150, levels 15 / 35 / 90 / 210). The `originalThresholds` path
+// (43 / 128 / 213) is exercised by test/absolute_grayscale.
 TEST(AtkinsonDitherer, KnownThreeByThreeInput) {
-  // 3x3 image of constant gray 135, width 3. X4-tuned quantizer:
-  //   <30 -> (0, qv 15), <50 -> (1, qv 30), <140 -> (2, qv 80),
+  // 3x3 image of constant gray 135, width 3. Default quantizer (#3478):
+  //   <30 -> (0, qv 15), <55 -> (1, qv 35), <150 -> (2, qv 90),
   //   else (3, qv 210); error = (adjusted - qv) >> 3 (arithmetic shift,
   //   i.e. floor division by 8), 1/8 to each of 6 neighbors.
   // Buffers are width+4 = 7 wide; pixel x reads errorRow0[x+2].
   //
   // Row 0 (all error buffers zero):
-  //  x=0: adj 135 -> q2, err (135-80)>>3 = 6.
-  //       er0[3]=6 er0[4]=6 | er1[1]=6 er1[2]=6 er1[3]=6 | er2[2]=6
-  //  x=1: adj 135+6=141 -> q3, err (141-210)>>3 = floor(-69/8) = -9.
-  //       er0[4]=-3 er0[5]=-9 | er1[2]=-3 er1[3]=-3 er1[4]=-9 | er2[3]=-9
-  //  x=2: adj 135-3=132 -> q2, err 52>>3 = 6.
-  //       er1[3]=3 er1[4]=-3 er1[5]=6 | er2[4]=6
-  //  out [2, 3, 2]; after nextRow: er0 = [0,6,-3,3,-3,6,0],
-  //  er1 = [0,0,6,-9,6,0,0].
+  //  x=0: adj 135 -> q2, err (135-90)>>3 = 5.
+  //       er0[3]=5 er0[4]=5 | er1[1]=5 er1[2]=5 er1[3]=5 | er2[2]=5
+  //  x=1: adj 135+5=140 -> q2, err 50>>3 = 6.
+  //       er0[4]=11 er0[5]=6 | er1[2]=11 er1[3]=11 er1[4]=6 | er2[3]=6
+  //  x=2: adj 135+11=146 -> q2, err 56>>3 = 7.
+  //       er1[3]=18 er1[4]=13 er1[5]=7 | er2[4]=7
+  //  out [2, 2, 2]; after nextRow: er0 = [0,5,11,18,13,7,0],
+  //  er1 = [0,0,5,6,7,0,0].
   //
   // Row 1:
-  //  x=0: adj 135-3=132 -> q2, err 6.
-  //       er0[3]=9 er0[4]=3 | er1[1]=6 er1[2]=12 er1[3]=-3 | er2[2]=6
-  //  x=1: adj 135+9=144 -> q3, err floor(-66/8) = -9.
-  //       er0[4]=-6 er0[5]=-3 | er1[2]=3 er1[3]=-12 er1[4]=-3 | er2[3]=-9
-  //  x=2: adj 135-6=129 -> q2, err 49>>3 = 6.
-  //       er1[3]=-6 er1[4]=3 er1[5]=6 | er2[4]=6
-  //  out [2, 3, 2]; after nextRow: er0 = [0,6,3,-6,3,6,0],
-  //  er1 = [0,0,6,-9,6,0,0].
+  //  x=0: adj 135+11=146 -> q2, err 7.
+  //       er0[3]=25 er0[4]=20 | er1[1]=7 er1[2]=12 er1[3]=13 | er2[2]=7
+  //  x=1: adj 135+25=160 -> q3, err floor(-50/8) = -7.
+  //       er0[4]=13 er0[5]=0 | er1[2]=5 er1[3]=6 er1[4]=0 | er2[3]=-7
+  //  x=2: adj 135+13=148 -> q2, err 58>>3 = 7.
+  //       er1[3]=13 er1[4]=7 er1[5]=7 | er2[4]=7
+  //  out [2, 3, 2]; after nextRow: er0 = [0,7,5,13,7,7,0],
+  //  er1 = [0,0,7,-7,7,0,0].
   //
   // Row 2:
-  //  x=0: adj 135+3=138 -> q2 (still < 140), err 58>>3 = 7. er0[3]=1 er0[4]=10
-  //  x=1: adj 135+1=136 -> q2, err 56>>3 = 7. er0[4]=17
-  //  x=2: adj 135+17=152 -> q3.
-  //  out [2, 2, 3].
-  const int expected[3][3] = {{2, 3, 2}, {2, 3, 2}, {2, 2, 3}};
+  //  x=0: adj 135+5=140 -> q2, err 6. er0[3]=19 er0[4]=13
+  //  x=1: adj 135+19=154 -> q3, err -7. er0[4]=6
+  //  x=2: adj 135+6=141 -> q2.
+  //  out [2, 3, 2].
+  const int expected[3][3] = {{2, 2, 2}, {2, 3, 2}, {2, 3, 2}};
 
   AtkinsonDitherer d(3);
   for (int y = 0; y < 3; y++) {
@@ -507,8 +510,8 @@ TEST(AtkinsonDitherer, KnownThreeByThreeInput) {
 
 TEST(AtkinsonDitherer, FreshPixelThresholds) {
   // With no accumulated error the first pixel exposes the raw thresholds
-  // 30 / 50 / 140.
-  const int inputs[] = {29, 30, 49, 50, 139, 140};
+  // 30 / 55 / 150.
+  const int inputs[] = {29, 30, 54, 55, 149, 150};
   const int expected[] = {0, 1, 1, 2, 2, 3};
   for (size_t i = 0; i < 6; i++) {
     AtkinsonDitherer d(4);
@@ -518,16 +521,16 @@ TEST(AtkinsonDitherer, FreshPixelThresholds) {
 
 TEST(AtkinsonDitherer, ClampsAdjustedValueBeforeQuantizing) {
   // Input far below 0 clamps to 0 -> q0 (qv 15), err (0-15)>>3 = -2, so the
-  // next pixel sees 50-2 = 48 which sits in the [30, 50) band -> q1.
+  // next pixel sees 50-2 = 48 which sits in the [30, 55) band -> q1.
   AtkinsonDitherer d(4);
   EXPECT_EQ(d.processPixel(-1000, 0), 0);
   EXPECT_EQ(d.processPixel(50, 1), 1);
 
   // Input far above 255 clamps to 255 -> q3 (qv 210), err 45>>3 = 5, so the
-  // next pixel sees 139+5 = 144 -> q3 instead of q2.
+  // next pixel sees 146+5 = 151 -> q3 instead of q2.
   AtkinsonDitherer d2(4);
   EXPECT_EQ(d2.processPixel(9000, 0), 3);
-  EXPECT_EQ(d2.processPixel(139, 1), 3);
+  EXPECT_EQ(d2.processPixel(146, 1), 3);
 }
 
 TEST(AtkinsonDitherer, ResetClearsAccumulatedError) {
@@ -595,20 +598,21 @@ TEST(FloydSteinbergDitherer, SerpentineTwoByTwoKnownInput) {
   // 2x2 image of constant gray 135, driven the way the converters do:
   // x ascending on every row, direction handled inside processPixel().
   //
-  // Row 0 (forward): x=0 adj 135 -> q2 (qv 80), err 55; right neighbor gets
-  // (55*7)>>4 = 24, so x=1 adj 159 -> q3. Next-row buffer picks up
-  // [10, 17, 3] from x=0 and [-10, -16, -4] from x=1 (err -51), leaving
-  // errorCurRow = [10, 7, -13, -4] after nextRow().
+  // Default quantizer (#3478): <30 -> qv 15, <55 -> qv 35, <150 -> qv 90, else qv 210.
+  // Row 0 (forward): x=0 adj 135 -> q2 (qv 90), err 45; right neighbor gets
+  // (45*7)>>4 = 19, so x=1 adj 154 -> q3 (err -56). Next-row buffer picks up
+  // [8, 14, 2] from x=0 and [-11, -18, -4] from x=1, leaving
+  // errorCurRow = [8, 3, -16, -4] after nextRow().
   //
-  // Row 1 (reversed distribution): x=0 reads err[1] = 7 -> adj 142 -> q3;
-  // x=1 reads err[2] = -13 -> adj 122 -> q2.
+  // Row 1 (reversed distribution): x=0 reads err[1] = 3 -> adj 138 -> q2;
+  // x=1 reads err[2] = -16 -> adj 119 -> q2.
   FloydSteinbergDitherer d(2);
   EXPECT_FALSE(d.isReverseRow());
   EXPECT_EQ(d.processPixel(135, 0), 2);
   EXPECT_EQ(d.processPixel(135, 1), 3);
   d.nextRow();
   EXPECT_TRUE(d.isReverseRow());
-  EXPECT_EQ(d.processPixel(135, 0), 3);
+  EXPECT_EQ(d.processPixel(135, 0), 2);
   EXPECT_EQ(d.processPixel(135, 1), 2);
   d.nextRow();
   EXPECT_FALSE(d.isReverseRow());

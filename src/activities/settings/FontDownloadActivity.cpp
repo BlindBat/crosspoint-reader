@@ -11,7 +11,7 @@
 #include <esp_rom_crc.h>
 
 #include <algorithm>
-#include <cstdio>
+#include <cstdint>
 #include <cstring>
 
 #include "MappedInputManager.h"
@@ -100,6 +100,10 @@ void FontDownloadActivity::onWifiSelectionComplete(const bool success) {
   requestUpdateAndWait();
 
   if (!fetchAndParseManifest()) {
+    // Drop whatever was parsed before the failure: it would otherwise sit in
+    // the heap behind the error screen, and leave the retry path pointing at a
+    // half-built family table.
+    clearManifest();
     {
       RenderLock lock(*this);
       state_ = ERROR;
@@ -111,7 +115,7 @@ void FontDownloadActivity::onWifiSelectionComplete(const bool success) {
 
   {
     RenderLock lock(*this);
-    rowsDirty_ = true;  // families_ just loaded
+    rowsDirty_ = true;  // manifest_.families just loaded
     if (hasGroupScreen()) {
       groupNav_.reset();
       state_ = GROUP_LIST;
@@ -123,6 +127,13 @@ void FontDownloadActivity::onWifiSelectionComplete(const bool success) {
 }
 
 // --- Manifest fetching ---
+
+void FontDownloadActivity::clearManifest() {
+  // Swap rather than clear: clear() keeps the capacity, and this runs to hand
+  // the heap back while the error screen is up. Reverse allocation order.
+  std::vector<int>().swap(filteredIndices_);
+  manifest_.clear();
+}
 
 bool FontDownloadActivity::fetchAndParseManifest() {
   // Download manifest to a temp file on SD card to avoid holding both
@@ -139,6 +150,9 @@ bool FontDownloadActivity::fetchAndParseManifest() {
     return false;
   }
 
+  // No downgradeRedirectsToHttp here, unlike the font transfers below: this
+  // response carries the crc32 values that are the only integrity anchor for
+  // those plain-HTTP downloads.
   auto result = HttpDownloader::downloadToFile(FONT_MANIFEST_URL, MANIFEST_TMP, nullptr);
   if (result != HttpDownloader::OK) {
     LOG_ERR("FONT", "Failed to fetch manifest from %s", FONT_MANIFEST_URL);
@@ -157,39 +171,60 @@ bool FontDownloadActivity::fetchAndParseManifest() {
   }
 
   JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, manifestFile);
+  DeserializationError err;
+  {
+    // "styles" is the only key the catalog never reads. Dropping it keeps the
+    // DOM about 1KB smaller while it coexists with the arena allocated below.
+    JsonDocument filter;
+    filter["version"] = true;
+    filter["baseUrl"] = true;
+    filter["scriptGroups"][0]["tag"] = true;
+    filter["scriptGroups"][0]["label"] = true;
+    filter["families"][0]["name"] = true;
+    filter["families"][0]["description"] = true;
+    filter["families"][0]["scripts"] = true;
+    filter["families"][0]["files"][0]["name"] = true;
+    filter["families"][0]["files"][0]["size"] = true;
+    filter["families"][0]["files"][0]["crc32"] = true;
+    err = deserializeJson(doc, manifestFile, DeserializationOption::Filter(filter));
+  }
   manifestFile.close();
   Storage.remove(MANIFEST_TMP);
 
   if (err) {
     LOG_ERR("FONT", "Manifest parse error: %s", err.c_str());
-    errorMessage_ = tr(STR_FONT_MANIFEST_INVALID);
+    errorMessage_ = tr(STR_INVALID_FONT_MANIFEST);
     return false;
   }
 
-  switch (parseFontManifest(doc, baseUrl_, scriptGroupLabels_, families_)) {
+  clearManifest();
+  fontInstaller_.refreshRegistry();
+  switch (parseFontManifest(doc, baseUrl_, manifest_)) {
     case FontManifestError::OK:
       break;
     case FontManifestError::UNSUPPORTED_VERSION:
       errorMessage_ = tr(STR_FONT_MANIFEST_UNSUPPORTED);
       return false;
     case FontManifestError::MALFORMED:
-      errorMessage_ = tr(STR_FONT_MANIFEST_INVALID);
+      errorMessage_ = tr(STR_INVALID_FONT_MANIFEST);
+      return false;
+    case FontManifestError::OUT_OF_MEMORY:
+      errorMessage_ = tr(STR_MEMORY_ERROR);
       return false;
   }
-  filteredIndices_.clear();
-  filteredIndices_.reserve(families_.size());
-  fontInstaller_.refreshRegistry();
+  downloadUrl_.reserve(baseUrl_.size() + 128);
+  filteredIndices_.reserve(manifest_.families.size());
 
-  for (auto& family : families_) {
-    family.installed = fontInstaller_.isFamilyInstalled(family.name.c_str());
+  for (auto& family : manifest_.families) {
+    family.installed = fontInstaller_.isFamilyInstalled(manifest_.str(family.name));
 
     // Detect updates by comparing manifest file sizes with files on disk.
     // Not a checksum, but a size mismatch reliably indicates a rebuild in practice.
     if (family.installed) {
-      for (const auto& file : family.files) {
+      for (uint32_t i = 0; i < family.fileCount; i++) {
+        const ManifestFile& file = manifest_.files[family.fileStart + i];
         char path[128];
-        FontInstaller::buildFontPath(family.name.c_str(), file.name.c_str(), path, sizeof(path));
+        FontInstaller::buildFontPath(manifest_.str(family.name), manifest_.str(file.name), path, sizeof(path));
         HalFile f;
         if (Storage.openFileForRead("FONT", path, f)) {
           size_t actual = f.fileSize();
@@ -207,11 +242,11 @@ bool FontDownloadActivity::fetchAndParseManifest() {
     }
   }
 
-  const size_t rowCapacity = std::max(families_.size() + 2, scriptGroupLabels_.size() + 1);
+  const size_t rowCapacity = std::max(manifest_.families.size() + 2, manifest_.scriptGroupLabels.size() + 1);
   rowLabels_.reserve(rowCapacity);
   rowItems_.reserve(rowCapacity);
 
-  LOG_DBG("FONT", "Manifest loaded: %zu families, %zu script groups", families_.size(), scriptGroupLabels_.size());
+  LOG_DBG("FONT", "Manifest loaded: %zu families, %zu script groups", manifest_.families.size(), manifest_.scriptGroupLabels.size());
   return true;
 }
 
@@ -227,8 +262,8 @@ void FontDownloadActivity::setFormattedError(const char* format, const char* arg
 void FontDownloadActivity::downloadAll() {
   cancelRequested_ = false;
   for (const int familyIndex : filteredIndices_) {
-    if (families_[familyIndex].installed) continue;
-    downloadFamily(families_[familyIndex]);
+    if (manifest_.families[familyIndex].installed) continue;
+    downloadFamily(manifest_.families[familyIndex]);
     if (state_ == ERROR || cancelRequested_) return;
   }
 
@@ -241,8 +276,8 @@ void FontDownloadActivity::downloadAll() {
 void FontDownloadActivity::updateAll() {
   cancelRequested_ = false;
   for (const int familyIndex : filteredIndices_) {
-    if (!families_[familyIndex].hasUpdate) continue;
-    downloadFamily(families_[familyIndex]);
+    if (!manifest_.families[familyIndex].hasUpdate) continue;
+    downloadFamily(manifest_.families[familyIndex]);
     if (state_ == ERROR || cancelRequested_) return;
   }
 
@@ -254,14 +289,14 @@ void FontDownloadActivity::updateAll() {
 
 bool FontDownloadActivity::showDownloadAllRow() const {
   for (const int familyIndex : filteredIndices_) {
-    if (!families_[familyIndex].installed) return true;
+    if (!manifest_.families[familyIndex].installed) return true;
   }
   return false;
 }
 
 bool FontDownloadActivity::showUpdateAllRow() const {
   for (const int familyIndex : filteredIndices_) {
-    if (families_[familyIndex].hasUpdate) return true;
+    if (manifest_.families[familyIndex].hasUpdate) return true;
   }
   return false;
 }
@@ -303,10 +338,10 @@ int FontDownloadActivity::familyIndexFromList(const int listIndex) const {
 }
 
 int FontDownloadActivity::groupMemberCount(const int scriptGroupIndex) const {
-  if (scriptGroupIndex < 0 || scriptGroupIndex >= static_cast<int>(scriptGroupLabels_.size())) return 0;
+  if (scriptGroupIndex < 0 || scriptGroupIndex >= static_cast<int>(manifest_.scriptGroupLabels.size())) return 0;
   const uint32_t groupBit = uint32_t{1} << scriptGroupIndex;
   int count = 0;
-  for (const auto& family : families_) {
+  for (const auto& family : manifest_.families) {
     if (family.scriptMask & groupBit) count++;
   }
   return count;
@@ -314,17 +349,17 @@ int FontDownloadActivity::groupMemberCount(const int scriptGroupIndex) const {
 
 void FontDownloadActivity::buildFilteredIndices(const int groupListIndex) {
   filteredIndices_.clear();
-  filteredIndices_.reserve(families_.size());
+  filteredIndices_.reserve(manifest_.families.size());
   if (groupListIndex <= 0) {
-    for (int familyIndex = 0; familyIndex < static_cast<int>(families_.size()); familyIndex++) {
+    for (int familyIndex = 0; familyIndex < static_cast<int>(manifest_.families.size()); familyIndex++) {
       filteredIndices_.push_back(familyIndex);
     }
     return;
   }
 
   const uint32_t groupBit = uint32_t{1} << (groupListIndex - 1);
-  for (int familyIndex = 0; familyIndex < static_cast<int>(families_.size()); familyIndex++) {
-    if (families_[familyIndex].scriptMask & groupBit) filteredIndices_.push_back(familyIndex);
+  for (int familyIndex = 0; familyIndex < static_cast<int>(manifest_.families.size()); familyIndex++) {
+    if (manifest_.families[familyIndex].scriptMask & groupBit) filteredIndices_.push_back(familyIndex);
   }
 }
 
@@ -342,7 +377,7 @@ void FontDownloadActivity::enterGroup(const int groupListIndex) {
 size_t FontDownloadActivity::totalDownloadSize() const {
   size_t total = 0;
   for (const int familyIndex : filteredIndices_) {
-    if (!families_[familyIndex].installed) total += families_[familyIndex].totalSize;
+    if (!manifest_.families[familyIndex].installed) total += manifest_.families[familyIndex].totalSize;
   }
   return total;
 }
@@ -350,7 +385,7 @@ size_t FontDownloadActivity::totalDownloadSize() const {
 size_t FontDownloadActivity::totalUpdateSize() const {
   size_t total = 0;
   for (const int familyIndex : filteredIndices_) {
-    if (families_[familyIndex].hasUpdate) total += families_[familyIndex].totalSize;
+    if (manifest_.families[familyIndex].hasUpdate) total += manifest_.families[familyIndex].totalSize;
   }
   return total;
 }
@@ -377,7 +412,7 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
   {
     RenderLock lock(*this);
     state_ = DOWNLOADING;
-    downloadingFamilyIndex_ = static_cast<int>(&family - families_.data());
+    downloadingFamilyIndex_ = static_cast<int>(&family - manifest_.families.data());
     fileProgress_ = 0;
     fileTotal_ = 0;
     cancelRequested_ = false;
@@ -404,15 +439,15 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
     return;
   }
 
-  if (!fontInstaller_.ensureFamilyDir(family.name.c_str())) {
+  if (!fontInstaller_.ensureFamilyDir(manifest_.str(family.name))) {
     RenderLock lock(*this);
     state_ = ERROR;
     errorMessage_ = tr(STR_FONT_DIR_CREATE_FAILED);
     return;
   }
 
-  for (size_t i = 0; i < family.files.size(); i++) {
-    const auto& file = family.files[i];
+  for (uint32_t i = 0; i < family.fileCount; i++) {
+    const ManifestFile& file = manifest_.files[family.fileStart + i];
 
     {
       RenderLock lock(*this);
@@ -422,12 +457,12 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
     requestUpdateAndWait();
 
     char destPath[128];
-    FontInstaller::buildFontPath(family.name.c_str(), file.name.c_str(), destPath, sizeof(destPath));
+    FontInstaller::buildFontPath(manifest_.str(family.name), manifest_.str(file.name), destPath, sizeof(destPath));
 
-    std::string url = baseUrl_ + file.name;
+    downloadUrl_.assign(baseUrl_).append(manifest_.str(file.name));
 
     auto result = HttpDownloader::downloadToFile(
-        url, destPath,
+        downloadUrl_, destPath,
         [this](size_t downloaded, size_t total) {
           fileProgress_ = downloaded;
           fileTotal_ = total;
@@ -452,7 +487,7 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
         &cancelRequested_, "", "", /*downgradeRedirectsToHttp=*/true);
 
     if (result == HttpDownloader::ABORTED) {
-      fontInstaller_.deleteFamily(family.name.c_str());
+      fontInstaller_.deleteFamily(manifest_.str(family.name));
       family.installed = false;
       family.hasUpdate = false;
       if (goHomeRequested_) {
@@ -468,47 +503,47 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
     }
 
     if (result != HttpDownloader::OK) {
-      LOG_ERR("FONT", "Download failed: %s (%d)", file.name.c_str(), result);
-      fontInstaller_.deleteFamily(family.name.c_str());
+      LOG_ERR("FONT", "Download failed: %s (%d)", manifest_.str(file.name), result);
+      fontInstaller_.deleteFamily(manifest_.str(family.name));
       family.installed = false;
       family.hasUpdate = false;
       RenderLock lock(*this);
       state_ = ERROR;
-      setFormattedError(tr(STR_FONT_DOWNLOAD_FAILED_FORMAT), file.name.c_str());
+      setFormattedError(tr(STR_FONT_DOWNLOAD_FAILED_FORMAT), manifest_.str(file.name));
       return;
     }
 
     uint32_t actualCrc = 0;
     if (!computeFileCrc32(destPath, actualCrc)) {
       LOG_ERR("FONT", "Failed to open file for CRC check: %s", destPath);
-      fontInstaller_.deleteFamily(family.name.c_str());
+      fontInstaller_.deleteFamily(manifest_.str(family.name));
       family.installed = false;
       family.hasUpdate = false;
       RenderLock lock(*this);
       state_ = ERROR;
-      setFormattedError(tr(STR_FONT_CHECKSUM_FAILED_FORMAT), file.name.c_str());
+      setFormattedError(tr(STR_FONT_CHECKSUM_FAILED_FORMAT), manifest_.str(file.name));
       return;
     }
     if (actualCrc != file.crc32) {
-      LOG_ERR("FONT", "CRC32 mismatch for %s: got %08x expected %08x", file.name.c_str(), actualCrc, file.crc32);
-      fontInstaller_.deleteFamily(family.name.c_str());
+      LOG_ERR("FONT", "CRC32 mismatch for %s: got %08x expected %08x", manifest_.str(file.name), actualCrc, file.crc32);
+      fontInstaller_.deleteFamily(manifest_.str(family.name));
       family.installed = false;
       family.hasUpdate = false;
       RenderLock lock(*this);
       state_ = ERROR;
-      setFormattedError(tr(STR_FONT_CHECKSUM_MISMATCH_FORMAT), file.name.c_str());
+      setFormattedError(tr(STR_FONT_CHECKSUM_MISMATCH_FORMAT), manifest_.str(file.name));
       return;
     }
-    LOG_DBG("FONT", "Downloaded %s (size=%zu crc32=%08x)", file.name.c_str(), file.size, actualCrc);
+    LOG_DBG("FONT", "Downloaded %s (size=%u crc32=%08x)", manifest_.str(file.name), file.size, actualCrc);
 
     if (!fontInstaller_.validateCpfontFile(destPath)) {
       LOG_ERR("FONT", "Invalid .cpfont: %s", destPath);
-      fontInstaller_.deleteFamily(family.name.c_str());
+      fontInstaller_.deleteFamily(manifest_.str(family.name));
       family.installed = false;
       family.hasUpdate = false;
       RenderLock lock(*this);
       state_ = ERROR;
-      setFormattedError(tr(STR_FONT_FILE_INVALID_FORMAT), file.name.c_str());
+      setFormattedError(tr(STR_FONT_FILE_INVALID_FORMAT), manifest_.str(file.name));
       return;
     }
     currentFileIndex_++;
@@ -526,14 +561,14 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
 
 void FontDownloadActivity::promptDeleteSelectedFamily() {
   const int pendingDeleteFamilyIndex = familyIndexFromList(nav.selected);
-  if (pendingDeleteFamilyIndex < 0 || pendingDeleteFamilyIndex >= static_cast<int>(families_.size())) {
+  if (pendingDeleteFamilyIndex < 0 || pendingDeleteFamilyIndex >= static_cast<int>(manifest_.families.size())) {
     return;
   }
 
   std::string heading = tr(STR_DELETE);
-  const auto& family = families_[pendingDeleteFamilyIndex];
-  std::string body = family.name;
-  startActivityForResult(makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, heading, body),
+  const auto& family = manifest_.families[pendingDeleteFamilyIndex];
+  std::string body = manifest_.str(family.name);
+  startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading, body),
                          [this](const ActivityResult& result) { onDeleteConfirmationResult(result); });
 }
 
@@ -548,9 +583,9 @@ void FontDownloadActivity::onDeleteConfirmationResult(const ActivityResult& resu
     requestUpdate();
     return;
   }
-  auto& family = families_[familyIndex];
+  auto& family = manifest_.families[familyIndex];
 
-  if (fontInstaller_.deleteFamily(family.name.c_str()) != FontInstaller::Error::OK) {
+  if (fontInstaller_.deleteFamily(manifest_.str(family.name)) != FontInstaller::Error::OK) {
     RenderLock lock(*this);
     state_ = ERROR;
     errorMessage_ = tr(STR_FONT_DELETE_FAILED);
@@ -570,7 +605,7 @@ void FontDownloadActivity::onDeleteConfirmationResult(const ActivityResult& resu
 bool FontDownloadActivity::isSelectedFamilyDeletable() const {
   if (isDownloadAllRow(nav.selected) || isUpdateAllRow(nav.selected)) return false;
   if (nav.selected < specialRowCount() || nav.selected >= listItemCount()) return false;
-  const auto& family = families_[familyIndexFromList(nav.selected)];
+  const auto& family = manifest_.families[familyIndexFromList(nav.selected)];
   return family.installed && !family.hasUpdate;
 }
 
@@ -580,25 +615,25 @@ void FontDownloadActivity::activateSelected() {
     currentFileIndex_ = 0;
     currentFileTotal_ = 0;
     for (const int familyIndex : filteredIndices_) {
-      if (!families_[familyIndex].installed) currentFileTotal_ += families_[familyIndex].files.size();
+      if (!manifest_.families[familyIndex].installed) currentFileTotal_ += manifest_.families[familyIndex].fileCount;
     }
     downloadAll();
   } else if (isUpdateAllRow(nav.selected)) {
     currentFileIndex_ = 0;
     currentFileTotal_ = 0;
     for (const int familyIndex : filteredIndices_) {
-      if (families_[familyIndex].hasUpdate) currentFileTotal_ += families_[familyIndex].files.size();
+      if (manifest_.families[familyIndex].hasUpdate) currentFileTotal_ += manifest_.families[familyIndex].fileCount;
     }
     updateAll();
   } else {
     // The special rows disappear when a download starts, so a stale selection
     // can map past the family table.
     const int familyIndex = familyIndexFromList(nav.selected);
-    if (familyIndex < 0 || familyIndex >= static_cast<int>(families_.size())) return;
-    auto& family = families_[familyIndex];
+    if (familyIndex < 0 || familyIndex >= static_cast<int>(manifest_.families.size())) return;
+    auto& family = manifest_.families[familyIndex];
     if (!family.installed || family.hasUpdate) {
       currentFileIndex_ = 0;
-      currentFileTotal_ = family.files.size();
+      currentFileTotal_ = family.fileCount;
       downloadFamily(family);
     } else {
       promptDeleteSelectedFamily();
@@ -631,7 +666,7 @@ void FontDownloadActivity::buildScreen(UiScreen& screen) {
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
   props.valueInset = 8;               // air between the status and the row edge
-  syncListViewport(screen, props, /*hasSubtitle=*/state_ == FAMILY_LIST);
+  syncListViewport(screen, props);
   screen.list(props);
 }
 
@@ -661,8 +696,8 @@ void FontDownloadActivity::rebuildGroupRowItems() {
   rowItems_.reserve(listSize);
   for (int rowIndex = 0; rowIndex < listSize; rowIndex++) {
     fui::ListItem item;
-    item.label = rowIndex == 0 ? tr(STR_ALL_FONTS) : scriptGroupLabels_[rowIndex - 1].c_str();
-    const int memberCount = rowIndex == 0 ? static_cast<int>(families_.size()) : groupMemberCount(rowIndex - 1);
+    item.label = rowIndex == 0 ? tr(STR_ALL_FONTS) : manifest_.str(manifest_.scriptGroupLabels[rowIndex - 1]);
+    const int memberCount = rowIndex == 0 ? static_cast<int>(manifest_.families.size()) : groupMemberCount(rowIndex - 1);
     rowLabels_[rowIndex] = std::to_string(memberCount);
     item.value = rowLabels_[rowIndex].c_str();
     item.actionValue = static_cast<int16_t>(rowIndex);
@@ -684,9 +719,9 @@ void FontDownloadActivity::rebuildFamilyRowItems() {
       rowLabels_[i] = std::string(tr(STR_UPDATE_ALL)) + " (" + formatSize(totalUpdateSize()) + ")";
       item.label = rowLabels_[i].c_str();
     } else {
-      const auto& family = families_[familyIndexFromList(i)];
-      item.label = family.name.c_str();
-      if (!family.description.empty()) item.subtitle = family.description.c_str();
+      const auto& family = manifest_.families[familyIndexFromList(i)];
+      item.label = manifest_.str(family.name);
+      if (family.description != 0) item.subtitle = manifest_.str(family.description);
       if (family.hasUpdate) {
         item.value = tr(STR_UPDATE_AVAILABLE);
       } else if (family.installed) {
@@ -731,8 +766,8 @@ bool FontDownloadActivity::handleCustomInput() {
       }
       requestUpdate();
     } else if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      if (downloadingFamilyIndex_ >= 0 && downloadingFamilyIndex_ < static_cast<int>(families_.size())) {
-        downloadFamily(families_[downloadingFamilyIndex_]);
+      if (downloadingFamilyIndex_ >= 0 && downloadingFamilyIndex_ < static_cast<int>(manifest_.families.size())) {
+        downloadFamily(manifest_.families[downloadingFamilyIndex_]);
         requestUpdateAndWait();
         return true;
       } else {
@@ -747,8 +782,8 @@ bool FontDownloadActivity::handleCustomInput() {
       int x = 0;
       int y = 0;
       if (mappedInput.wasScreenTapped(x, y)) {
-        if (downloadingFamilyIndex_ >= 0 && downloadingFamilyIndex_ < static_cast<int>(families_.size())) {
-          downloadFamily(families_[downloadingFamilyIndex_]);
+        if (downloadingFamilyIndex_ >= 0 && downloadingFamilyIndex_ < static_cast<int>(manifest_.families.size())) {
+          downloadFamily(manifest_.families[downloadingFamilyIndex_]);
           requestUpdateAndWait();
           return true;
         }
@@ -789,8 +824,8 @@ void FontDownloadActivity::render(RenderLock&&) {
   const char* headerSubtitle = nullptr;
   if (state_ == FAMILY_LIST && hasGroupScreen()) {
     const int scriptGroupIndex = groupNav_.selected - 1;
-    headerSubtitle = scriptGroupIndex >= 0 && scriptGroupIndex < static_cast<int>(scriptGroupLabels_.size())
-                         ? scriptGroupLabels_[scriptGroupIndex].c_str()
+    headerSubtitle = scriptGroupIndex >= 0 && scriptGroupIndex < static_cast<int>(manifest_.scriptGroupLabels.size())
+                         ? manifest_.str(manifest_.scriptGroupLabels[scriptGroupIndex])
                          : tr(STR_ALL_FONTS);
   }
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_FONT_BROWSER),
@@ -818,9 +853,9 @@ void FontDownloadActivity::render(RenderLock&&) {
                                               hasVisibleFamilies ? tr(STR_DIR_DOWN) : "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state_ == DOWNLOADING) {
-    const auto& family = families_[downloadingFamilyIndex_];
+    const auto& family = manifest_.families[downloadingFamilyIndex_];
 
-    std::string statusText = std::string(tr(STR_DOWNLOADING)) + " " + family.name + " (" +
+    std::string statusText = std::string(tr(STR_DOWNLOADING)) + " " + manifest_.str(family.name) + " (" +
                              std::to_string(currentFileIndex_ + 1) + "/" + std::to_string(currentFileTotal_) + ")";
     renderer.drawCenteredText(UI_10_FONT_ID, centerY - lineHeight, statusText.c_str());
 

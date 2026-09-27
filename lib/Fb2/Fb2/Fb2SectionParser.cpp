@@ -284,7 +284,7 @@ void XMLCALL Fb2SectionParser::characterData(void* userData, const char* s, cons
   if (self->currentTextBlock && self->currentTextBlock->size() > 750) {
     self->currentTextBlock->layoutAndExtractLines(
         self->renderer, self->spec.fontId, self->spec.viewportWidth,
-        [self](const std::shared_ptr<TextBlock>& textBlock, uint32_t) { self->addLineToPage(textBlock); }, false);
+        [self](std::unique_ptr<TextBlock> textBlock, uint32_t) { self->addLineToPage(std::move(textBlock)); }, false);
   }
 }
 
@@ -353,7 +353,7 @@ void XMLCALL Fb2SectionParser::endElement(void* userData, const char* name) {
   }
 }
 
-void Fb2SectionParser::addLineToPage(std::shared_ptr<TextBlock> line) {
+void Fb2SectionParser::addLineToPage(std::unique_ptr<TextBlock> line) {
   const int lineHeight = renderer.getLineHeight(spec.fontId, spec.lineCompression);
 
   if (!currentPage) {
@@ -379,7 +379,13 @@ void Fb2SectionParser::addLineToPage(std::shared_ptr<TextBlock> line) {
   }
 
   const int16_t xOffset = line->getBlockStyle().leftInset();
-  currentPage->elements.push_back(std::make_shared<PageLine>(line, xOffset, currentPageNextY));
+  auto pageLine = makeUniqueNoThrow<PageLine>(std::move(line), xOffset, currentPageNextY);
+  if (!pageLine) {
+    LOG_ERR("FB2", "OOM: page line");
+    outOfMemory = true;
+    return;
+  }
+  currentPage->elements.push_back(std::move(pageLine));
   currentPageNextY += lineHeight;
 }
 
@@ -415,7 +421,7 @@ void Fb2SectionParser::makePages() {
 
   currentTextBlock->layoutAndExtractLines(
       renderer, spec.fontId, effectiveWidth,
-      [this](const std::shared_ptr<TextBlock>& textBlock, uint32_t) { addLineToPage(textBlock); });
+      [this](std::unique_ptr<TextBlock> textBlock, uint32_t) { addLineToPage(std::move(textBlock)); });
 
   if (blockStyle.marginBottom > 0) {
     currentPageNextY += blockStyle.marginBottom;

@@ -400,7 +400,7 @@ static void convertScanlineToGray(const PngDecodeContext& ctx, uint8_t* grayRow)
 }
 
 bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpOut, int targetWidth, int targetHeight,
-                                                   bool oneBit, bool crop) {
+                                                   bool oneBit, bool crop, bool originalThresholds) {
   LOG_DBG("PNG", "Converting PNG to %s BMP (target: %dx%d)", oneBit ? "1-bit" : "2-bit", targetWidth, targetHeight);
 
   // Verify PNG signature
@@ -655,36 +655,22 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
 
   if (oneBit) {
     atkinson1BitDitherer = makeUniqueNoThrow<Atkinson1BitDitherer>(outWidth);
-    if (!atkinson1BitDitherer) {
-      LOG_ERR("PNG", "OOM: Atkinson1BitDitherer");
+    if (!atkinson1BitDitherer || !atkinson1BitDitherer->isValid()) {
+      LOG_ERR("PNG", "OOM: Atkinson1BitDitherer or row buffers");
       return false;
-    }
-    // The object fits but its error rows may not; dithering is an enhancement, so
-    // drop it and let the row loop fall back to plain quantisation.
-    if (!atkinson1BitDitherer->valid()) {
-      LOG_ERR("PNG", "OOM: dithering disabled for this image");
-      atkinson1BitDitherer.reset();
     }
   } else if (!USE_8BIT_OUTPUT) {
     if (USE_ATKINSON) {
-      atkinsonDitherer = makeUniqueNoThrow<AtkinsonDitherer>(outWidth);
-      if (!atkinsonDitherer) {
-        LOG_ERR("PNG", "OOM: AtkinsonDitherer");
+      atkinsonDitherer = makeUniqueNoThrow<AtkinsonDitherer>(outWidth, originalThresholds);
+      if (!atkinsonDitherer || !atkinsonDitherer->isValid()) {
+        LOG_ERR("PNG", "OOM: AtkinsonDitherer or row buffers");
         return false;
-      }
-      if (!atkinsonDitherer->valid()) {
-        LOG_ERR("PNG", "OOM: dithering disabled for this image");
-        atkinsonDitherer.reset();
       }
     } else if (USE_FLOYD_STEINBERG) {
-      fsDitherer = makeUniqueNoThrow<FloydSteinbergDitherer>(outWidth);
-      if (!fsDitherer) {
-        LOG_ERR("PNG", "OOM: FloydSteinbergDitherer");
+      fsDitherer = makeUniqueNoThrow<FloydSteinbergDitherer>(outWidth, originalThresholds);
+      if (!fsDitherer || !fsDitherer->isValid()) {
+        LOG_ERR("PNG", "OOM: FloydSteinbergDitherer or row buffers");
         return false;
-      }
-      if (!fsDitherer->valid()) {
-        LOG_ERR("PNG", "OOM: dithering disabled for this image");
-        fsDitherer.reset();
       }
     }
   }
@@ -864,11 +850,11 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
   return success;
 }
 
-bool PngToBmpConverter::pngFileToBmpStream(HalFile& pngFile, Print& bmpOut, bool crop) {
+bool PngToBmpConverter::pngFileToBmpStream(HalFile& pngFile, Print& bmpOut, bool crop, bool originalThresholds) {
   // Use runtime display dimensions (swapped for portrait cover sizing)
   const int targetWidth = display.getDisplayHeight();
   const int targetHeight = display.getDisplayWidth();
-  return pngFileToBmpStreamInternal(pngFile, bmpOut, targetWidth, targetHeight, false, crop);
+  return pngFileToBmpStreamInternal(pngFile, bmpOut, targetWidth, targetHeight, false, crop, originalThresholds);
 }
 
 bool PngToBmpConverter::pngFileToBmpStreamWithSize(HalFile& pngFile, Print& bmpOut, int targetMaxWidth,

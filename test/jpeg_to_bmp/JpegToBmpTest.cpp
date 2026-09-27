@@ -193,13 +193,13 @@ INSTANTIATE_TEST_SUITE_P(All, JpegBaseline,
 TEST(JpegToBmp, GoldenChecksumGrayBaseline) {
   MemoryPrint out;
   ASSERT_TRUE(convert(res("gray_baseline.jpg"), out, 16, 16));
-  EXPECT_EQ(imgtest::fnv1a64(out.bytes), 0x753DD7C7C2121086ULL);
+  EXPECT_EQ(imgtest::fnv1a64(out.bytes), 0x49FED73E73C2165DULL);  // #3478 thresholds
 }
 
 TEST(JpegToBmp, GoldenChecksumYCbCr420Baseline) {
   MemoryPrint out;
   ASSERT_TRUE(convert(res("rgb_baseline_420.jpg"), out, 16, 16));
-  EXPECT_EQ(imgtest::fnv1a64(out.bytes), 0x7481D42882183383ULL);
+  EXPECT_EQ(imgtest::fnv1a64(out.bytes), 0x938F1DED269053A0ULL);  // #3478 thresholds
 }
 
 // Progressive JPEG: JPEGDEC forces 1/8-scale decode of progressive streams;
@@ -213,7 +213,7 @@ TEST(JpegToBmp, ProgressiveDecodesViaEighthScaleAndSmoothUpscale) {
   ASSERT_TRUE(imgtest::parseBmp(out.bytes, bmp));
   EXPECT_EQ(bmp.width, 32);
   EXPECT_EQ(bmp.absHeight(), 32);
-  EXPECT_EQ(imgtest::fnv1a64(out.bytes), 0x70CDF65133A41581ULL);
+  EXPECT_EQ(imgtest::fnv1a64(out.bytes), 0x127994CF98A06DEFULL);  // #3478 thresholds
 }
 
 // ---------------------------------------------------------------------------

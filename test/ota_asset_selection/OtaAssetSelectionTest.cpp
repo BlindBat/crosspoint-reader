@@ -5,10 +5,10 @@
 // in installUpdate. This binary is built as an X4PRO board; the combined
 // X4/X3 ("x4") naming special case is covered by X4VariantTest.cpp.
 //
-// NOTE on asset naming: upstream develop switched the release assets to
-// crosspoint-<tag>-<device>.bin ("fix: update OTA to recognize the new
-// format", #3493 / 46d91253). This branch accepts BOTH layouts: the legacy
-// firmware.bin / firmware-<board>.bin and the tagged crosspoint-<tag>-<device>.bin.
+// Asset naming follows upstream #3493 (46d91253): crosspoint-<tag>-<device>.bin,
+// derived from tag_name once it has been parsed. The pre-1.6.5 layout
+// (firmware.bin / firmware-<board>.bin) is no longer recognised — the 1.6.5rc
+// sync dropped the fork's dual-layout lookup along with it.
 
 #include <gtest/gtest.h>
 
@@ -39,7 +39,7 @@ class OtaTest : public ::testing::Test {
                                                   const size_t assetSize = 1000) {
     FakeHttp::instance().requestedUrls.clear();
     FakeHttp::instance().setBody(
-        makeReleaseJson(tag, {{"firmware-x4pro.bin", "https://cdn.example/x4pro.bin", assetSize}}));
+        makeReleaseJson(tag, {{"crosspoint-" + tag + "-x4pro.bin", "https://cdn.example/x4pro.bin", assetSize}}));
     return updater.checkForUpdate();
   }
 
@@ -177,20 +177,31 @@ TEST_F(OtaTest, SelectsThisBoardsAssetAmongMany) {
   OtaUpdater updater;
   FakeHttp::instance().setBody(
       makeReleaseJson("1.7.0", {
-                                   {"firmware.bin", "https://cdn.example/c3.bin", 1111},
-                                   {"firmware-sticky.bin", "https://cdn.example/sticky.bin", 3333},
-                                   {"firmware-x4pro.bin", "https://cdn.example/x4pro.bin", 2222},
-                                   {"firmware-papermono.bin", "https://cdn.example/pm.bin", 4444},
+                                   {"crosspoint-1.7.0-x3-x4.bin", "https://cdn.example/c3.bin", 1111},
+                                   {"crosspoint-1.7.0-sticky.bin", "https://cdn.example/sticky.bin", 3333},
+                                   {"crosspoint-1.7.0-x4pro.bin", "https://cdn.example/x4pro.bin", 2222},
+                                   {"crosspoint-1.7.0-papermono.bin", "https://cdn.example/pm.bin", 4444},
                                }));
   ASSERT_EQ(updater.checkForUpdate(), OtaUpdater::OK);
   EXPECT_EQ(updater.getLatestVersion(), "1.7.0");
-  EXPECT_EQ(updater.getOtaSize(), 2222u);  // proves firmware-x4pro.bin won
+  EXPECT_EQ(updater.getOtaSize(), 2222u);  // proves crosspoint-1.7.0-x4pro.bin won
   EXPECT_EQ(updater.getTotalSize(), 2222u);
 }
 
 TEST_F(OtaTest, GenericC3AssetIsNotAFallbackForX4pro) {
   OtaUpdater updater;
-  FakeHttp::instance().setBody(makeReleaseJson("1.7.0", {{"firmware.bin", "https://cdn.example/c3.bin", 1111}}));
+  FakeHttp::instance().setBody(
+      makeReleaseJson("1.7.0", {{"crosspoint-1.7.0-x3-x4.bin", "https://cdn.example/c3.bin", 1111}}));
+  EXPECT_EQ(updater.checkForUpdate(), OtaUpdater::NO_UPDATE);
+}
+
+TEST_F(OtaTest, LegacyAssetNamesAreNoLongerRecognised) {
+  // Upstream #3493 retired firmware.bin / firmware-<board>.bin; a release that
+  // still ships only those names offers nothing to any board.
+  OtaUpdater updater;
+  FakeHttp::instance().setBody(
+      makeReleaseJson("1.7.0", {{"firmware.bin", "https://cdn.example/c3.bin", 1111},
+                                {"firmware-x4pro.bin", "https://cdn.example/x4pro.bin", 2222}}));
   EXPECT_EQ(updater.checkForUpdate(), OtaUpdater::NO_UPDATE);
 }
 
@@ -247,8 +258,8 @@ TEST_F(OtaTest, AssetNameMatchIsCaseSensitive) {
 TEST_F(OtaTest, DuplicateAssetNamesLastOneWins) {
   OtaUpdater updater;
   FakeHttp::instance().setBody(
-      makeReleaseJson("1.7.0", {{"firmware-x4pro.bin", "https://cdn.example/first.bin", 100},
-                                {"firmware-x4pro.bin", "https://cdn.example/second.bin", 200}}));
+      makeReleaseJson("1.7.0", {{"crosspoint-1.7.0-x4pro.bin", "https://cdn.example/first.bin", 100},
+                                {"crosspoint-1.7.0-x4pro.bin", "https://cdn.example/second.bin", 200}}));
   ASSERT_EQ(updater.checkForUpdate(), OtaUpdater::OK);
   EXPECT_EQ(updater.getOtaSize(), 200u);  // commitAsset overwrote the earlier match
 }
@@ -256,7 +267,8 @@ TEST_F(OtaTest, DuplicateAssetNamesLastOneWins) {
 TEST_F(OtaTest, MissingTagNameIsParseError) {
   OtaUpdater updater;
   FakeHttp::instance().setBody(
-      makeReleaseJson("unused", {{"firmware-x4pro.bin", "https://cdn.example/x4pro.bin", 2222}}, /*includeTag=*/false));
+      makeReleaseJson("unused", {{"crosspoint-unused-x4pro.bin", "https://cdn.example/x4pro.bin", 2222}},
+                      /*includeTag=*/false));
   EXPECT_EQ(updater.checkForUpdate(), OtaUpdater::JSON_PARSE_ERROR);
 }
 
@@ -270,13 +282,14 @@ TEST_F(OtaTest, FetchFailureIsHttpError) {
   OtaUpdater updater;
   FakeHttp::instance().succeed = false;
   FakeHttp::instance().setBody(
-      makeReleaseJson("1.7.0", {{"firmware-x4pro.bin", "https://cdn.example/x4pro.bin", 2222}}));
+      makeReleaseJson("1.7.0", {{"crosspoint-1.7.0-x4pro.bin", "https://cdn.example/x4pro.bin", 2222}}));
   EXPECT_EQ(updater.checkForUpdate(), OtaUpdater::HTTP_ERROR);
 }
 
 TEST_F(OtaTest, SelectionIsChunkSizeInvariant) {
-  const std::string json = makeReleaseJson("1.7.0", {{"firmware.bin", "https://cdn.example/c3.bin", 1111},
-                                                     {"firmware-x4pro.bin", "https://cdn.example/x4pro.bin", 2222}});
+  const std::string json =
+      makeReleaseJson("1.7.0", {{"crosspoint-1.7.0-x3-x4.bin", "https://cdn.example/c3.bin", 1111},
+                                {"crosspoint-1.7.0-x4pro.bin", "https://cdn.example/x4pro.bin", 2222}});
   for (const size_t chunk : {size_t{1}, size_t{3}, size_t{17}, json.size()}) {
     OtaUpdater updater;
     FakeHttp::instance().reset();

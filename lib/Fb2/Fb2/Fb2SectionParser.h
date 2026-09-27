@@ -83,7 +83,7 @@ class Fb2SectionParser {
   void flushPartWordBuffer();
   void startNewTextBlock(const BlockStyle& blockStyle);
   void makePages();
-  void addLineToPage(std::shared_ptr<TextBlock> line);
+  void addLineToPage(std::unique_ptr<TextBlock> line);
   [[nodiscard]] BlockStyle inheritedBlockStyle(const BlockStyle& child) const;
   void pushContainerBlockStyle(const BlockStyle& style);
 

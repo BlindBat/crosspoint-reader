@@ -47,7 +47,7 @@ bool containsWord(const std::vector<std::string>& words, const std::string& need
 }
 
 // Find the TextBlock of the first line containing `needle`, or nullptr.
-std::shared_ptr<TextBlock> findLineWith(const std::vector<std::unique_ptr<Page>>& pages, const std::string& needle) {
+const TextBlock* findLineWith(const std::vector<std::unique_ptr<Page>>& pages, const std::string& needle) {
   for (const auto& page : pages) {
     for (const auto& element : page->elements) {
       if (element->getTag() != TAG_PageLine) continue;

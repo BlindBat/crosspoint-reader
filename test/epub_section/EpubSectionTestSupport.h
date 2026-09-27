@@ -24,7 +24,7 @@ namespace sectest {
 // ---- Section .bin format mirror (Section.cpp private constants) ------------
 // Mirrors SECTION_FILE_VERSION in Section.cpp. Bump in lockstep when the
 // production format version changes.
-constexpr uint8_t kSectionFileVersion = 45;
+constexpr uint8_t kSectionFileVersion = 46;  // upstream #3500 (ordered lists)
 constexpr uint8_t kIncompleteVersion = 0;
 // Derived exactly as Section.cpp derives it: 0xFE for v28, 0xFD for v29, ...
 constexpr uint8_t kPartialVersion = 0xFE - (kSectionFileVersion - 28);

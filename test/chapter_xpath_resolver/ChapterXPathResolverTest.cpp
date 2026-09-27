@@ -177,25 +177,20 @@ TEST(FindXPathForProgress, TrailingListTextIsOutsideTheProgressScale) {
   EXPECT_EQ(ChapterXPathResolver::findXPathForProgress(epub, 0, 1.0f), "/body/DocFragment[1]/body/p[1]/text()[1].4");
 }
 
-TEST(FindXPathForProgress, CountsRubyFallbackTextAsVisible) {
-  // Documents current limitation, fixed upstream (develop skips head/style/
-  // script/title/rp via VisibleTextUtils as part of the #3174 precise-position
-  // work): <rp> ruby fallback text is counted as visible here, so mid-chapter
-  // progress can resolve INSIDE the invisible <rp> element. Upstream develop
-  // counts only "abcd" and resolves 0.5 to p[1]/text()[1].2.
+TEST(FindXPathForProgress, SkipsRubyFallbackText) {
+  // Pin flipped with upstream #3174 (1.6.5rc): head/style/script/title/rp are
+  // skipped via VisibleTextUtils, so only "abcd" counts and 0.5 lands in the
+  // visible run, never inside the <rp> element.
   const auto epub = makeBook("<p>ab<rp>XX</rp>cd</p>");
-  EXPECT_EQ(ChapterXPathResolver::findXPathForProgress(epub, 0, 0.5f),
-            "/body/DocFragment[1]/body/p[1]/rp[1]/text()[1].1");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForProgress(epub, 0, 0.5f), "/body/DocFragment[1]/body/p[1]/text()[1].2");
 }
 
-TEST(FindXPathForProgress, CommentDoesNotSplitTextNodes) {
-  // Documents current limitation, fixed upstream (develop registers comment/
-  // PI/CDATA handlers as part of the #3174 precise-position work): a comment
-  // between two text runs does not start a new text node here, so the whole
-  // paragraph reads as text()[1]. KOReader's DOM (and upstream develop) treats
-  // the runs as separate nodes: text()[2].3.
+TEST(FindXPathForProgress, CommentSplitsTextNodes) {
+  // Pin flipped with upstream #3174 (1.6.5rc): comment/PI/CDATA handlers are
+  // registered, so a comment between two runs starts a new text node, matching
+  // KOReader's DOM.
   const auto epub = makeBook("<p>abc<!--x-->def</p>");
-  EXPECT_EQ(ChapterXPathResolver::findXPathForProgress(epub, 0, 1.0f), "/body/DocFragment[1]/body/p[1]/text()[1].6");
+  EXPECT_EQ(ChapterXPathResolver::findXPathForProgress(epub, 0, 1.0f), "/body/DocFragment[1]/body/p[1]/text()[2].3");
 }
 
 TEST(FindXPathForProgress, CountsCodepointsNotBytes) {

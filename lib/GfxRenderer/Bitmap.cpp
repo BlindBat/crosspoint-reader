@@ -79,6 +79,8 @@ const char* Bitmap::errorToString(BmpReaderError err) {
 
     case BmpReaderError::OomRowBuffer:
       return "OomRowBuffer";
+    case BmpReaderError::OomDitherer:
+      return "OomDitherer";
     case BmpReaderError::ShortReadRow:
       return "ShortReadRow";
   }
@@ -173,19 +175,21 @@ BmpReaderError Bitmap::parseHeaders() {
     // Dithering is an enhancement: if its error rows do not fit, fall back to
     // plain quantisation (both pointers null) instead of aborting the decode.
     if (USE_ATKINSON) {
-      atkinsonDitherer = new (std::nothrow) AtkinsonDitherer(width);
-      if (atkinsonDitherer != nullptr && !atkinsonDitherer->valid()) {
+      atkinsonDitherer = new (std::nothrow) AtkinsonDitherer(width, originalThresholds);
+      if (!atkinsonDitherer || !atkinsonDitherer->isValid()) {
         delete atkinsonDitherer;
         atkinsonDitherer = nullptr;
+        LOG_ERR("BMP", "OOM: Atkinson ditherer or row buffers");
+        return BmpReaderError::OomDitherer;
       }
-      if (atkinsonDitherer == nullptr) LOG_ERR("BMP", "OOM: dithering disabled for this image");
     } else {
-      fsDitherer = new (std::nothrow) FloydSteinbergDitherer(width);
-      if (fsDitherer != nullptr && !fsDitherer->valid()) {
+      fsDitherer = new (std::nothrow) FloydSteinbergDitherer(width, originalThresholds);
+      if (!fsDitherer || !fsDitherer->isValid()) {
         delete fsDitherer;
         fsDitherer = nullptr;
+        LOG_ERR("BMP", "OOM: Floyd-Steinberg ditherer or row buffers");
+        return BmpReaderError::OomDitherer;
       }
-      if (fsDitherer == nullptr) LOG_ERR("BMP", "OOM: dithering disabled for this image");
     }
   }
 

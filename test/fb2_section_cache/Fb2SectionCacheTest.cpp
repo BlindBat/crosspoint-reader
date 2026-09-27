@@ -294,7 +294,8 @@ TEST_F(Fb2SectionCacheTest, ContainerBlockStylesSurviveIntoRenderedPages) {
   ASSERT_TRUE(loaded.loadSectionFile(spec));
 
   struct FoundLine {
-    std::shared_ptr<TextBlock> block;
+    std::unique_ptr<Page> page;  // keeps `block` alive: lines own their TextBlock (#3518)
+    const TextBlock* block = nullptr;
     int16_t xPos = -1;
   };
   auto findLine = [&loaded](const std::string& needle) {
@@ -312,7 +313,10 @@ TEST_F(Fb2SectionCacheTest, ContainerBlockStylesSurviveIntoRenderedPages) {
             break;
           }
         }
-        if (result.block) break;
+        if (result.block) {
+          result.page = std::move(page);
+          break;
+        }
       }
     }
     return result;

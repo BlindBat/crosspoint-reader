@@ -1,6 +1,5 @@
 // The sticky build is its own compatibility class, tagged "sticky" and served by
-// the firmware-sticky.bin release asset (legacy layout) or crosspoint-<tag>-sticky.bin
-// (current upstream layout). The main suite binary is built as x4pro; this TU
+// the crosspoint-<tag>-sticky.bin release asset (upstream #3493 layout). The main suite binary is built as x4pro; this TU
 // compiles the same production sources again as sticky inside a namespace, using
 // the mechanics documented in X4VariantTest.cpp.
 
@@ -50,14 +49,14 @@ TEST_F(StickyVariantTest, BinaryIsTaggedSticky) {
   EXPECT_EQ(std::string(stickybuild::board_tag::boardName(), stickybuild::board_tag::boardNameLen()), "sticky");
 }
 
-TEST_F(StickyVariantTest, SelectsLegacyBoardSuffixedAsset) {
+TEST_F(StickyVariantTest, LegacyBoardSuffixedAssetIsIgnored) {
+  // The pre-1.6.5 firmware-<board>.bin layout is retired (#3493).
   stickybuild::OtaUpdater updater;
   FakeHttp::instance().setBody(
       makeReleaseJson("1.7.0", {{"firmware.bin", "https://cdn.example/c3.bin", 1111},
                                 {"firmware-x4pro.bin", "https://cdn.example/x4pro.bin", 2222},
                                 {"firmware-sticky.bin", "https://cdn.example/sticky.bin", 3333}}));
-  ASSERT_EQ(updater.checkForUpdate(), stickybuild::OtaUpdater::OK);
-  EXPECT_EQ(updater.getOtaSize(), 3333u);
+  EXPECT_EQ(updater.checkForUpdate(), stickybuild::OtaUpdater::NO_UPDATE);
 }
 
 TEST_F(StickyVariantTest, SelectsTaggedUpstreamAsset) {

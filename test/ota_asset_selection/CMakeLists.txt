@@ -2,11 +2,11 @@
 # and OtaUpdater's selection of a GitHub release asset for the current board,
 # on top of ReleaseJsonParser (covered by its own suite).
 #
-# The binary is built as an X4PRO board (firmware-x4pro.bin path);
+# The binary is built as an X4PRO board (crosspoint-<tag>-x4pro.bin path);
 # X4VariantTest.cpp, StickyVariantTest.cpp and PapermonoVariantTest.cpp each
 # compile the production sources again inside a namespace under a different
-# FREEINK_DEVICE_* flag, pinning the plain firmware.bin special case for the
-# combined X4/X3 image and the board-suffixed asset names for the S3 boards. CROSSPOINT_VERSION resolves to a runtime
+# FREEINK_DEVICE_* flag, pinning the x3-x4 name of the combined X4/X3 image
+# and the board-tag asset names for the S3 boards. CROSSPOINT_VERSION resolves to a runtime
 # variable so isUpdateNewer() can be tested across current-version values.
 
 add_executable(OtaAssetSelectionTest

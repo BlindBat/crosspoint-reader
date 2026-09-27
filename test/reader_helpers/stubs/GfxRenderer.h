@@ -49,6 +49,14 @@ class GfxRenderer {
     asyncCalls.push_back(mode);
   }
   bool combinesGrayscaleBase() const { return combinesBase; }
+  HalDisplay::GrayscaleCapabilities grayscaleCapabilities(
+      HalDisplay::GrayscaleMode = HalDisplay::GrayscaleMode::Overlay) const {
+    HalDisplay::GrayscaleCapabilities caps;
+    caps.encoding = HalDisplay::GrayscaleEncoding::OverlayMasks;
+    caps.base = combinesBase ? HalDisplay::GrayscaleBase::Combined : HalDisplay::GrayscaleBase::Separate;
+    return caps;
+  }
+  void preconditionGrayscale() const { trace.push_back("precondition"); }
   void displayGrayscaleBase(const HalDisplay::RefreshMode fallback = HalDisplay::HALF_REFRESH) const {
     baseCalls.push_back(fallback);
   }
