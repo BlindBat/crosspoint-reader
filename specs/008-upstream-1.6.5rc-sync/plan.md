@@ -69,7 +69,7 @@ allocations in every new line (Principle II); `lib/Fb2` and `lib/LibraryIndex` s
 | IV. Evidence over claims | PASS | Conflict counts, test counts, suite counts and upstream test totals are measured (research header, R12). Timings and heap are measured before/after on the device, never asserted (SC-005/006). The X3 claim is explicitly marked unverifiable locally (R5). |
 | V. Tests prove behavior | PASS (obligation) | Oracle: 3,349 fork tests + 132 upstream, plain and ASan (both green on the branch today). New code lands with tests and a named mutation each: FB2 in `library_builder` (remove `.fb2` from `isBookName`), metadata-only stop in `fb2_metadata_parser` (remove the stop → sink fires), font-cache release in `fb2_section_cache` (drop the call → count 0), FB2 percent math in `xtc_fb2_readers`, cover flag pass-through in `fb2_cover_extractor`. Pin flips name their upstream change (R11). |
 | VI. Untrusted input | PASS | Every fork validation guard survives (R1: Page image bounds, `truncateAtInvalidUtf8`, bounded manifest sizes, WebPathUtils). FB2 metadata for the index goes through the same validated cache reader or the same expat parser with the same caps. |
-| VII. Upstream-first hygiene | PASS | True merge on a sync branch, landed as a merge commit (Q1). Conflicts resolved to upstream's shape wherever both sides solved the same problem (R1). Follow-ups are one logical change each; FB2 work is fork-only by nature. Upstream `AGENTS.md`/`SCOPE.md` unchanged in the range → constitution **re-affirmed** here, no amendment (R14). Test suites and QA tooling stay fork-only. |
+| VII. Upstream-first hygiene | PASS | True merge on a sync branch, landed as a merge commit (Q1). Conflicts resolved to upstream's shape wherever both sides solved the same problem (R1). Follow-ups are one logical change each; FB2 work is fork-only by nature. Upstream `AGENTS.md`/`SCOPE.md` unchanged in the range → constitution **re-affirmed** here, no amendment (R14). Parallel work on `upstream/develop` checked for every file the new code touches — no shape to mirror (notes in R2, R5, R9). Test suites and QA tooling stay fork-only. |
 
 **Gate result**: PASS, no violations.
 
@@ -105,7 +105,7 @@ specs/008-upstream-1.6.5rc-sync/
 
 ```text
 # merge commit (conflict resolution only — 42 files, research R1)
-.github/workflows/release.yml           # upstream + one-line version-check relaxation
+.github/workflows/release.yml           # upstream verbatim (relaxation = separate ci: commit, T047)
 platformio.ini                          # version = 1.6.5rc-bb.1
 lib/EpdFont/SdCardFont.cpp              # upstream logic on the platform seam
 lib/Epub/Epub/Page.cpp                  # nothrow + fork image bounds
@@ -148,7 +148,8 @@ files are test stubs and the two spec contracts.
 ## Commit plan (one logical change each, Principle VII)
 
 1. `Merge tag '1.6.5rc' into sync/upstream-1.6.5rc` — the 42 resolutions of R1, the test
-   reconciliation of R12, and nothing else. Green: `bin/run-tests`, `--asan`, `pio run -e default`.
+   reconciliation of R12, and nothing else (`release.yml` resolves to upstream verbatim; its one-line
+   relaxation is the separate `ci:` commit in tasks T047). Green: `bin/run-tests`, `--asan`, `pio run -e default`.
 2. `feat(library): index FictionBook 2 files` — R2 + its tests.
 3. `fix(fb2): keep the reader menu on the cached chapter position` — R3 + test.
 4. `fix(fb2): release SD font caches before laying out a chapter` — R4 + test.

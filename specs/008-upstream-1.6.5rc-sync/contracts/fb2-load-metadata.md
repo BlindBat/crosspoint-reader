@@ -19,7 +19,7 @@ bool loadMetadata(std::string& title, std::string& author);
 | no / invalid `book.bin`, well-formed FB2 | `true`; `title`/`author` from `<title-info>`; both NFC-composed | reads the file up to `</title-info>`; nothing written |
 | `<title-info>` absent or empty | `true` with empty strings (caller falls back to the filename stem) | as above |
 | file unreadable, not XML, malformed before `</title-info>` | `false`; both strings cleared | nothing written |
-| `<body>` reached before `</title-info>` (no description) | `false` | parse stopped at `<body>` — the body is never read |
+| `<body>` reached before `</title-info>` (no description) | `true` with empty strings (caller falls back to the filename stem; status stays `EXTRACTED`) | parse stopped at `<body>` — the body is never read; no "did title-info close" state is kept |
 
 - The parser is the existing `Fb2MetadataParser` with a metadata-only flag; the flag makes
   `endElement("title-info")` (and `startElement("body")`) call `XML_StopParser(parser, XML_FALSE)`,

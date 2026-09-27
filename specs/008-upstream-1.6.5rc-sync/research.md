@@ -20,7 +20,7 @@ guarantee · **D**: delete.
 
 | File | Hunks | Resolution | Fork guarantee kept / note |
 |---|---|---|---|
-| `.github/workflows/release.yml` | 1 | U + one edit | Version check reduced to `tag == configured version` in both branches (R9). |
+| `.github/workflows/release.yml` | 1 | U (verbatim) | The fork's one-line version-check relaxation is its own commit (tasks T047, R9), so the deviation from upstream stays visible for the next sync. |
 | `platformio.ini` | 1 | `version = 1.6.5rc-bb.1` | The fork's next version (clarification Q2); every environment is already defined once (`grep -c '^\[env:x4c-gh_release_rc\]'` = 1 after auto-merge). |
 | `ROADMAP.md` | 2 | U | Upstream's document; the fork's edits were style convergence. |
 | `USER_GUIDE.md` | 2 | U + `.fb2` *(fork-only)* in the Library's format list | "Check for updates" takes upstream's wording (asset naming changed). |
@@ -82,6 +82,10 @@ runs in a new metadata-only mode that calls `XML_StopParser(parser, XML_FALSE)` 
 upstream stopping the OPF parser before the manifest. Title and author are NFC-composed as upstream
 does for EPUB (`utf8ComposeNfc`, `Epub.cpp` at `1.6.5rc`).
 
+**Parallel work on `develop` (Constitution VII, checked 2026-09-27)**: `1.6.5rc..upstream/develop` changes
+`LibraryBuilder.cpp` by +31 lines (#3608 "refresh library") but `isBookName()` is byte-identical, so the
+`.fb2` clause has no other shape to mirror.
+
 **Alternatives considered**: `Fb2::load(true)` (builds the whole chapter index for every
 never-opened FB2 on the card — 22–45 s per book on the C3 per the bench memory; rejected);
 folder/filename-only for FB2 (fails FR-021).
@@ -113,6 +117,10 @@ EPUB path (`EpubReaderActivity.cpp:1585` at `1.6.5rc`). Upstream's fix (#3439) l
 `renderer.preconditionGrayscale()` before the grey planes; otherwise `displayGrayscaleBase(FAST_REFRESH)`.
 The helper's non-combined branch adopts that sequence (`preconditionGrayscale()` exists on both the
 renderer and the HAL, and is a no-op on X4 — `lib/hal/HalDisplay.h:78-80`).
+
+**Parallel work on `develop` (Constitution VII, checked 2026-09-27)**: `ReaderUtils.h` changes by 94 lines on
+`develop` (#3586 CrossInk tap controls, #3709 RTL tap zones) — the touch helpers, not
+`displayBaseWithRefreshCycle`; no other shape to mirror.
 
 **Verification limit**: the fork owner's device is an X4 (memory: device-measurement). The change
 reproduces upstream's mechanism, but the X3 outcome cannot be observed locally; the release notes
@@ -164,6 +172,10 @@ before the build). The `prerelease` flag still selects the `*-gh_release_rc` env
 `-rc` substring makes an equal-numbered upstream final an offered update — the intended semantics,
 `OtaUpdater.cpp:104-157`). `release_candidate.yml` (workflow_dispatch on `release/*` branches)
 stays as upstream ships it; the fork does not use it.
+
+**Parallel work on `develop` (Constitution VII, checked 2026-09-27)**: `release.yml` changes by 2 lines on
+`develop` (#3545, an action version bump); the version check is untouched, so the fork's one-line edit
+re-applies cleanly.
 
 **Alternatives considered**: publishing RC-based fork releases as normal releases (works with no
 edit, but the user chose the pre-release flag — clarification Q2); keeping the fork's tag-push
@@ -237,3 +249,19 @@ sister repo maintained by upstream against this range.
 - Constitution: upstream `AGENTS.md`/`SCOPE.md` unchanged in the range (`git diff --stat 54337e6d
   1.6.5rc -- AGENTS.md SCOPE.md` is empty) → re-affirmed in the plan's Constitution Check, no
   amendment.
+
+## R16. Analyze findings and dispositions (2026-09-27)
+
+`/speckit-analyze` raised 11 findings, none critical; walked one by one with the user:
+
+| ID | Finding | Disposition |
+|---|---|---|
+| I1 | contract vs T034 on an FB2 without `<title-info>` | closed — `loadMetadata` returns `true` with empty strings; contract row rewritten |
+| A1 | T037 "same value as the status bar" vs upstream's `chapterFraction()` | closed — upstream's 0-based fraction; status bar untouched |
+| I2 | FR-012 forbade the R11 test deletion | closed — FR-012 gained the replacement-coverage carve-out |
+| G1 | FR-006 (pre-sync caches) had no task | closed — first check in T026 |
+| G2, G4, G5 | ASan CI matrix, SC-008/SC-009 checks, idle-wake on FB2 | closed — lines added to T021, T045, T051, T055 |
+| G3 | `bin/run-tests-linux` never exercised | skipped by decision — CI's Linux job is the check |
+| U1 | US3 scenario 6 needs an X3 | closed — scenario annotated: parity-only, disclosed in release notes |
+| C1 | VII parallel-work check unrecorded | closed — notes in R2, R5, R9 and the plan's VII row |
+| I3 | `release.yml` edit placed in the merge by plan/R1, in T047 by tasks | closed — R1 row and plan commit #1 point at T047 |
