@@ -287,7 +287,8 @@ Device figures (SC-006, human — T001 before, T054 after):
 Both heap figures are within 1 KB of `1.6.0-bb.5` (the Library's `HalMemory`/index code and the arena manifest are
 flash, not resident DRAM). The two SD-bound timings halved on the same card and file; the FB2 parser is unchanged, so
 the gain is the platform bump (pioarduino 55.03.37 → 55.03.311, arduino-esp32 3.3.7 → 3.3.11, freeink-sdk `e30d25a0`) —
-reported as observed, not claimed as a fork optimisation. Boot heap on the sync build: 152,772 B free before any activity.
+reported as observed, not claimed as a fork optimisation. Boot heap on the sync build: 152,772 B free before any activity. A clean boot of the plain `default` build
+(no bench churn) idles at Home with 137,332 B free — the like-for-like figure against bb.5's 138,308 B.
 
 **SC-005 (T046), same run:** `library::buildLibraryIndex("/")` over the 944-FB2 card — **Use book metadata off: 19.0 s,
 947 books**; **on: 42.7 s, 946 parsed / 946 enriched**; heap low-water 118,664 B (off) and 99,664 B (on), largest block
