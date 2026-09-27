@@ -290,7 +290,22 @@ matches only a log string); (c) `MAX_PAGE_IMAGE_EDGE` check at `Page.cpp:105` pr
 at `:111`; (d) `FONT_MANIFEST_MAX_SCRIPT_GROUPS` and the `crc32` type check are in `src/util/FontManifest.cpp`, and
 `test/release_json_parser/ReleaseJsonParserCorpusTest.cpp` still rejects a 26-digit asset size. T028: all 24 suites of
 the inventory pass. T030: the 15 corpus suites pass under ASan with no sanitizer output.
-T048, T052 and T053 are appended here as they run.
+T048: `strings .pio/build/default/firmware.bin | grep -o '1\.6\.5rc-bb\.1[^ ]*'` → `1.6.5rc-bb.1-dev-sync/upstream-1.6.5rc-5fc49412`
+(the development stamp; the RC envs' `-rc+<sha>` form is CI-only). Note: `pio check` deletes the `default` build products,
+so run `strings` before it.
+
+T052 (final tree, `d0…` = HEAD after the style/override commits): `./bin/clang-format-fix -c` clean — six merge-resolved
+files needed one `style:` commit (`-g` had skipped them because they were staged when it ran); `bin/run-tests` 3,496 /
+3,496 and `--asan` 3,496 / 3,496 (SC-002 floor 3,484 + 12); `pio run` for `default` 17.3 % / 85.4 % (56,616 B /
+5,594,683 B), `sticky` 20.4 % / 82.0 %, `x4pro` 30.6 % / 83.7 %, `x4c` 30.5 % / 83.4 %, `papermono` 35.6 % / 83.8 %;
+`pio check` (Cppcheck 2.20.0 with platform 55.03.311) clean after marking `~OpdsParser()` `override`, the one
+`[low:style]` finding. SC-009: `git diff --stat 0d7d98a7..HEAD` lists only the Apply areas (`lib/Fb2`, `lib/LibraryIndex`,
+`src/activities/reader/Fb2*`, the shared `ReaderUtils.h` helper — see the plan's Complexity Tracking — `SleepActivity.cpp`,
+`release.yml`, tests), docs, the formatting commit and the `override` one-liner.
+
+T053: the simulator (`bin/run-simulator --build-only`, `.pio/build/simulator/program`) builds from the final tree; the
+visual walk (Library tabs / collapse / search, FB2 from each tab, FB2 menu after the chapter list, coverless FB2 sleep
+stub, four orientations) needs a person at the window — outcome to be noted here.
 
 ## R16. Analyze findings and dispositions (2026-09-27)
 
