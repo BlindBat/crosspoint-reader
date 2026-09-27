@@ -16,6 +16,7 @@ struct JpegToBmpConverterStubState {
   int lastTargetMaxWidth = -1;
   int lastTargetMaxHeight = -1;
   size_t lastInputSize = 0;
+  bool lastOriginalThresholds = false;
   bool failNextConversion = false;
 
   static JpegToBmpConverterStubState& instance() {
@@ -42,8 +43,10 @@ class JpegToBmpConverter {
   }
 
  public:
-  static bool jpegFileToBmpStream(HalFile& jpegFile, HalFile& bmpOut, bool = true) {
-    JpegToBmpConverterStubState::instance().streamCalls++;
+  static bool jpegFileToBmpStream(HalFile& jpegFile, HalFile& bmpOut, bool = true, bool originalThresholds = false) {
+    auto& state = JpegToBmpConverterStubState::instance();
+    state.streamCalls++;
+    state.lastOriginalThresholds = originalThresholds;
     return copyStream(jpegFile, bmpOut);
   }
   static bool jpegFileToBmpStreamWithSize(HalFile& jpegFile, HalFile& bmpOut, int targetMaxWidth, int targetMaxHeight) {

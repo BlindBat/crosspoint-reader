@@ -16,8 +16,9 @@ class Fb2CoverExtractor {
   explicit Fb2CoverExtractor(const std::string& filepath, const std::string& binaryId, const std::string& outputBmpPath)
       : filepath(filepath), binaryId(binaryId), outputBmpPath(outputBmpPath) {}
 
-  // Extract cover and convert to BMP at outputBmpPath
-  bool extract() const;
+  // Extract cover and convert to BMP at outputBmpPath, dithered with the panel's
+  // original or the legacy thresholds (JpegToBmpConverter).
+  bool extract(bool originalThresholds = false) const;
 
   // Extract cover and convert to 1-bit thumbnail BMP
   bool extractThumb(const std::string& thumbPath, int height) const;

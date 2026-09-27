@@ -207,7 +207,7 @@ bool Fb2CoverExtractor::extractBinaryToJpeg(const std::string& tempJpegPath) con
   return true;
 }
 
-bool Fb2CoverExtractor::extract() const {
+bool Fb2CoverExtractor::extract(const bool originalThresholds) const {
   const auto tempJpegPath = outputBmpPath.substr(0, outputBmpPath.rfind('/')) + "/.cover.jpg";
 
   if (!extractBinaryToJpeg(tempJpegPath)) {
@@ -228,7 +228,7 @@ bool Fb2CoverExtractor::extract() const {
     return false;
   }
 
-  const bool success = JpegToBmpConverter::jpegFileToBmpStream(coverJpg, coverBmp);
+  const bool success = JpegToBmpConverter::jpegFileToBmpStream(coverJpg, coverBmp, /*crop=*/true, originalThresholds);
   coverJpg.close();
   coverBmp.close();
   Storage.remove(tempJpegPath.c_str());

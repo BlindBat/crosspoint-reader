@@ -701,8 +701,8 @@ void SleepActivity::renderCoverSleepScreen() const {
     bookTitle = lastFb2.getTitle();
     bookAuthor = lastFb2.getAuthor();
 
-    if (lastFb2.generateCoverBmp()) {
-      coverBmpPath = lastFb2.getCoverBmpPath();
+    if (lastFb2.generateCoverBmp(originalThresholds)) {
+      coverBmpPath = lastFb2.getCoverBmpPath(originalThresholds);
     } else {
       LOG_ERR("SLP", "Failed to generate FB2 cover bmp");
     }

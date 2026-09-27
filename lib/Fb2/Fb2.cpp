@@ -454,10 +454,13 @@ const std::string& Fb2::getLanguage() const {
   return loaded ? language : blank;
 }
 
-std::string Fb2::getCoverBmpPath() const { return cachePath + "/cover.bmp"; }
+std::string Fb2::getCoverBmpPath(const bool originalThresholds) const {
+  return cachePath + (originalThresholds ? "/cover_original.bmp" : "/cover_legacy_v2.bmp");
+}
 
-bool Fb2::generateCoverBmp() const {
-  if (Storage.exists(getCoverBmpPath().c_str())) {
+bool Fb2::generateCoverBmp(const bool originalThresholds) const {
+  const auto coverPath = getCoverBmpPath(originalThresholds);
+  if (Storage.exists(coverPath.c_str())) {
     return true;
   }
 
@@ -467,8 +470,8 @@ bool Fb2::generateCoverBmp() const {
   }
 
   setupCacheDir();
-  Fb2CoverExtractor extractor(filepath, coverBinaryId, getCoverBmpPath());
-  return extractor.extract();
+  Fb2CoverExtractor extractor(filepath, coverBinaryId, coverPath);
+  return extractor.extract(originalThresholds);
 }
 
 std::string Fb2::getThumbBmpPath() const { return cachePath + "/thumb_[HEIGHT].bmp"; }
