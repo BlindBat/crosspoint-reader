@@ -14,6 +14,8 @@ target_include_directories(DirectPixelWriterTest PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/stubs
   ${REPO_ROOT}/test/image_common/stubs
   ${REPO_ROOT}/lib/Epub/Epub/converters
+  ${REPO_ROOT}/lib/GfxRenderer
+  ${REPO_ROOT}/lib/Memory
 )
 
 target_link_libraries(DirectPixelWriterTest PRIVATE

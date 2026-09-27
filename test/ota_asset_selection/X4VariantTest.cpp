@@ -1,6 +1,6 @@
 // The combined X4/X3 ESP32-C3 image is its own compatibility class, tagged
-// "x4" and served by the PLAIN firmware.bin release asset (the isX4 special
-// case in OtaUpdater::checkForUpdate). The main suite binary is built as
+// "x4" and served by the crosspoint-<tag>-x3-x4.bin release asset (the isX4
+// special case in OtaUpdater::checkForUpdate). The main suite binary is built as
 // x4pro; to also pin the x4 naming in the same binary, this TU compiles a
 // second copy of FirmwareBoardTag.cpp + OtaUpdater.cpp with FREEINK_DEVICE_X4
 // inside a wrapping namespace.
@@ -60,26 +60,27 @@ TEST_F(X4VariantTest, CombinedC3BinaryIsTaggedX4) {
   EXPECT_EQ(std::string(x4build::board_tag::boardName(), x4build::board_tag::boardNameLen()), "x4");
 }
 
-TEST_F(X4VariantTest, X4SelectsPlainFirmwareBin) {
-  // The pre-existing release layout: plain firmware.bin for the C3 binary,
-  // firmware-<board>.bin for everything else. x4 must take the plain asset
-  // and ignore the board-suffixed ones.
+TEST_F(X4VariantTest, X4SelectsTheCombinedX3X4Asset) {
+  // The combined C3 image is published as x3-x4, not under its "x4" board tag;
+  // the per-board S3 assets must be ignored.
   x4build::OtaUpdater updater;
   FakeHttp::instance().setBody(
-      makeReleaseJson("1.7.0", {{"firmware-x4pro.bin", "https://cdn.example/x4pro.bin", 5555},
-                                {"firmware.bin", "https://cdn.example/c3.bin", 4444},
-                                {"firmware-sticky.bin", "https://cdn.example/sticky.bin", 6666}}));
+      makeReleaseJson("1.7.0", {{"crosspoint-1.7.0-x4pro.bin", "https://cdn.example/x4pro.bin", 5555},
+                                {"crosspoint-1.7.0-x3-x4.bin", "https://cdn.example/c3.bin", 4444},
+                                {"crosspoint-1.7.0-sticky.bin", "https://cdn.example/sticky.bin", 6666}}));
   ASSERT_EQ(updater.checkForUpdate(), x4build::OtaUpdater::OK);
   EXPECT_EQ(updater.getLatestVersion(), "1.7.0");
-  EXPECT_EQ(updater.getOtaSize(), 4444u);  // proves firmware.bin won
+  EXPECT_EQ(updater.getOtaSize(), 4444u);  // proves crosspoint-1.7.0-x3-x4.bin won
 }
 
-TEST_F(X4VariantTest, X4WithoutPlainAssetSeesNoUpdate) {
+TEST_F(X4VariantTest, X4WithoutCombinedAssetSeesNoUpdate) {
   x4build::OtaUpdater updater;
   FakeHttp::instance().setBody(
-      makeReleaseJson("1.7.0", {{"firmware-x4pro.bin", "https://cdn.example/x4pro.bin", 5555},
-                                {"firmware-x4.bin", "https://cdn.example/suffixed.bin", 7777}}));
-  // Even a firmware-x4.bin asset is not what the x4 build asks for.
+      makeReleaseJson("1.7.0", {{"crosspoint-1.7.0-x4pro.bin", "https://cdn.example/x4pro.bin", 5555},
+                                {"crosspoint-1.7.0-x4.bin", "https://cdn.example/suffixed.bin", 7777},
+                                {"firmware.bin", "https://cdn.example/legacy.bin", 8888}}));
+  // Neither a board-tag-suffixed asset nor the retired plain firmware.bin is
+  // what the x4 build asks for.
   EXPECT_EQ(updater.checkForUpdate(), x4build::OtaUpdater::NO_UPDATE);
 }
 

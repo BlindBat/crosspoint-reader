@@ -779,15 +779,30 @@ TEST_F(ReaderHelpersTest, BaseRefreshCycleRoutesThroughGrayscaleBaseOnCombiningP
   GfxRenderer renderer;
   int pages = 2;
   ReaderUtils::displayBaseWithRefreshCycle(renderer, pages);
-  EXPECT_EQ(renderer.displayCalls.size(), 1u);
-  EXPECT_TRUE(renderer.baseCalls.empty());
+  EXPECT_TRUE(renderer.displayCalls.empty());
+  ASSERT_EQ(renderer.baseCalls.size(), 1u);
+  EXPECT_EQ(renderer.baseCalls[0], HalDisplay::FAST_REFRESH);
   EXPECT_EQ(pages, 1);
 
   renderer.combinesBase = true;
   ReaderUtils::displayBaseWithRefreshCycle(renderer, pages);
-  EXPECT_EQ(renderer.displayCalls.size(), 1u);
-  ASSERT_EQ(renderer.baseCalls.size(), 1u);
-  EXPECT_EQ(renderer.baseCalls[0], HalDisplay::HALF_REFRESH);
+  EXPECT_TRUE(renderer.displayCalls.empty());
+  ASSERT_EQ(renderer.baseCalls.size(), 2u);
+  EXPECT_EQ(renderer.baseCalls[1], HalDisplay::HALF_REFRESH);
+  EXPECT_TRUE(renderer.trace.empty()) << "a combining panel commits base + grays as one waveform";
+  EXPECT_EQ(pages, 15);
+}
+
+// #3439: a cleanup refresh on a separate-base panel runs the grayscale
+// preconditioning waveform after the HALF refresh and before the gray planes.
+TEST_F(ReaderHelpersTest, BaseRefreshCycleCleanupPreconditionsGrayscaleOnSeparateBasePanels) {
+  GfxRenderer renderer;
+  int pages = 1;
+  ReaderUtils::displayBaseWithRefreshCycle(renderer, pages);
+  ASSERT_EQ(renderer.displayCalls.size(), 1u);
+  EXPECT_EQ(renderer.displayCalls[0], HalDisplay::HALF_REFRESH);
+  EXPECT_EQ(renderer.trace, std::vector<std::string>{"precondition"});
+  EXPECT_TRUE(renderer.baseCalls.empty());
   EXPECT_EQ(pages, 15);
 }
 

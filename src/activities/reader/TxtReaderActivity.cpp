@@ -123,7 +123,7 @@ TxtPageIndex::CacheKey TxtReaderActivity::cacheKey() const {
           static_cast<int32_t>(cachedScreenMargin),  cachedParagraphAlignment};
 }
 
-void TxtReaderActivity::buildPageIndex(const GfxRenderer& renderer) {
+void TxtReaderActivity::buildPageIndex(GfxRenderer& renderer) {
   LOG_DBG("TRS", "Building page index for %zu bytes...", txt->getFileSize());
 
   GUI.drawPopup(renderer, tr(STR_INDEXING));

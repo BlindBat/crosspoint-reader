@@ -2,6 +2,8 @@
 
 #include <Epub/Page.h>
 #include <Epub/hyphenation/Hyphenator.h>
+#include <FontCacheManager.h>
+#include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <Memory.h>
@@ -183,6 +185,10 @@ bool Fb2Section::startBuild(const ReaderRenderSpec& spec, const BuildPopupFn& po
 
   pageCount = 0;
   buildComplete_ = false;
+  // Reclaim rebuildable font caches before layout allocations.
+  if (auto* fontCache = renderer.getFontCacheManager()) {
+    fontCache->releaseSdFontCaches();
+  }
 
   {
     const auto sectionsDir = fb2->getCachePath() + "/sections";

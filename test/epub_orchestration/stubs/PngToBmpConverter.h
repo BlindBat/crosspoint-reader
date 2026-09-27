@@ -7,7 +7,7 @@
 // Host stub: records the bytes it was handed and returns imgconv_host::png.result.
 class PngToBmpConverter {
  public:
-  static bool pngFileToBmpStream(HalFile& pngFile, Print& bmpOut, bool crop = true) {
+  static bool pngFileToBmpStream(HalFile& pngFile, Print& bmpOut, bool crop = true, bool originalThresholds = false) {
     return imgconv_host::run(imgconv_host::png, pngFile, bmpOut, 0, 0, crop);
   }
   static bool pngFileToBmpStreamWithSize(HalFile& pngFile, Print& bmpOut, int targetMaxWidth, int targetMaxHeight) {

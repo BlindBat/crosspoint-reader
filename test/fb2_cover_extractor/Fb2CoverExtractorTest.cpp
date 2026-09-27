@@ -195,6 +195,15 @@ TEST_F(Fb2CoverExtractorTest, ConverterFailureRemovesOutputBmp) {
   EXPECT_FALSE(fileExists(outPath()));
 }
 
+TEST_F(Fb2CoverExtractorTest, ExtractForwardsTheThresholdFlag) {
+  Fb2CoverExtractor extractor(fixturePath("basic.fb2"), "cover.jpg", outPath());
+  const auto& state = JpegToBmpConverterStubState::instance();
+  ASSERT_TRUE(extractor.extract(true));
+  EXPECT_TRUE(state.lastOriginalThresholds);
+  ASSERT_TRUE(extractor.extract(false));
+  EXPECT_FALSE(state.lastOriginalThresholds);
+}
+
 TEST_F(Fb2CoverExtractorTest, ThumbRequestsSixTenthsAspectAndOneBitConverter) {
   Fb2CoverExtractor extractor(fixturePath("basic.fb2"), "cover.jpg", "");
   const std::string thumbPath = outPath("thumb_100.bmp");

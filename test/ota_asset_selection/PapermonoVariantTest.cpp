@@ -1,8 +1,7 @@
 // The papermono build is its own compatibility class, tagged "papermono" and served by
-// the firmware-papermono.bin release asset (legacy layout) or crosspoint-<tag>-papermono.bin
-// (current upstream layout). The main suite binary is built as x4pro; this TU
-// compiles the same production sources again as papermono inside a namespace, using
-// the mechanics documented in X4VariantTest.cpp.
+// the crosspoint-<tag>-papermono.bin release asset (upstream #3493 layout). The main suite binary is built as x4pro;
+// this TU compiles the same production sources again as papermono inside a namespace, using the mechanics documented in
+// X4VariantTest.cpp.
 
 #undef FREEINK_DEVICE_X4PRO
 #define FREEINK_DEVICE_PAPERMONO 1
@@ -51,14 +50,14 @@ TEST_F(PapermonoVariantTest, BinaryIsTaggedPapermono) {
             "papermono");
 }
 
-TEST_F(PapermonoVariantTest, SelectsLegacyBoardSuffixedAsset) {
+TEST_F(PapermonoVariantTest, LegacyBoardSuffixedAssetIsIgnored) {
+  // The pre-1.6.5 firmware-<board>.bin layout is retired (#3493).
   papermonobuild::OtaUpdater updater;
   FakeHttp::instance().setBody(
       makeReleaseJson("1.7.0", {{"firmware.bin", "https://cdn.example/c3.bin", 1111},
                                 {"firmware-x4pro.bin", "https://cdn.example/x4pro.bin", 2222},
                                 {"firmware-papermono.bin", "https://cdn.example/papermono.bin", 4444}}));
-  ASSERT_EQ(updater.checkForUpdate(), papermonobuild::OtaUpdater::OK);
-  EXPECT_EQ(updater.getOtaSize(), 4444u);
+  EXPECT_EQ(updater.checkForUpdate(), papermonobuild::OtaUpdater::NO_UPDATE);
 }
 
 TEST_F(PapermonoVariantTest, SelectsTaggedUpstreamAsset) {

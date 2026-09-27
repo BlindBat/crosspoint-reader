@@ -15,13 +15,10 @@ class ReleaseJsonParser {
   void reset();
   void feed(const char* data, size_t len);
 
-  // Release-asset filename to match (default "firmware.bin"). Boards with
-  // their own release binaries pass e.g. "firmware-papermono.bin". Survives
-  // reset(); truncated silently if longer than the internal buffer.
+  // Release-asset filename to match (default "firmware.bin").
   void setFirmwareAssetName(const char* name);
   // Second filename that also selects the firmware asset (empty = none), for
   // releases published under a different naming scheme. Survives reset().
-  void setAlternateFirmwareAssetName(const char* name);
 
   bool foundTag() const;
   bool foundFirmware() const;
@@ -76,5 +73,4 @@ class ReleaseJsonParser {
   bool currentAssetSizeInvalid;
 
   char firmwareAssetName[48];
-  char alternateAssetName[48];
 };

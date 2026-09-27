@@ -583,14 +583,14 @@ TEST(FileIcon, EmptyName) {
 
 TEST(HomeMenuMap, IndexWithoutOpdsServers) {
   EXPECT_EQ(HomeMenuMap::menuItemToIndex(HomeMenuItem::FILE_BROWSER, false), 0);
-  EXPECT_EQ(HomeMenuMap::menuItemToIndex(HomeMenuItem::RECENTS, false), 1);
+  EXPECT_EQ(HomeMenuMap::menuItemToIndex(HomeMenuItem::LIBRARY, false), 1);
   EXPECT_EQ(HomeMenuMap::menuItemToIndex(HomeMenuItem::FILE_TRANSFER, false), 2);
   EXPECT_EQ(HomeMenuMap::menuItemToIndex(HomeMenuItem::SETTINGS_MENU, false), 3);
 }
 
 TEST(HomeMenuMap, IndexWithOpdsServersInsertsOpdsAfterRecents) {
   EXPECT_EQ(HomeMenuMap::menuItemToIndex(HomeMenuItem::FILE_BROWSER, true), 0);
-  EXPECT_EQ(HomeMenuMap::menuItemToIndex(HomeMenuItem::RECENTS, true), 1);
+  EXPECT_EQ(HomeMenuMap::menuItemToIndex(HomeMenuItem::LIBRARY, true), 1);
   EXPECT_EQ(HomeMenuMap::menuItemToIndex(HomeMenuItem::OPDS_BROWSER, true), 2);
   EXPECT_EQ(HomeMenuMap::menuItemToIndex(HomeMenuItem::FILE_TRANSFER, true), 3);
   EXPECT_EQ(HomeMenuMap::menuItemToIndex(HomeMenuItem::SETTINGS_MENU, true), 4);
@@ -604,7 +604,7 @@ TEST(HomeMenuMap, UnavailableOrUnknownItemsFallBackToFirstRow) {
 
 TEST(HomeMenuMap, ItemFromIndexWithoutOpdsServers) {
   EXPECT_EQ(HomeMenuMap::indexToMenuItem(0, false), HomeMenuItem::FILE_BROWSER);
-  EXPECT_EQ(HomeMenuMap::indexToMenuItem(1, false), HomeMenuItem::RECENTS);
+  EXPECT_EQ(HomeMenuMap::indexToMenuItem(1, false), HomeMenuItem::LIBRARY);
   EXPECT_EQ(HomeMenuMap::indexToMenuItem(2, false), HomeMenuItem::FILE_TRANSFER);
   EXPECT_EQ(HomeMenuMap::indexToMenuItem(3, false), HomeMenuItem::SETTINGS_MENU);
   EXPECT_EQ(HomeMenuMap::indexToMenuItem(4, false), HomeMenuItem::NONE);
@@ -613,7 +613,7 @@ TEST(HomeMenuMap, ItemFromIndexWithoutOpdsServers) {
 
 TEST(HomeMenuMap, ItemFromIndexWithOpdsServers) {
   EXPECT_EQ(HomeMenuMap::indexToMenuItem(0, true), HomeMenuItem::FILE_BROWSER);
-  EXPECT_EQ(HomeMenuMap::indexToMenuItem(1, true), HomeMenuItem::RECENTS);
+  EXPECT_EQ(HomeMenuMap::indexToMenuItem(1, true), HomeMenuItem::LIBRARY);
   EXPECT_EQ(HomeMenuMap::indexToMenuItem(2, true), HomeMenuItem::OPDS_BROWSER);
   EXPECT_EQ(HomeMenuMap::indexToMenuItem(3, true), HomeMenuItem::FILE_TRANSFER);
   EXPECT_EQ(HomeMenuMap::indexToMenuItem(4, true), HomeMenuItem::SETTINGS_MENU);
@@ -641,7 +641,7 @@ TEST(HomeMenuMap, RowCountShrinksByOneWithoutOpdsServers) {
 
 TEST(HomeMenuMap, RoundTripsEveryVisibleItem) {
   for (const bool opds : {false, true}) {
-    for (const HomeMenuItem item : {HomeMenuItem::FILE_BROWSER, HomeMenuItem::RECENTS, HomeMenuItem::OPDS_BROWSER,
+    for (const HomeMenuItem item : {HomeMenuItem::FILE_BROWSER, HomeMenuItem::LIBRARY, HomeMenuItem::OPDS_BROWSER,
                                     HomeMenuItem::FILE_TRANSFER, HomeMenuItem::SETTINGS_MENU}) {
       if (item == HomeMenuItem::OPDS_BROWSER && !opds) continue;
       EXPECT_EQ(HomeMenuMap::indexToMenuItem(HomeMenuMap::menuItemToIndex(item, opds), opds), item);

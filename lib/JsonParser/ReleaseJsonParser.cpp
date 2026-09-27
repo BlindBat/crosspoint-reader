@@ -19,16 +19,11 @@ ReleaseJsonParser::ReleaseJsonParser()
     : parser(JsonCallbacks{this, sOnKey, sOnString, sOnNumber, sOnBool, sOnNull, sOnObjectStart, sOnObjectEnd,
                            sOnArrayStart, sOnArrayEnd}) {
   safeCopy(firmwareAssetName, sizeof(firmwareAssetName), "firmware.bin", sizeof("firmware.bin") - 1);
-  alternateAssetName[0] = '\0';
   reset();
 }
 
 void ReleaseJsonParser::setFirmwareAssetName(const char* name) {
   safeCopy(firmwareAssetName, sizeof(firmwareAssetName), name, strlen(name));
-}
-
-void ReleaseJsonParser::setAlternateFirmwareAssetName(const char* name) {
-  safeCopy(alternateAssetName, sizeof(alternateAssetName), name, strlen(name));
 }
 
 void ReleaseJsonParser::reset() {
@@ -57,8 +52,7 @@ const char* ReleaseJsonParser::getFirmwareUrl() const { return firmwareUrl; }
 size_t ReleaseJsonParser::getFirmwareSize() const { return firmwareSize; }
 
 void ReleaseJsonParser::commitAsset() {
-  const bool nameMatches = strcmp(currentAssetName, firmwareAssetName) == 0 ||
-                           (alternateAssetName[0] != '\0' && strcmp(currentAssetName, alternateAssetName) == 0);
+  const bool nameMatches = strcmp(currentAssetName, firmwareAssetName) == 0;
   if (!currentAssetSizeInvalid && nameMatches) {
     memcpy(firmwareUrl, currentAssetUrl, sizeof(firmwareUrl));
     firmwareSize = currentAssetSize;

@@ -18,6 +18,18 @@ class HalDisplay {
     HALF_REFRESH,
     FAST_REFRESH,
   };
+  // Mirrors freeink-sdk GrayscaleCapabilities.h (the real HalDisplay aliases these).
+  enum class GrayscaleMode : uint8_t { Overlay, Absolute, Direct };
+  enum class GrayscaleEncoding : uint8_t { Unsupported, OverlayMasks, AbsolutePlanes };
+  enum class GrayscaleBase : uint8_t { Separate, Combined };
+  struct GrayscaleCapabilities {
+    GrayscaleEncoding encoding = GrayscaleEncoding::Unsupported;
+    GrayscaleBase base = GrayscaleBase::Separate;
+    bool stripUploads = false;
+    bool asyncBase = false;
+    bool stagingWhileBusy = false;
+    constexpr bool supported() const { return encoding != GrayscaleEncoding::Unsupported; }
+  };
 
   static constexpr uint16_t DISPLAY_WIDTH = 800;
   static constexpr uint16_t DISPLAY_HEIGHT = 480;
@@ -107,11 +119,31 @@ class HalDisplay {
   }
   bool supportsStripGrayscale() const { return stripSupported; }
   bool combinesGrayscaleBase() const { return combinesBase; }
+  GrayscaleCapabilities grayscaleCapabilities(GrayscaleMode = GrayscaleMode::Overlay) const {
+    GrayscaleCapabilities caps;
+    caps.encoding = grayscaleEncoding;
+    caps.base = combinesBase ? GrayscaleBase::Combined : GrayscaleBase::Separate;
+    caps.stripUploads = stripSupported;
+    caps.asyncBase = asyncGrayscaleBaseSupported;
+    return caps;
+  }
+  bool supportsAsyncGrayscaleBase() const { return asyncGrayscaleBaseSupported; }
+  bool displayGrayscaleBase(GrayscaleMode mode, RefreshMode fallback = HALF_REFRESH, bool turnOffScreen = false) {
+    grayscaleBaseCalls++;
+    lastMode = fallback;
+    lastTurnOffScreen = turnOffScreen;
+    lastGrayscaleMode = mode;
+    return grayscaleBaseModeSucceeds;
+  }
 
   // --- test controls / recorders ---
   bool asyncSupported = false;
   bool stripSupported = false;
   bool combinesBase = false;
+  bool asyncGrayscaleBaseSupported = false;
+  bool grayscaleBaseModeSucceeds = true;
+  GrayscaleEncoding grayscaleEncoding = GrayscaleEncoding::OverlayMasks;
+  GrayscaleMode lastGrayscaleMode = GrayscaleMode::Overlay;
   int displayCalls = 0;
   int asyncCalls = 0;
   int waitCalls = 0;

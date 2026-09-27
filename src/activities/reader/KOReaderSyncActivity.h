@@ -17,16 +17,15 @@
  * 1. Connect to WiFi (if not connected)
  * 2. Derive the document id (filename or partial-MD5, per the match method)
  * 3. Fetch remote progress, probing the alternate id when the first misses
- * 4. Decide what to offer (see SmartSyncDecision): apply, upload, or nothing
+ * 4. Decide what to offer (see ProgressComparison): apply, upload, or nothing
  *    when the two sides differ by no more than a tenth of a point
  * 5. Apply or upload, sending the rich position and optional metadata
  */
 class KOReaderSyncActivity final : public Activity, private UiAppHost {
  public:
   explicit KOReaderSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& epubPath,
-                                int currentSpineIndex, int currentPage, int totalPagesInSpine,
-                                SavedProgressPosition localKoPos, std::string localChapterName,
-                                std::optional<uint16_t> currentParagraphIndex = std::nullopt);
+                                CrossPointPosition localPosition, SavedProgressPosition localKoPos,
+                                std::string localChapterName);
 
   void onEnter() override;
   void onExit() override;
@@ -51,10 +50,7 @@ class KOReaderSyncActivity final : public Activity, private UiAppHost {
   std::shared_ptr<Epub> epub;  // null until lazy-loaded after TLS in performSync()
   std::string epubPath;
   std::string localChapterName;
-  int currentSpineIndex;
-  int currentPage;
-  int totalPagesInSpine;
-  std::optional<uint16_t> currentParagraphIndex;
+  CrossPointPosition localPosition;
 
   State state = WIFI_SELECTION;
   std::string statusMessage;

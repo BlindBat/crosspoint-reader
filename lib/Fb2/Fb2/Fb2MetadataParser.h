@@ -22,6 +22,10 @@ class Fb2MetadataParser {
   Fb2ChapterSink sink;
   uint16_t chapterCount = 0;
   bool sinkFailed = false;
+  // Title block only (the library walk): the parse stops at </title-info> or at
+  // the first <body>, whichever comes first, and the sink is never touched.
+  bool metadataOnly = false;
+  bool metadataDone = false;
 
   // Parser state
   enum class Context {
@@ -75,12 +79,14 @@ class Fb2MetadataParser {
   void* parser = nullptr;
 
   void stopForSink();
+  void stopAfterMetadata();
   static void startElement(void* userData, const char* name, const char** atts);
   static void endElement(void* userData, const char* name);
   static void characterData(void* userData, const char* s, int len);
 
  public:
-  Fb2MetadataParser(const std::string& filepath, const Fb2ChapterSink& sink) : filepath(filepath), sink(sink) {
+  Fb2MetadataParser(const std::string& filepath, const Fb2ChapterSink& sink, const bool metadataOnly = false)
+      : filepath(filepath), sink(sink), metadataOnly(metadataOnly) {
     // FB2 sections nest two or three deep in practice; reserve once so the
     // stack never reallocates mid-parse.
     openSections.reserve(8);

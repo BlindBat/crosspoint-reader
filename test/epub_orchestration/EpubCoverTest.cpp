@@ -307,7 +307,7 @@ TEST_F(EpubFixture, CoverGenerationFailsWhenTheBmpOutputCannotBeOpened) {
 
   auto epub = make(writeEpub("nobmp.epub", coverBookBytes(opf)));
   ASSERT_TRUE(epub->load());
-  Storage.failOpenForWrite.push_back("/cover.bmp");
+  Storage.failOpenForWrite.push_back("/cover_legacy_v2.bmp");  // default-threshold variant (#3478)
 
   EXPECT_FALSE(epub->generateCoverBmp());
   EXPECT_EQ(imgconv_host::jpeg.calls, 0);

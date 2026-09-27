@@ -803,20 +803,24 @@ TEST_F(GfxRendererTest, WrappedTextEllipsisesTheLastAvailableLine) {
   EXPECT_LE(renderer.getTextWidth(kTiny, lines[1].c_str()), 8 + renderer.getTextWidth(kTiny, "\xe2\x80\xa6"));
 }
 
-TEST_F(GfxRendererTest, WrappedTextTruncatesASingleOverlongWordAndStops) {
+TEST_F(GfxRendererTest, WrappedTextHardSplitsASingleOverlongWord) {
+  // Upstream #3366 (Library rows): a word wider than the line is split at the
+  // widest UTF-8 prefix that fits and the rest keeps wrapping, instead of being
+  // ellipsised and ending the text.
   const auto lines = renderer.wrappedText(kTiny, "CCCC", 14, 3);
-  ASSERT_EQ(lines.size(), 1u);
-  EXPECT_EQ(lines[0], "CC\xe2\x80\xa6");
+  ASSERT_EQ(lines.size(), 2u);
+  EXPECT_EQ(lines[0], "CCC");
+  EXPECT_EQ(lines[1], "C");
 }
 
-TEST_F(GfxRendererTest, WrappedTextPushesAnOverlongCarriedWordAsItsOwnLine) {
-  // The carried-over word must not stay in the current line, or a later short
-  // word would be appended after the ellipsis.
+TEST_F(GfxRendererTest, WrappedTextHardSplitsACarriedOverlongWord) {
+  // The carried-over word is requeued and split on its own line; its tail then
+  // shares a line with the next short word (#3366).
   const auto lines = renderer.wrappedText(kTiny, "E CCCC E", 14, 3);
   ASSERT_EQ(lines.size(), 3u);
   EXPECT_EQ(lines[0], "E");
-  EXPECT_EQ(lines[1], "CC\xe2\x80\xa6");
-  EXPECT_EQ(lines[2], "E");
+  EXPECT_EQ(lines[1], "CCC");
+  EXPECT_EQ(lines[2], "C E");
 }
 
 TEST_F(GfxRendererTest, WrappedTextNeverExceedsMaxLines) {

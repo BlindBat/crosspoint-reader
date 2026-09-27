@@ -74,7 +74,7 @@ struct TouchPageTurn {
   unsigned long heldMs;
 };
 
-inline TouchPageTurn detectTouchPageTurn(GfxRenderer& renderer, const MappedInputManager& input) {
+inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const MappedInputManager& input) {
   TouchPageTurn result{false, false, 0};
   if (!SETTINGS.touchReaderControls || !input.hasTouch()) {
     return result;
@@ -176,16 +176,19 @@ inline void displayWithRefreshCycle(const GfxRenderer& renderer, int& pagesUntil
 // Display the B/W base of a page whose grayscale pass follows. Panels that
 // combine the base (Paper Mono) defer the activation so base + gray planes go
 // out as one waveform — displaying the base separately makes the gray pass
-// re-drive the whole text body (a visible flash). Other panels display
-// normally. Same refresh-cadence bookkeeping as displayWithRefreshCycle.
+// re-drive the whole text body (a visible flash). On every other panel a
+// cleanup refresh settles X3 correctly only when its grayscale preconditioning
+// waveform runs before the gray planes are written (#3439); preconditionGrayscale()
+// is a no-op on X4. Same refresh-cadence bookkeeping as displayWithRefreshCycle.
 inline void displayBaseWithRefreshCycle(const GfxRenderer& renderer, int& pagesUntilFullRefresh) {
-  if (!renderer.combinesGrayscaleBase()) {
-    displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
-    return;
+  const bool cleanup = pagesUntilFullRefresh <= 1;
+  if (cleanup && renderer.grayscaleCapabilities().base != HalDisplay::GrayscaleBase::Combined) {
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+    renderer.preconditionGrayscale();
+  } else {
+    renderer.displayGrayscaleBase(cleanup ? HalDisplay::HALF_REFRESH : HalDisplay::FAST_REFRESH);
   }
-  const auto mode = (pagesUntilFullRefresh <= 1) ? HalDisplay::HALF_REFRESH : HalDisplay::FAST_REFRESH;
-  renderer.displayGrayscaleBase(mode);
-  if (pagesUntilFullRefresh <= 1) {
+  if (cleanup) {
     pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
   } else {
     pagesUntilFullRefresh--;
@@ -202,7 +205,8 @@ void renderAntiAliased(GfxRenderer& renderer, RenderFn&& renderFn) {
     LOG_ERR("READER", "Failed to store BW buffer for anti-aliasing");
     // A combined-base panel may still hold a deferred B/W activation; flush it
     // so the page reaches the panel even without its grays.
-    if (renderer.combinesGrayscaleBase()) renderer.cleanupGrayscaleWithFrameBuffer();
+    if (renderer.grayscaleCapabilities().base == HalDisplay::GrayscaleBase::Combined)
+      renderer.cleanupGrayscaleWithFrameBuffer();
     return;
   }
 

@@ -15,6 +15,9 @@
 class GfxRenderer {
  public:
   enum RenderMode { BW, GRAYSCALE_LSB, GRAYSCALE_MSB };
+  // Absolute planes encode black=00/dark=10/light=01/white=11; overlay masks the pre-#3478 way.
+  bool absolutePlanes = false;
+  bool grayPlanesAreAbsolute() const { return absolutePlanes; }
 
   // Logical screen orientation from the perspective of callers
   enum Orientation {

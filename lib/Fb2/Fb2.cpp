@@ -4,6 +4,7 @@
 #include <HalStorage.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <Utf8.h>
 
 #include <algorithm>
 #include <cstring>
@@ -399,6 +400,20 @@ bool Fb2::load(const bool buildIfMissing) {
   return true;
 }
 
+bool Fb2::loadMetadata(std::string& outTitle, std::string& outAuthor) {
+  outTitle.clear();
+  outAuthor.clear();
+  if (!loadMetadataCache()) {
+    Fb2MetadataParser parser(filepath, Fb2ChapterSink{}, /*metadataOnly=*/true);
+    if (!parser.parse()) return false;
+    title = parser.getTitle();
+    author = parser.getAuthor();
+  }
+  outTitle = utf8ComposeNfc(title);
+  outAuthor = utf8ComposeNfc(author);
+  return true;
+}
+
 bool Fb2::clearCache() const {
   if (!Storage.exists(cachePath.c_str())) {
     return true;
@@ -439,10 +454,13 @@ const std::string& Fb2::getLanguage() const {
   return loaded ? language : blank;
 }
 
-std::string Fb2::getCoverBmpPath() const { return cachePath + "/cover.bmp"; }
+std::string Fb2::getCoverBmpPath(const bool originalThresholds) const {
+  return cachePath + (originalThresholds ? "/cover_original.bmp" : "/cover_legacy_v2.bmp");
+}
 
-bool Fb2::generateCoverBmp() const {
-  if (Storage.exists(getCoverBmpPath().c_str())) {
+bool Fb2::generateCoverBmp(const bool originalThresholds) const {
+  const auto coverPath = getCoverBmpPath(originalThresholds);
+  if (Storage.exists(coverPath.c_str())) {
     return true;
   }
 
@@ -452,8 +470,8 @@ bool Fb2::generateCoverBmp() const {
   }
 
   setupCacheDir();
-  Fb2CoverExtractor extractor(filepath, coverBinaryId, getCoverBmpPath());
-  return extractor.extract();
+  Fb2CoverExtractor extractor(filepath, coverBinaryId, coverPath);
+  return extractor.extract(originalThresholds);
 }
 
 std::string Fb2::getThumbBmpPath() const { return cachePath + "/thumb_[HEIGHT].bmp"; }

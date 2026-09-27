@@ -44,8 +44,9 @@ TEST_F(EpubFixture, CachePathChangesWhenTheFileMoves) {
 TEST_F(EpubFixture, DerivedCacheArtifactPathsHangOffTheCachePath) {
   const Epub epub(tmp.at("book.epub"), cacheRoot);
   const std::string& base = epub.getCachePath();
-  EXPECT_EQ(epub.getCoverBmpPath(), base + "/cover.bmp");
-  EXPECT_EQ(epub.getCoverBmpPath(true), base + "/cover_crop.bmp");
+  EXPECT_EQ(epub.getCoverBmpPath(), base + "/cover_legacy_v2.bmp");  // #3478/#3541 threshold variants
+  EXPECT_EQ(epub.getCoverBmpPath(true), base + "/cover_legacy_v2_crop.bmp");
+  EXPECT_EQ(epub.getCoverBmpPath(false, true), base + "/cover_original.bmp");
   EXPECT_EQ(epub.getThumbBmpPath(), base + "/thumb_[HEIGHT].bmp");
   EXPECT_EQ(epub.getThumbBmpPath(120), base + "/thumb_120.bmp");
 }

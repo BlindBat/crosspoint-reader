@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -55,10 +56,12 @@ class FontDownloadActivity final : public UiListActivity {
 
   // Manifest data
   std::string baseUrl_;
-  std::vector<ManifestFamily> families_;
-  // Manifest-defined labels are dynamic; cap them at the 32-bit membership
-  // mask and retain only labels after parsing so group tags consume no steady-state heap.
-  std::vector<std::string> scriptGroupLabels_;
+  // Reused for every file of every family: downloadToFile takes a std::string,
+  // so a char buffer would just build a temporary per call.
+  std::string downloadUrl_;
+  // The parsed catalog: one string arena, one file table, one family vector
+  // (src/util/FontManifest.h), so nothing reallocates while it is built.
+  FontManifestArena manifest_;
   // One 4-byte index per manifest family, allocated once and reused for every group.
   std::vector<int> filteredIndices_;
   freeink::ui::ListNav groupNav_;
@@ -100,6 +103,7 @@ class FontDownloadActivity final : public UiListActivity {
 
   void onWifiSelectionComplete(bool success);
   bool fetchAndParseManifest();
+  void clearManifest();
   void downloadFamily(ManifestFamily& family);
   void downloadAll();
   void updateAll();
@@ -114,8 +118,8 @@ class FontDownloadActivity final : public UiListActivity {
   void onDeleteConfirmationResult(const ActivityResult& result);
   int familyIndexFromList(int listIndex) const;
   int listItemCount() const;
-  bool hasGroupScreen() const { return !scriptGroupLabels_.empty(); }
-  int groupListItemCount() const { return 1 + static_cast<int>(scriptGroupLabels_.size()); }
+  bool hasGroupScreen() const { return !manifest_.scriptGroupLabels.empty(); }
+  int groupListItemCount() const { return 1 + static_cast<int>(manifest_.scriptGroupLabels.size()); }
   int groupMemberCount(int scriptGroupIndex) const;
   void buildFilteredIndices(int groupListIndex);
   void enterGroup(int groupListIndex);

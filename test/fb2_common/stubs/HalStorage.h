@@ -20,6 +20,7 @@
 // returning 0, so a test can make a build fail part-way.
 namespace halstub {
 inline size_t openForReadCount = 0;
+inline size_t readCalls = 0;  // HalFile::read calls, one per parser buffer fill
 inline bool writeBudgetSet = false;
 inline size_t writeBudget = 0;
 }  // namespace halstub
@@ -37,7 +38,10 @@ class HalFile {
     return file_ != nullptr;
   }
   int available() const { return file_ ? static_cast<int>(size() - position()) : 0; }
-  size_t read(void* buffer, size_t count) { return file_ ? std::fread(buffer, 1, count, file_) : 0; }
+  size_t read(void* buffer, size_t count) {
+    ++halstub::readCalls;
+    return file_ ? std::fread(buffer, 1, count, file_) : 0;
+  }
   size_t write(const void* buffer, size_t count) {
     if (!file_) return 0;
     if (halstub::writeBudgetSet) {
@@ -92,6 +96,7 @@ class HalStorage {
   }
   void resetOpenCounts() {
     halstub::openForReadCount = 0;
+    halstub::readCalls = 0;
     halstub::writeBudgetSet = false;
     halstub::writeBudget = 0;
   }

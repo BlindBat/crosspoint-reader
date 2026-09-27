@@ -3,6 +3,7 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
+#include <algorithm>
 #include <vector>
 
 #include "MappedInputManager.h"

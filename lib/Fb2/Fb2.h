@@ -57,6 +57,10 @@ class Fb2 {
   ~Fb2() = default;
 
   bool load(bool buildIfMissing = true);
+  // Title and author only, for the library walk: the cache header when the reader
+  // has built one, else a parse that stops at the end of <title-info>. Never
+  // creates the cache directory or book.bin.
+  bool loadMetadata(std::string& outTitle, std::string& outAuthor);
   bool clearCache() const;
   void setupCacheDir() const;
   const std::string& getCachePath() const;
@@ -65,9 +69,10 @@ class Fb2 {
   const std::string& getAuthor() const;
   const std::string& getLanguage() const;
 
-  // Cover/thumbnail
-  std::string getCoverBmpPath() const;
-  bool generateCoverBmp() const;
+  // Cover/thumbnail. The threshold choice names the file, as Epub's does, so the
+  // sleep screen never serves the other panel's dither.
+  std::string getCoverBmpPath(bool originalThresholds = false) const;
+  bool generateCoverBmp(bool originalThresholds = false) const;
   std::string getThumbBmpPath() const;
   std::string getThumbBmpPath(int height) const;
   bool generateThumbBmp(int height) const;

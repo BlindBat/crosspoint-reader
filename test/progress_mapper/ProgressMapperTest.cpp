@@ -861,11 +861,10 @@ TEST_F(ProgressMapperTest, RoundTripThroughNestedChapterPreservesPage) {
   EXPECT_EQ(back.pageNumber, 1);
 }
 
-TEST_F(ProgressMapperTest, SavedProgressDiscardsPreciseVisibleTextOffset) {
-  // Documents current limitation, fixed upstream in #3174 ("preserve precise
-  // upload progress positions"): toSavedProgress ignores the authoritative
-  // visibleTextOffset and quantizes the upload to the page fraction. Upstream
-  // resolves the offset itself via findXPathForVisibleTextOffset.
+TEST_F(ProgressMapperTest, SavedProgressKeepsPreciseVisibleTextOffset) {
+  // Pin flipped with upstream #3174 (1.6.5rc, "preserve precise upload progress
+  // positions"): toSavedProgress resolves the authoritative visibleTextOffset
+  // through findXPathForVisibleTextOffset instead of quantizing to the page.
   const auto epub = makeTwoChapterBook();
 
   CrossPointPosition pos{};
@@ -876,17 +875,18 @@ TEST_F(ProgressMapperTest, SavedProgressDiscardsPreciseVisibleTextOffset) {
   pos.visibleTextOffset = 17;  // precise position, deep into p[2]
 
   const auto saved = ProgressMapper::toSavedProgress(epub, pos);
-  // Page 0 of 2 -> intra 0 -> chapter start; the known offset 17 is lost.
-  EXPECT_EQ(saved.xpath, "/body/DocFragment[1]/body");
+  // Offset 17 lands deep into p[2], regardless of the coarse page fraction.
+  EXPECT_EQ(saved.xpath, "/body/DocFragment[1]/body/p[2]/text()[1].7");
 
-  // Same page, different precise offsets: identical uploads.
+  // Same page, different precise offsets: distinct uploads.
   CrossPointPosition a = pos;
   a.pageNumber = 1;
   a.visibleTextOffset = 12;
   CrossPointPosition b = pos;
   b.pageNumber = 1;
   b.visibleTextOffset = 19;
-  EXPECT_EQ(ProgressMapper::toSavedProgress(epub, a).xpath, ProgressMapper::toSavedProgress(epub, b).xpath);
+  EXPECT_EQ(ProgressMapper::toSavedProgress(epub, a).xpath, "/body/DocFragment[1]/body/p[2]/text()[1].2");
+  EXPECT_EQ(ProgressMapper::toSavedProgress(epub, b).xpath, "/body/DocFragment[1]/body/p[2]/text()[1].9");
 }
 
 TEST_F(ProgressMapperTest, PercentageOrderingCanContradictContentOrdering) {

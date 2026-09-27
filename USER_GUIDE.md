@@ -14,7 +14,7 @@ Welcome to the **CrossPoint** firmware. This guide outlines the hardware control
     - [3.1 Home Screen](#31-home-screen)
     - [3.2 Reading Mode](#32-reading-mode)
     - [3.3 Browse Files Screen](#33-browse-files-screen)
-    - [3.4 Recent Books Screen](#34-recent-books-screen)
+    - [3.4 Library Screen](#34-library-screen)
     - [3.5 File Transfer Screen](#35-file-transfer-screen)
     - [3.5.1 Calibre Wireless Transfers](#351-calibre-wireless-transfers)
       - [Installing the Plugin in Calibre](#installing-the-plugin-in-calibre)
@@ -118,10 +118,10 @@ Upon turning the device on for the first time, you will be placed on the **[Home
 
 ### 3.1 Home Screen
 
-The Home screen is the main entry point to the firmware. From here you can navigate to **[Reading Mode](#4-reading-mode)** with the most recently read book, the **[Browse Files](#33-browse-files-screen)** screen, the **[Recent Books](#34-recent-books-screen)** screen, the **[File Transfer](#35-file-transfer-screen)** screen, or **[Settings](#36-settings)**.
+The Home screen is the main entry point to the firmware. From here you can navigate to **[Reading Mode](#4-reading-mode)** with the most recently read book, **[Browse Files](#33-browse-files-screen)**, the **[Library](#34-library-screen)**, **[File Transfer](#35-file-transfer-screen)**, or **[Settings](#36-settings)**.
 
 * **Continue Reading:** The top of the screen shows the most recently read book as a cover tile with its title. Books whose file is no longer on the SD card are skipped. The layout follows the **[UI Theme](#361-display)**: "Lyra Extended" shows three books side by side instead of one, and "RoundedRaff" shows a cover-only tile, puts the book title in the header band and adds a **Continue Reading** row to the menu. Missing cover thumbnails are generated in the background after the screen first appears, with a progress popup.
-* **OPDS Browser:** An extra **OPDS Browser** row appears between **Recent Books** and **File Transfer**, but only once at least one server has been added in **[OPDS Servers](#365-opds-servers-multiple-libraries)**.
+* **OPDS Browser:** An extra **OPDS Browser** row appears between **Library** and **File Transfer**, but only once at least one server has been added in **[OPDS Servers](#365-opds-servers-multiple-libraries)**.
 * **Navigation:** **Left**/**Right** (or **Side Up**/**Side Down**) move the cursor and wrap around at both ends; **Confirm** activates the selected tile or row. On touch boards you can also swipe vertically or tap directly.
 * **Resume:** Pressing **Back** on the Home screen opens the most recently read book straight away — the button hint reads **Resume**. If there are no recent books, the hint is blank and **Back** does nothing.
 
@@ -145,17 +145,26 @@ How folders are drawn depends on the theme: in "Classic" and "RoundedRaff" they 
 > [!NOTE]
 > Renaming and moving files is not available on the device. Use the **[File Transfer](#35-file-transfer-screen)** web interface for that.
 
-### 3.4 Recent Books Screen
+### 3.4 Library Screen
 
-The Recent Books screen lists the most recently opened books in a chronological view, most recent first, displaying title and author. At most **ten** books are kept; opening an eleventh drops the oldest entry.
+The Library indexes up to 4,096 supported books on the SD card and shows their titles and authors without requiring you to remember their folders. Supported formats are `.epub`, `.fb2` *(fork-only)*, `.xtc`, `.txt` and `.md`. Its four tabs provide different views. An arrow beside an indexed tab shows the sort direction:
 
-Entries whose file is no longer on the SD card are dropped automatically whenever the screen is opened or a book is added, so deleting a book from **[Browse Files](#33-browse-files-screen)** or over the web also clears it from this list.
+- **Recent** lists the ten books you opened most recently. Hold a book to remove it from this list.
+- **Added** keeps books in the order in which the Library first discovered them. Down shows newest additions first; up shows oldest first.
+- **Title** groups books by the first letter of the title. Up sorts A-Z and down sorts Z-A. Titles beginning with numbers or punctuation appear under `#`; letters from non-English scripts, including Hebrew, have their own groups.
+- **Author** groups books by author. Up sorts A-Z and down sorts Z-A.
 
-* **Open:** Press **Confirm** (or tap the row) to open the selected book.
-* **Remove from List:** Hold **Confirm** for a second, or long-press the row on touch boards, then confirm. This removes the entry from the list only — the book file itself stays on the SD card.
-* **Back:** Returns to the **[Home](#31-home-screen)** screen.
+On a button-only device:
 
-The list is stored on the SD card in `.crosspoint/recent.json`.
+- Use **Up/Down** or **Left/Right** to move one row at a time. Hold a direction to move a page at a time.
+- Press **Confirm** to open the selected book.
+- Press **Back** from the book list to focus the tabs. Use **Left/Right** to select another tab, press **Confirm** to reverse its sort direction, or press **Down** to return to the list.
+- While the tabs are focused, hold **Confirm** to open Search.
+- In the Title or Author views, hold **Confirm** on a book to collapse the list to its letter or author groups. The matching group remains selected. Press **Confirm** to enter a group, or **Back** to restore the exact book and position you came from.
+
+On a touch device, tap tabs, books, and the Search icon directly. Tap an active indexed tab again to reverse its sort direction. Swipe to scroll. Long-press a book in the Recent view to remove it from the list. Long-press a book in a Title or Author view to collapse to the group list, then tap a group to expand it. The **Added** view is not grouped; tapping or long-pressing a book opens it.
+
+The index is created automatically the first time the Library is opened. To pick up later file changes or updated metadata, use **Settings → System → Rebuild library index**. The **Use book metadata** setting controls whether the index reads titles and authors stored inside books.
 
 ### 3.5 File Transfer Screen
 
@@ -394,7 +403,7 @@ This sub-screen configures the status bar drawn while reading, with a live previ
 
 - **Show Hidden Files**: Show files and directories whose names begin with `.` in the file browser; options are "On" or "Off" (default).
 
-- **Clear Read Books from Recent List**: Remove a book from the Recent Books list once its End-of-Book screen is reached; options are "On" or "Off" (default).
+- **Clear Read Books from Recent List**: Remove a book from the recent list (the Library's **Recent** tab and the Home **Continue Reading** tile) once its End-of-Book screen is reached; options are "On" or "Off" (default).
 
 - **Move Finished Books to Read Folder**: Move a finished EPUB into a `/read` folder on the SD card; options are "On" or "Off" (default).
 
@@ -406,7 +415,11 @@ This sub-screen configures the status bar drawn while reading, with a live previ
 
 - **Clear Reading Cache**: Clear the internal SD card cache. A warning is shown first and the clear has to be confirmed.
 
-- **Check for updates**: Check for Crosspoint firmware updates over Wi-Fi. Each model fetches its own release asset, so a model whose build has not been published yet simply reports that no update is available.
+- **Use book metadata**: Read the title and author stored inside each book when the Library index is rebuilt. When disabled or unavailable, the Library uses the filename.
+
+- **Rebuild library index**: Rescan the SD card for books while preserving the arrival history of books already in the index.
+
+- **Check for updates**: Check for Crosspoint firmware updates over Wi-Fi. Firmware can also be updated without a USB connection by placing a `firmware.bin` file on the SD card.
 
 - **SD Card Firmware Update**: Flash a firmware `.bin` file from the SD card, with no USB or Wi-Fi needed. A `.bin`-only file picker opens; the selected file is validated (size, magic byte, chip and board identity, checksum) and you are asked to confirm before it is written. The device restarts into the new firmware when the write completes, and a failure is reported by name rather than leaving the device half-flashed.
 

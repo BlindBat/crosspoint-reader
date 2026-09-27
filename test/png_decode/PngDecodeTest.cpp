@@ -264,7 +264,7 @@ TEST(PngDecode, GoldenChecksumRamp16NoScaling) {
   ASSERT_TRUE(convert(res("gray8_ramp_16x16.png"), out, 16, 16));
   ParsedBmp bmp;
   ASSERT_TRUE(imgtest::parseBmp(out.bytes, bmp));
-  EXPECT_EQ(imgtest::fnv1a64(out.bytes), 0x383E8920B13BDED1ULL);
+  EXPECT_EQ(imgtest::fnv1a64(out.bytes), 0xE586F88948B59967ULL);  // #3478 thresholds
 }
 
 TEST(PngDecode, GoldenChecksumRamp32DownscaledTo8) {
@@ -274,7 +274,7 @@ TEST(PngDecode, GoldenChecksumRamp32DownscaledTo8) {
   ASSERT_TRUE(imgtest::parseBmp(out.bytes, bmp));
   EXPECT_EQ(bmp.width, 8);
   EXPECT_EQ(bmp.absHeight(), 8);
-  EXPECT_EQ(imgtest::fnv1a64(out.bytes), 0xAD5A0A2C5D81BC7EULL);
+  EXPECT_EQ(imgtest::fnv1a64(out.bytes), 0xA1494749ADEDDB12ULL);  // #3478 thresholds
 }
 
 // ---------------------------------------------------------------------------

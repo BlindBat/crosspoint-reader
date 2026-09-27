@@ -164,9 +164,11 @@ These flags in `platformio.ini` fundamentally affect firmware behavior:
 * lib/: Internal libraries (Epub engine, GfxRenderer, UITheme, I18n)
   * lib/hal/: Hardware Abstraction Layer (HalClock, HalDisplay, HalFrontlight, HalGPIO, HalPowerManager, HalStorage, HalSystem, HalTiltSensor)
   * lib/I18n/: Internationalization (translations in `translations/*.yaml`, generated string tables)
+  * lib/LibraryIndex/: the Library's on-card book index (`/.crosspoint/library.idx`, CLX1 format: builder, reader, folding/search text)
 * src/activities/: UI logic using the Activity Lifecycle (onEnter, loop, onExit)
+  * src/activities/library/: the Library screen (four tabs over the CLX1 index)
 * freeink-sdk/: Low-level SDK (EInkDisplay, InputManager, BatteryMonitor, SDCardManager)
-* .crosspoint/: SD-based store for the `PersistableStore` JSON files (`settings.json`, `state.json`, `wifi.json`, `opds.json`, `recent.json`, `koreader.json`) and the per-book binary caches (`epub_`/`fb2_`/`txt_`/`xtc_` prefixed)
+* .crosspoint/: SD-based store for the `PersistableStore` JSON files (`settings.json`, `state.json`, `wifi.json`, `opds.json`, `recent.json`, `koreader.json`), the Library's `library.idx` book index, and the per-book binary caches (`epub_`/`fb2_`/`txt_`/`xtc_` prefixed)
 
 ### Hardware Abstraction Layer (HAL)
 
@@ -178,6 +180,7 @@ These flags in `platformio.ini` fundamentally affect firmware behavior:
 | `HalDisplay`      | `EInkDisplay`                   | E-ink display control                              | `display` (extern)        |
 | `HalFrontlight`   | `FrontlightManager`             | Frontlight brightness / warmth                     | `Frontlight` (macro)      |
 | `HalGPIO`         | `InputManager`                  | Button input handling, pin map                     | `gpio` (extern)           |
+| `HalMemory`       | *(ESP heap caps)*               | Heap statistics (`HeapStats` for the default / internal / PSRAM heaps) | *(static methods, no instance)* |
 | `HalPowerManager` | `BatteryMonitor`, `InputManager`| CPU frequency, battery %, deep sleep               | `powerManager` (extern)   |
 | `HalStorage`      | `SDCardManager`, `UsbMassStorage` | SD card file I/O (+ USB MSC where supported)      | `Storage` (macro)         |
 | `HalSystem`       | *(ESP panic handler + SD)*      | Panic capture/dump, reboot-from-panic detection    | *(free functions in the `HalSystem` namespace)* |
@@ -1077,7 +1080,7 @@ rm -rf /path/to/sd/.crosspoint/epub_<hash>/sections/
 | Cache file                        | Constant                       | Version | Defined in                                                    |
 | --------------------------------- | ------------------------------ | ------- | ------------------------------------------------------------- |
 | `book.bin` (EPUB metadata)        | `BOOK_CACHE_VERSION`           | **10**  | [lib/Epub/Epub/BookMetadataCache.cpp:14](lib/Epub/Epub/BookMetadataCache.cpp) |
-| `sections/<n>.bin` (EPUB layout)  | `SECTION_FILE_VERSION`         | **45**  | [lib/Epub/Epub/Section.cpp:50](lib/Epub/Epub/Section.cpp)      |
+| `sections/<n>.bin` (EPUB layout)  | `SECTION_FILE_VERSION`         | **46**  | [lib/Epub/Epub/Section.cpp:54](lib/Epub/Epub/Section.cpp)      |
 | CSS cache                         | `CssParser::CSS_CACHE_VERSION` | **12**  | [lib/Epub/Epub/css/CssParser.h:53](lib/Epub/Epub/css/CssParser.h) |
 | FB2 metadata                      | `FB2_CACHE_VERSION`            | **2**   | [lib/Fb2/Fb2.cpp:13](lib/Fb2/Fb2.cpp)                          |
 | FB2 section layout                | `FB2_SECTION_FILE_VERSION`     | **5**   | [lib/Fb2/Fb2/Fb2Section.cpp:23](lib/Fb2/Fb2/Fb2Section.cpp)     |
@@ -1098,7 +1101,7 @@ Section files are named `sections/<spineIndex>.bin`, not `section.bin` ([lib/Epu
 
 ```cpp
 // lib/Epub/Epub/Section.cpp
-constexpr uint8_t SECTION_FILE_VERSION = 46;  // Was 45, now 46
+constexpr uint8_t SECTION_FILE_VERSION = 47;  // Was 46, now 47
 
 // Add new field to structure
 struct PageLine {

@@ -190,7 +190,7 @@ TEST_F(SdCardFontArenaTest, RetainedArenaSurvivesAFullyUsedRebuild) {
   EXPECT_EQ(residentIntervals(), PAGE + 1);
 }
 
-TEST_F(SdCardFontArenaTest, SustainedUnderuseReleasesTheArenaOnTheThirdLowRebuild) {
+TEST_F(SdCardFontArenaTest, SustainedUnderuseReleasesTheArenaOnTheMissAfterThreeLowRebuilds) {
   // 1. A dense page of tall glyphs sizes the arena at 1201 bytes.
   ASSERT_EQ(font.prewarm(textOf(TALL, PAGE).c_str()), 0);
   font.clearCache();
@@ -208,11 +208,18 @@ TEST_F(SdCardFontArenaTest, SustainedUnderuseReleasesTheArenaOnTheThirdLowRebuil
   font.clearCache();
   EXPECT_EQ(residentIntervals(), PAGE + 21) << "two low-use rebuilds must not release the arena";
 
-  // 4. Third consecutive low-use rebuild: the arena is released.
+  // 4. Third consecutive low-use rebuild. Upstream #3521 moved the trim from
+  //    the scope close to the next cache miss, so a page prefetched here still
+  //    reaches its draw: nothing is released yet.
   ASSERT_EQ(font.prewarm(textOf(MEDIUM, PAGE).c_str()), 0);
   font.clearCache();
-  EXPECT_EQ(residentIntervals(), 0u);
-  EXPECT_EQ(font.getEpdFont(0)->data->bitmap, nullptr);
+  EXPECT_EQ(residentIntervals(), PAGE + 1) << "the prefetched page is kept until the next miss";
+  EXPECT_NE(font.getEpdFont(0)->data->bitmap, nullptr);
+
+  // 5. The next miss releases the arena before rebuilding, so the resident set
+  //    is the new request alone (plus the replacement glyph) instead of a union.
+  ASSERT_EQ(font.prewarm(textOf(TALL, 1, 410).c_str()), 0);
+  EXPECT_EQ(residentIntervals(), 2u);
 }
 
 TEST_F(SdCardFontArenaTest, AFullyUsedRebuildResetsTheUnderuseRun) {

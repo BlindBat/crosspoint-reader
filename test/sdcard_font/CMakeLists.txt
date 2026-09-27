@@ -1,10 +1,10 @@
-# SdCardFont suite: .cpfont v4 loading/validation, prewarm glyph residency,
+# SdCardFont suite (fork; upstream's in-memory suite lives in test/sd_card_font): .cpfont v4 loading/validation, prewarm glyph residency,
 # overflow loading, kern/ligature mini tables, advance table, and
 # SdCardFontRegistry discovery — over a POSIX HalStorage stub.
 #
 # Fixtures are generated at build time (deterministic script output);
 # *.cpfont is gitignored, so they cannot be committed.
-add_executable(SdCardFontTest
+add_executable(SdCardFontHostTest
   SdCardFontTest.cpp
   ${REPO_ROOT}/lib/EpdFont/SdCardFont.cpp
   ${REPO_ROOT}/lib/EpdFont/SdCardFontRegistry.cpp
@@ -13,7 +13,7 @@ add_executable(SdCardFontTest
   ${REPO_ROOT}/test/support/PlatformHost.cpp
 )
 
-target_include_directories(SdCardFontTest PRIVATE
+target_include_directories(SdCardFontHostTest PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/stubs
   ${REPO_ROOT}/lib/EpdFont
   ${REPO_ROOT}/lib/Utf8
@@ -25,7 +25,7 @@ target_include_directories(SdCardFontTest PRIVATE
 set(CPFONT_RESOURCES_DIR ${CMAKE_CURRENT_BINARY_DIR}/resources)
 set(CPFONT_SANDBOX_DIR ${CMAKE_CURRENT_BINARY_DIR}/sandbox)
 
-target_compile_definitions(SdCardFontTest PRIVATE
+target_compile_definitions(SdCardFontHostTest PRIVATE
   CPFONT_RESOURCES_DIR="${CPFONT_RESOURCES_DIR}"
   CPFONT_SANDBOX_DIR="${CPFONT_SANDBOX_DIR}"
 )
@@ -42,11 +42,11 @@ add_custom_command(
   VERBATIM
 )
 add_custom_target(sdcard_font_fixtures DEPENDS ${CPFONT_RESOURCES_DIR}/valid_basic.cpfont)
-add_dependencies(SdCardFontTest sdcard_font_fixtures)
+add_dependencies(SdCardFontHostTest sdcard_font_fixtures)
 
-target_link_libraries(SdCardFontTest PRIVATE
+target_link_libraries(SdCardFontHostTest PRIVATE
   crosspoint_test_common
   GTest::gtest_main
 )
 
-gtest_discover_tests(SdCardFontTest)
+gtest_discover_tests(SdCardFontHostTest)

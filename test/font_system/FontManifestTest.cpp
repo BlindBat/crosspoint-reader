@@ -20,12 +20,31 @@
 
 namespace {
 
+// Views over the arena so the assertions below read like the manifest they
+// describe; installed/hasUpdate are copied through untouched.
+struct FileView {
+  std::string name;
+  uint32_t size = 0;
+  uint32_t crc32 = 0;
+};
+
+struct FamilyView {
+  std::string name;
+  std::string description;
+  std::vector<FileView> files;
+  uint32_t totalSize = 0;
+  uint32_t scriptMask = 0;
+  bool installed = false;
+  bool hasUpdate = false;
+};
+
 struct Parsed {
   DeserializationError jsonError;
   FontManifestError result = FontManifestError::OK;
   std::string baseUrl;
   std::vector<std::string> labels;
-  std::vector<FontManifestFamily> families;
+  std::vector<FamilyView> families;
+  FontManifestArena arena;
 };
 
 // Deserialize then parse, keeping both error channels visible.
@@ -33,12 +52,27 @@ Parsed parse(const std::string& json) {
   Parsed out;
   JsonDocument doc;
   out.jsonError = deserializeJson(doc, json);
-  // Pre-populate so the "containers are cleared" contract is exercised on
-  // every call, not just the one test that names it.
+  // Pre-populate so the "arena is cleared" contract is exercised on every
+  // call, not just the one test that names it.
   out.baseUrl = "stale";
-  out.labels.emplace_back("stale");
-  out.families.emplace_back();
-  out.result = parseFontManifest(doc, out.baseUrl, out.labels, out.families);
+  out.arena.families.emplace_back();
+  out.arena.scriptGroupLabels.push_back(0);
+  out.result = parseFontManifest(doc, out.baseUrl, out.arena);
+  for (const auto ref : out.arena.scriptGroupLabels) out.labels.emplace_back(out.arena.str(ref));
+  for (const auto& family : out.arena.families) {
+    FamilyView view;
+    view.name = out.arena.str(family.name);
+    view.description = out.arena.str(family.description);
+    view.totalSize = family.totalSize;
+    view.scriptMask = family.scriptMask;
+    view.installed = family.installed;
+    view.hasUpdate = family.hasUpdate;
+    for (uint32_t i = 0; i < family.fileCount; i++) {
+      const auto& file = out.arena.files[family.fileStart + i];
+      view.files.push_back(FileView{out.arena.str(file.name), file.size, file.crc32});
+    }
+    out.families.push_back(std::move(view));
+  }
   return out;
 }
 
@@ -72,7 +106,6 @@ TEST(FontManifest, ParsesAWellFormedManifest) {
 
   EXPECT_EQ(p.families[0].name, "Alpha");
   EXPECT_EQ(p.families[0].description, "A serif");
-  EXPECT_EQ(p.families[0].styles, (std::vector<std::string>{"Regular", "Bold"}));
   EXPECT_EQ(p.families[0].scriptMask, 0x1u);
   EXPECT_EQ(p.families[0].totalSize, 350u);
   ASSERT_EQ(p.families[0].files.size(), 2u);
@@ -85,7 +118,6 @@ TEST(FontManifest, ParsesAWellFormedManifest) {
 
   EXPECT_EQ(p.families[1].scriptMask, 0x3u);
   EXPECT_EQ(p.families[1].files[0].crc32, 4294967295u);
-  EXPECT_TRUE(p.families[1].styles.empty());
 }
 
 TEST(FontManifest, OutputContainersAreClearedBeforeBeingRefilled) {
@@ -95,6 +127,8 @@ TEST(FontManifest, OutputContainersAreClearedBeforeBeingRefilled) {
   EXPECT_EQ(p.baseUrl, "https://example.test/fonts/");
   EXPECT_TRUE(p.labels.empty());
   EXPECT_TRUE(p.families.empty());
+  EXPECT_EQ(p.arena.fileCount, 0u);
+  EXPECT_EQ(p.arena.used, 1u) << "only the leading terminator is interned";
 }
 
 TEST(FontManifest, OptionalTopLevelFieldsDefaultToEmpty) {
@@ -113,7 +147,6 @@ TEST(FontManifest, OptionalFamilyFieldsDefaultToEmpty) {
   ASSERT_EQ(p.families.size(), 1u);
   EXPECT_EQ(p.families[0].name, "");
   EXPECT_EQ(p.families[0].description, "");
-  EXPECT_TRUE(p.families[0].styles.empty());
   EXPECT_TRUE(p.families[0].files.empty());
   EXPECT_EQ(p.families[0].totalSize, 0u);
   EXPECT_EQ(p.families[0].scriptMask, 0u);
@@ -348,13 +381,7 @@ TEST(FontManifest, OverLongNamesAndDescriptionsAreRefusedNotTruncated) {
   EXPECT_TRUE(p.families[0].description.empty());
 }
 
-TEST(FontManifest, StylesAndFilesPerFamilyAreCapped) {
-  std::string styles = R"("styles":[)";
-  for (size_t i = 0; i < FONT_MANIFEST_MAX_STYLES_PER_FAMILY + 5; i++) {
-    if (i > 0) styles += ",";
-    styles += R"("s)" + std::to_string(i) + R"(")";
-  }
-  styles += "]";
+TEST(FontManifest, FilesPerFamilyAreCapped) {
   std::string files = R"("files":[)";
   for (size_t i = 0; i < FONT_MANIFEST_MAX_FILES_PER_FAMILY + 5; i++) {
     if (i > 0) files += ",";
@@ -362,12 +389,12 @@ TEST(FontManifest, StylesAndFilesPerFamilyAreCapped) {
   }
   files += "]";
 
-  const Parsed p = parse(manifestWith(R"("families":[{"name":"F",)" + styles + "," + files + "}]"));
+  const Parsed p = parse(manifestWith(R"("families":[{"name":"F",)" + files + "}]"));
 
   ASSERT_EQ(p.result, FontManifestError::OK);
   ASSERT_EQ(p.families.size(), 1u);
-  EXPECT_EQ(p.families[0].styles.size(), FONT_MANIFEST_MAX_STYLES_PER_FAMILY);
   EXPECT_EQ(p.families[0].files.size(), FONT_MANIFEST_MAX_FILES_PER_FAMILY);
+  EXPECT_EQ(p.families[0].totalSize, FONT_MANIFEST_MAX_FILES_PER_FAMILY);
 }
 
 TEST(FontManifest, HostileNamesSurviveParsingAndAreRejectedByTheInstaller) {
