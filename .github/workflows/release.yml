@@ -44,11 +44,9 @@ jobs:
         run: |
           version="${RELEASE_TAG#v}"
           configured_version="$(sed -n 's/^version = //p' platformio.ini | head -n1)"
-          if [ "${{ github.event.release.prerelease }}" = "true" ]; then
-            test "$version" = "${configured_version}rc"
-          else
-            test "$version" = "$configured_version"
-          fi
+          # Fork tags carry their rc marker inside the version (1.6.5rc-bb.1), so the tag
+          # must equal the configured version whether or not the release is a pre-release.
+          test "$version" = "$configured_version"
 
       - uses: actions/setup-python@v6
         with:

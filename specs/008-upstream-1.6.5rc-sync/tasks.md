@@ -124,7 +124,7 @@ description: "Task list for the upstream 1.6.5rc sync"
 
 **Independent Test**: the published pre-release carries exactly five `crosspoint-1.6.5rc-bb.1-<device>.bin`, none uploaded by hand (Phase 7).
 
-- [ ] T047 [US4] `.github/workflows/release.yml` "Validate release version" step: replace the `if prerelease … ${configured_version}rc … else …` block with the single `test "$version" = "$configured_version"` and the two-line comment from the contract. Confirm `platformio.ini` still reads `version = 1.6.5rc-bb.1`. Commit `ci: accept fork release tags in the version check`.
+- [X] T047 [US4] `.github/workflows/release.yml` "Validate release version" step: replace the `if prerelease … ${configured_version}rc … else …` block with the single `test "$version" = "$configured_version"` and the two-line comment from the contract. Confirm `platformio.ini` still reads `version = 1.6.5rc-bb.1`. Commit `ci: accept fork release tags in the version check`.
 - [ ] T048 [P] [US4] Dry-check the contract's other rows with `strings` on the local `default` build: `strings .pio/build/default/firmware.bin | grep -o '1\.6\.5rc-bb\.1[^ ]*'` — the development stamp contains the version (the RC envs' `-rc+<sha>` form is CI-only). Record in research R15.
 
 **Checkpoint**: pipeline ready; exercised in Phase 7.
